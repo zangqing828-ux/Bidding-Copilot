@@ -18,7 +18,10 @@
     "prepare-opencode-tools": "node scripts/prepare-opencode-tools.cjs",
     "verify-opencode-tools": "node scripts/verify-opencode-tools.cjs",
     "smoke:electron-native": "electron scripts/electron-native-smoke.cjs",
-    "start": "electron ."
+    "start": "electron .",
+    "dev:web": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "build:web": "tsc --noEmit && vite build",
+    "start:web": "node server/index.cjs"
   },
   "build": {
     "appId": "com.yibiao.openbidkit",
@@ -148,8 +151,10 @@
     "cfb": "^1.2.2",
     "chardet": "^2.1.1",
     "cheerio": "^1.2.0",
+    "compression": "^1.8.1",
     "docx": "^9.6.1",
     "electron-updater": "^6.8.3",
+    "express": "^5.2.1",
     "iconv-lite": "^0.7.2",
     "image-size": "^2.0.2",
     "mammoth": "^1.12.0",
