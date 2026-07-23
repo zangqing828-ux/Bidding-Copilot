@@ -398,7 +398,7 @@
 }
 
 
-/* [6459-6847] demo-*-/opportunity-* (BusinessBidPage.tsx + BidOpportunityPage.tsx 共用占位页) */
+/* [6459-6847] demo-* (BusinessBidPage.tsx 占位页) */
 .demo-coming-page {
   position: relative;
   display: grid;
@@ -436,13 +436,6 @@
   background:
     radial-gradient(circle at 88% 16%, rgba(91, 84, 211, 0.18), transparent 34%),
     linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(245, 248, 255, 0.94));
-}
-
-.opportunity-hero-card {
-  background:
-    radial-gradient(circle at 88% 18%, rgba(64, 152, 252, 0.2), transparent 34%),
-    radial-gradient(circle at 24% 0%, rgba(91, 84, 211, 0.12), transparent 30%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(247, 251, 255, 0.94));
 }
 
 .demo-hero-copy {
@@ -519,8 +512,7 @@
   gap: 12px;
 }
 
-.demo-metric-stack article,
-.demo-signal-grid article {
+.demo-metric-stack article {
   background: rgba(255, 255, 255, 0.88);
   border: 1px solid rgba(33, 116, 253, 0.13);
   border-radius: 22px;
@@ -534,10 +526,7 @@
 }
 
 .demo-metric-stack span,
-.demo-metric-stack small,
-.demo-signal-grid span,
-.opportunity-card-list span,
-.opportunity-radar-card small {
+.demo-metric-stack small {
   color: var(--yb-text-soft);
 }
 
@@ -579,16 +568,13 @@
 }
 
 .demo-step-list,
-.demo-table-list,
-.opportunity-card-list,
-.demo-timeline {
+.demo-table-list {
   display: grid;
   gap: 12px;
 }
 
 .demo-step-list article,
-.demo-table-list article,
-.opportunity-card-list article {
+.demo-table-list article {
   background: linear-gradient(135deg, rgba(248, 250, 253, 0.9), rgba(255, 255, 255, 0.98));
   border: 1px solid var(--yb-border-soft);
   border-radius: 20px;
@@ -614,7 +600,6 @@
 
 .demo-step-list strong,
 .demo-table-list strong,
-.opportunity-card-list strong,
 .demo-document-preview strong {
   color: var(--yb-text);
 }
@@ -671,122 +656,6 @@
   padding-top: 10px;
   color: var(--yb-text-soft);
   border-top: 1px dashed var(--yb-border-soft);
-}
-
-.opportunity-radar-card {
-  position: relative;
-  display: grid;
-  min-height: 178px;
-  align-content: center;
-  justify-items: center;
-  gap: 6px;
-  overflow: hidden;
-  padding: 26px;
-  text-align: center;
-  background: linear-gradient(145deg, rgba(23, 32, 51, 0.94), rgba(33, 116, 253, 0.72));
-  border-radius: 26px;
-  box-shadow: 0 22px 54px rgba(33, 116, 253, 0.24);
-}
-
-.opportunity-radar-card span,
-.opportunity-radar-card strong {
-  position: relative;
-  z-index: 1;
-  color: #ffffff;
-}
-
-.opportunity-radar-card strong {
-  font-size: 54px;
-  line-height: 1;
-}
-
-.opportunity-radar-card small {
-  position: relative;
-  z-index: 1;
-  color: rgba(255, 255, 255, 0.76);
-}
-
-.opportunity-radar-ring {
-  position: absolute;
-  inset: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 999px;
-}
-
-.opportunity-radar-ring i {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 46%;
-  height: 2px;
-  background: rgba(255, 255, 255, 0.5);
-  transform: rotate(-28deg);
-  transform-origin: left center;
-}
-
-.opportunity-card-list article {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px;
-}
-
-.opportunity-card-list article > div {
-  display: grid;
-  min-width: 0;
-  gap: 6px;
-}
-
-.opportunity-card-list em {
-  display: grid;
-  width: 48px;
-  height: 48px;
-  flex: 0 0 48px;
-  place-items: center;
-  color: var(--yb-primary);
-  font-style: normal;
-  font-weight: 900;
-  background: #eef4ff;
-  border-radius: 16px;
-}
-
-.demo-signal-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.demo-signal-grid article {
-  display: grid;
-  gap: 10px;
-  min-height: 106px;
-  padding: 18px;
-}
-
-.demo-signal-grid strong {
-  color: var(--yb-text);
-  font-size: 24px;
-}
-
-.demo-timeline span {
-  position: relative;
-  padding: 14px 16px 14px 42px;
-  color: var(--yb-text-soft);
-  background: rgba(248, 250, 253, 0.9);
-  border: 1px solid var(--yb-border-soft);
-  border-radius: 18px;
-}
-
-.demo-timeline span::before {
-  position: absolute;
-  top: 18px;
-  left: 18px;
-  width: 10px;
-  height: 10px;
-  content: '';
-  background: linear-gradient(135deg, var(--yb-primary), var(--yb-violet));
-  border-radius: 999px;
 }
 
 /* [13146-13288] token-stats-* (DeveloperTokenStatsWindow.tsx) */
