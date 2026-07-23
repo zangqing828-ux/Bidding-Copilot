@@ -19,9 +19,13 @@
     "verify-opencode-tools": "node scripts/verify-opencode-tools.cjs",
     "smoke:electron-native": "electron scripts/electron-native-smoke.cjs",
     "start": "electron .",
-    "dev:web": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "predev": "electron-builder install-app-deps",
+    "dev:web": "concurrently -k -n web,api -c blue,magenta \"vite --host 127.0.0.1 --port 5173 --strictPort\" \"wait-on http://127.0.0.1:5173 && cross-env OAUTH_MODE=mock SESSION_SECRET=dev-secret node server/index.cjs\"",
+    "predev:web": "npm rebuild better-sqlite3 --runtime=node",
     "build:web": "tsc --noEmit && vite build",
-    "start:web": "node server/index.cjs"
+    "prestart:web": "npm rebuild better-sqlite3 --runtime=node",
+    "start:web": "node server/index.cjs",
+    "test:web-auth": "node scripts/test-web-auth.cjs"
   },
   "build": {
     "appId": "com.yibiao.openbidkit",
@@ -152,6 +156,7 @@
     "chardet": "^2.1.1",
     "cheerio": "^1.2.0",
     "compression": "^1.8.1",
+    "cookie-parser": "^1.4.7",
     "docx": "^9.6.1",
     "electron-updater": "^6.8.3",
     "express": "^5.2.1",

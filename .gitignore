@@ -22,6 +22,9 @@ frontend/build/
 backend/static/
 client/release/
 
+# Web 服务端运行时数据（SQLite 身份库等）
+client/data/
+
 # OpenCode binary 由本地脚本或 GitHub Actions 下载生成，只保留版本文件
 client/.tmp-opencode-download/
 client/vendor/opencode/*
