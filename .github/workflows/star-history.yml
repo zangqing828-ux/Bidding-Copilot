@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 检出仓库
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 生成 Star History 图表
         uses: narayann7/star-history-action@c2061675dacbf6f35d116e556015b8905843387f # v1.0.4
