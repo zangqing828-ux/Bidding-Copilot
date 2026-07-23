@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { getRejectionCheckDir, getRejectionCheckDocumentMarkdownPath } = require('../utils/paths.cjs');
+const { resolveWorkspacePaths, getRejectionCheckDocumentMarkdownPath: getRejectionCheckDocumentMarkdownPathFromPaths } = require('../../shared/workspacePaths.cjs');
 const { deleteImportedImageBatches, deleteImportedImageBatchesForExactScope } = require('../utils/importedImages.cjs');
 
 const initialState = {
@@ -156,8 +157,15 @@ function taskFromRow(row) {
   };
 }
 
-function createRejectionCheckStore({ app, db, fileService, technicalPlanStore }) {
-  const rejectionCheckDir = getRejectionCheckDir(app);
+function createRejectionCheckStore({ app, db, fileService, technicalPlanStore, workspaceRoot }) {
+  const wp = workspaceRoot ? resolveWorkspacePaths(workspaceRoot) : null;
+  const rejectionCheckDir = wp ? wp.rejectionCheckDir : getRejectionCheckDir(app);
+
+  function resolveDocPath(role, documentId) {
+    return wp
+      ? getRejectionCheckDocumentMarkdownPathFromPaths(wp, role, documentId)
+      : getRejectionCheckDocumentMarkdownPath(app, role, documentId);
+  }
 
   function ensureMetaRow() {
     const existing = db.prepare('SELECT * FROM rejection_check_meta WHERE id = 1').get();
@@ -215,7 +223,7 @@ function createRejectionCheckStore({ app, db, fileService, technicalPlanStore })
 
   function resolveMarkdownPath(relativeOrAbsolutePath, role, documentId) {
     const value = String(relativeOrAbsolutePath || '').trim();
-    if (!value) return getRejectionCheckDocumentMarkdownPath(app, role, documentId);
+    if (!value) return resolveDocPath(role, documentId);
     return path.isAbsolute(value) ? value : path.join(path.dirname(rejectionCheckDir), value);
   }
 
@@ -243,7 +251,7 @@ function createRejectionCheckStore({ app, db, fileService, technicalPlanStore })
 
   function writeDocumentMarkdown(role, documentId, markdown) {
     const documentRole = normalizeDocumentRole(role);
-    const targetPath = getRejectionCheckDocumentMarkdownPath(app, documentRole, documentId);
+    const targetPath = resolveDocPath(documentRole, documentId);
     const tempPath = path.join(path.dirname(targetPath), `${documentRole}-${Date.now()}-${Math.random().toString(16).slice(2)}.tmp.md`);
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
     fs.writeFileSync(tempPath, `${String(markdown || '').trim()}\n`, 'utf-8');

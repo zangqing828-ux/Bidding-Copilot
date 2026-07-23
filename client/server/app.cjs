@@ -9,6 +9,8 @@ const healthRouter = require('./routes/health.cjs');
 const runtimeConfigRouter = require('./routes/runtimeConfig.cjs');
 const bridgeRouter = require('./routes/bridge.cjs');
 const authRouter = require('./routes/auth.cjs');
+const uploadsRouter = require('./routes/uploads.cjs');
+const downloadsRouter = require('./routes/downloads.cjs');
 const { requireAuth } = require('./middleware/requireAuth.cjs');
 
 // 公开路由前缀：不需要登录即可访问。
@@ -49,6 +51,8 @@ function createApp() {
 
   // 受保护的业务 API 路由
   app.use('/api', bridgeRouter);
+  app.use('/api', uploadsRouter);
+  app.use('/api', downloadsRouter);
 
   // 静态文件托管
   const distDir = config.distDir;

@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { getDuplicateCheckContentDir, getDuplicateCheckDir } = require('../utils/paths.cjs');
+const { resolveWorkspacePaths } = require('../../shared/workspacePaths.cjs');
 const { deleteImportedImageBatches } = require('../utils/importedImages.cjs');
 
 const initialState = {
@@ -233,9 +234,10 @@ function createSectionStats(section, analysis) {
   return undefined;
 }
 
-function createDuplicateCheckStore({ app, db }) {
-  const duplicateCheckDir = getDuplicateCheckDir(app);
-  const contentDir = getDuplicateCheckContentDir(app);
+function createDuplicateCheckStore({ app, db, workspaceRoot }) {
+  const wp = workspaceRoot ? resolveWorkspacePaths(workspaceRoot) : null;
+  const duplicateCheckDir = wp ? wp.duplicateCheckDir : getDuplicateCheckDir(app);
+  const contentDir = wp ? wp.duplicateCheckContentDir : getDuplicateCheckContentDir(app);
 
   function ensureMetaRow() {
     const existing = db.prepare('SELECT * FROM duplicate_check_meta WHERE id = 1').get();

@@ -89,6 +89,13 @@ jobs:
           npm rebuild better-sqlite3 --runtime=node
           npm run test:web-auth
 
+      - name: Run Web Workspace tests
+        run: |
+          npm rebuild better-sqlite3 --runtime=node
+          npm run test:web-workspace
+        env:
+          CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
+
       - name: Block critical production vulnerabilities
         run: npm audit --omit=dev --audit-level=critical
 

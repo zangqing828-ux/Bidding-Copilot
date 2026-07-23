@@ -1,4 +1,5 @@
 const path = require('node:path');
+const { resolveWorkspacePaths, getRejectionCheckDocumentMarkdownPath: getRejectionCheckDocumentMarkdownPathFromPaths } = require('../../shared/workspacePaths.cjs');
 
 function getUserDataPath(app) {
   return app.getPath('userData');
@@ -20,65 +21,69 @@ function getWorkspaceDir(app) {
   return path.join(getUserDataPath(app), 'workspace');
 }
 
+// 缓存 workspace paths，避免每次调用都重新计算。
+let cachedWorkspacePaths = null;
+let cachedWorkspaceRoot = null;
+
+function getWorkspacePaths(app) {
+  const workspaceRoot = getWorkspaceDir(app);
+  if (cachedWorkspaceRoot !== workspaceRoot) {
+    cachedWorkspaceRoot = workspaceRoot;
+    cachedWorkspacePaths = resolveWorkspacePaths(workspaceRoot);
+  }
+  return cachedWorkspacePaths;
+}
+
 function getWorkspaceDatabasePath(app) {
-  return path.join(getWorkspaceDir(app), 'yibiao.sqlite');
+  return getWorkspacePaths(app).databasePath;
 }
 
 function getTechnicalPlanDir(app) {
-  return path.join(getWorkspaceDir(app), 'technical-plan');
+  return getWorkspacePaths(app).technicalPlanDir;
 }
 
 function getTechnicalPlanTenderMarkdownPath(app) {
-  return path.join(getTechnicalPlanDir(app), 'tender.md');
+  return getWorkspacePaths(app).technicalPlanTenderMarkdownPath;
 }
 
 function getTechnicalPlanOriginalPlanMarkdownPath(app) {
-  return path.join(getTechnicalPlanDir(app), 'original-plan.md');
+  return getWorkspacePaths(app).technicalPlanOriginalPlanMarkdownPath;
 }
 
 function getTechnicalPlanIllustrationsDir(app) {
-  return path.join(getTechnicalPlanDir(app), 'illustrations');
+  return getWorkspacePaths(app).technicalPlanIllustrationsDir;
 }
 
 function getTechnicalPlanGeneratedIllustrationsDir(app) {
-  return path.join(getGeneratedImagesDir(app), 'technical-plan', 'illustrations');
+  return getWorkspacePaths(app).technicalPlanGeneratedIllustrationsDir;
 }
 
 function getDuplicateCheckDir(app) {
-  return path.join(getWorkspaceDir(app), 'duplicate-check');
+  return getWorkspacePaths(app).duplicateCheckDir;
 }
 
 function getDuplicateCheckContentDir(app) {
-  return path.join(getDuplicateCheckDir(app), 'contents');
+  return getWorkspacePaths(app).duplicateCheckContentDir;
 }
 
 function getRejectionCheckDir(app) {
-  return path.join(getWorkspaceDir(app), 'rejection-check');
+  return getWorkspacePaths(app).rejectionCheckDir;
 }
 
 function getRejectionCheckDocumentMarkdownPath(app, role, documentId) {
-  if (role === 'bid') {
-    const safeDocumentId = String(documentId || 'bid').replace(/[^a-zA-Z0-9_-]/g, '_');
-    return path.join(getRejectionCheckDir(app), 'bids', `${safeDocumentId}.md`);
-  }
-  const tenderDocumentId = String(documentId || '').trim();
-  if (tenderDocumentId && tenderDocumentId !== 'tender') {
-    const safeDocumentId = tenderDocumentId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    return path.join(getRejectionCheckDir(app), 'tenders', `${safeDocumentId}.md`);
-  }
-  return path.join(getRejectionCheckDir(app), 'tender.md');
+  return getRejectionCheckDocumentMarkdownPathFromPaths(getWorkspacePaths(app), role, documentId);
 }
 
 function getGeneratedImagesDir(app) {
-  return path.join(getWorkspaceDir(app), 'generated-images');
+  return getWorkspacePaths(app).generatedImagesDir;
 }
 
 function getImportedImagesDir(app) {
-  return path.join(getWorkspaceDir(app), 'imported-images');
+  return getWorkspacePaths(app).importedImagesDir;
 }
 
 function getKnowledgeBaseDir(app) {
-  return path.join(getWorkspaceDir(app), 'knowledge-base');
+  return getWorkspacePaths(app).knowledgeBaseDir;
 }
 
 function getAiLogsDir(app) {
@@ -158,5 +163,6 @@ module.exports = {
   getTechnicalPlanTenderMarkdownPath,
   getWorkspaceDir,
   getWorkspaceDatabasePath,
+  getWorkspacePaths,
   getUserDataPath,
 };

@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { getKnowledgeBaseDir } = require('../utils/paths.cjs');
+const { resolveWorkspacePaths } = require('../../shared/workspacePaths.cjs');
 
 const documentStatuses = ['pending', 'copying', 'converting', 'extracting', 'ready_for_matching', 'matching', 'recovering', 'analyzing', 'saving', 'success', 'error'];
 const documentStepKeys = ['copy_source', 'convert_markdown', 'build_blocks', 'extract_first_items', 'extract_supplement_items', 'merge_candidates', 'match_batches', 'recover_missing', 'save_result'];
@@ -158,8 +159,8 @@ function normalizeIndex(index) {
   return { folders, documents };
 }
 
-function createKnowledgeBaseStore({ app, db }) {
-  const baseDir = getKnowledgeBaseDir(app);
+function createKnowledgeBaseStore({ app, db, workspaceRoot }) {
+  const baseDir = workspaceRoot ? resolveWorkspacePaths(workspaceRoot).knowledgeBaseDir : getKnowledgeBaseDir(app);
   const legacyIndexPath = path.join(baseDir, 'index.json');
 
   function ensureBaseDir() {
