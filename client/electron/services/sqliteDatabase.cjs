@@ -1344,7 +1344,9 @@ function applyMigrations(db, databasePath, onStatus) {
 }
 
 function createSqliteDatabase(app, options = {}) {
-  const databasePath = getWorkspaceDatabasePath(app);
+  const databasePath = options.workspaceRoot
+    ? require('../../shared/workspacePaths.cjs').resolveWorkspacePaths(options.workspaceRoot).databasePath
+    : getWorkspaceDatabasePath(app);
   fs.mkdirSync(path.dirname(databasePath), { recursive: true });
   const db = new Database(databasePath);
 
@@ -1359,7 +1361,10 @@ function createSqliteDatabase(app, options = {}) {
     }
   };
 
-  app.once('before-quit', close);
+  // app 可选：Web 侧不传 app，由 workspaceRegistry 管理关闭。
+  if (app && typeof app.once === 'function') {
+    app.once('before-quit', close);
+  }
 
   return {
     db,

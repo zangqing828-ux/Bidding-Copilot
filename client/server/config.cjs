@@ -11,6 +11,14 @@ function resolveDistDir() {
   return path.resolve(__dirname, '..', 'dist');
 }
 
+function resolveDataDir() {
+  const env = process.env.YIBIAO_DATA_DIR;
+  if (env) {
+    return path.resolve(env);
+  }
+  return path.resolve(__dirname, '..', 'data');
+}
+
 const isProduction = process.env.NODE_ENV === 'production';
 const oauthMode = process.env.OAUTH_MODE || 'mock';
 
@@ -51,6 +59,12 @@ if (oauthMode === 'mainquest') {
   }
 }
 
+// 加密配置主密钥：生产环境必须设置，开发环境可选（缺失时加密操作会抛错）。
+if (isProduction && !process.env.CONFIG_ENCRYPTION_KEY) {
+  console.error('[config] 生产环境必须设置 CONFIG_ENCRYPTION_KEY');
+  process.exit(1);
+}
+
 const config = {
   port: Number(process.env.PORT || 3000),
   // mock 模式默认只监听本地，避免局域网误开放登录入口；mainquest 模式默认 0.0.0.0。
@@ -58,6 +72,7 @@ const config = {
   isProduction,
   isHttps: publicBaseUrl.startsWith('https'),
   distDir: resolveDistDir(),
+  dataDir: resolveDataDir(),
   version: pkg.version,
   appName: pkg.build?.productName || pkg.name,
   bodyLimit: '2mb',
@@ -65,6 +80,8 @@ const config = {
   sessionSecret,
   publicBaseUrl,
   sessionTtlDays: Number(process.env.SESSION_TTL_DAYS) || 7,
+  configEncryptionKey: process.env.CONFIG_ENCRYPTION_KEY || '',
+  uploadMaxSize: Number(process.env.UPLOAD_MAX_SIZE_MB) || 50,
 };
 
 module.exports = config;

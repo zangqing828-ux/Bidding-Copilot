@@ -32,6 +32,7 @@ const { createTechnicalPlanStore } = require('../services/technicalPlanStore.cjs
 const { createTemplateStore } = require('../services/templateStore.cjs');
 const { checkRequiredOnlineServices, getRequiredOnlineServiceStatus } = require('../services/requiredOnlineServices.cjs');
 const { initLocalImageRenderService } = require('../services/localImageRenderService.cjs');
+const { getWorkspaceDir } = require('../utils/paths.cjs');
 
 function normalizeExternalUrl(value) {
   const raw = String(value || '').trim();
@@ -174,12 +175,13 @@ function registerWorkspaceDatabaseStatusIpc({ mainWindow }) {
 }
 
 function registerWorkspaceDatabaseServices({ app, configStore, aiService, agentService, fileService, updateStatus }) {
-  const sqliteDatabase = createSqliteDatabase(app, { onStatus: updateStatus });
-  const knowledgeBaseStore = createKnowledgeBaseStore({ app, db: sqliteDatabase.db });
+  const workspaceRoot = getWorkspaceDir(app);
+  const sqliteDatabase = createSqliteDatabase(app, { onStatus: updateStatus, workspaceRoot });
+  const knowledgeBaseStore = createKnowledgeBaseStore({ app, db: sqliteDatabase.db, workspaceRoot });
   const knowledgeBaseService = createKnowledgeBaseService({ app, aiService, configStore, knowledgeBaseStore });
-  const technicalPlanStore = createTechnicalPlanStore({ app, db: sqliteDatabase.db, fileService });
-  const duplicateCheckStore = createDuplicateCheckStore({ app, db: sqliteDatabase.db });
-  const rejectionCheckStore = createRejectionCheckStore({ app, db: sqliteDatabase.db, fileService, technicalPlanStore });
+  const technicalPlanStore = createTechnicalPlanStore({ app, db: sqliteDatabase.db, fileService, workspaceRoot });
+  const duplicateCheckStore = createDuplicateCheckStore({ app, db: sqliteDatabase.db, workspaceRoot });
+  const rejectionCheckStore = createRejectionCheckStore({ app, db: sqliteDatabase.db, fileService, technicalPlanStore, workspaceRoot });
   const templateStore = createTemplateStore({ db: sqliteDatabase.db });
   const duplicateCheckService = createDuplicateCheckService({ app, configStore, workspaceStore: duplicateCheckStore });
   const taskService = createTaskService({ aiService, agentService, technicalPlanStore, rejectionCheckStore, duplicateCheckStore, knowledgeBaseService, duplicateCheckService });

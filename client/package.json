@@ -25,7 +25,8 @@
     "build:web": "tsc --noEmit && vite build",
     "prestart:web": "npm rebuild better-sqlite3 --runtime=node",
     "start:web": "node server/index.cjs",
-    "test:web-auth": "node scripts/test-web-auth.cjs"
+    "test:web-auth": "node scripts/test-web-auth.cjs",
+    "test:web-workspace": "node scripts/test-web-workspace.cjs"
   },
   "build": {
     "appId": "com.yibiao.openbidkit",
@@ -168,6 +169,7 @@
     "markdown-it-task-lists": "^2.1.1",
     "mermaid": "^11.14.0",
     "mime-types": "^3.0.2",
+    "multer": "^2.2.0",
     "pdf-parse": "^2.4.5",
     "pdfjs-dist": "^5.7.284",
     "react": "^19.1.1",
