@@ -75,11 +75,25 @@ npm audit --audit-level=critical
 
 截至 2026-07-23，客户端与 Wrangler 依赖树仍有 high 和 moderate 级历史风险，其中客户端 `xlsx` 缺少可用修复版本。CI 首版阻断 critical；完整报告继续显示在 Actions 日志中。升级依赖和替换 `xlsx` 应作为独立治理任务处理。
 
-## 主分支保护启用顺序
+## 主分支保护
 
-1. CI workflow 合入 `main`。
-2. 在 `main` 上确认一次 `CI / Quality Gate` 成功。
-3. 创建 GitHub Ruleset，要求 Pull Request 和 `CI / Quality Gate`。
-4. 再次通过测试 PR 验证合并限制。
+GitHub Ruleset `Main branch quality gate` 已于 2026-07-23 启用：
 
-在检查名尚未出现在 `main` 前，不提前绑定 required check。
+- Ruleset ID：`19615061`
+- 状态：`active`
+- 目标：默认分支 `main`
+- 无绕过角色
+- 禁止删除 `main`
+- 禁止强制推送
+- 所有变更必须通过 Pull Request
+- 所有 review conversation 必须解决
+- 必须由 GitHub Actions App 提交 `Quality Gate`
+- PR 必须基于最新 `main` 完成检查
+
+规则地址：
+
+```text
+https://github.com/zangqing828-ux/Bidding-Copilot/rules/19615061
+```
+
+后续调整 CI 检查名时，必须在同一 Pull Request 中同步更新 Ruleset，避免主分支进入不可合并状态。
