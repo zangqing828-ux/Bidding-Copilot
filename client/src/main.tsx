@@ -4,6 +4,7 @@ import App from './App';
 import AppProviders from './app/providers/AppProviders';
 import WorkspaceDatabaseGate from './app/WorkspaceDatabaseGate';
 import DeveloperTokenStatsWindow from './features/developer/pages/DeveloperTokenStatsWindow';
+import LoginGate from './features/auth/LoginGate';
 import { installRuntimeBridge } from './shared/runtime/installRuntimeBridge';
 import './styles.css';
 
@@ -19,9 +20,11 @@ createRoot(document.getElementById('root') as HTMLElement).render(
       <DeveloperTokenStatsWindow />
     ) : (
       <AppProviders>
-        <WorkspaceDatabaseGate>
-          <App />
-        </WorkspaceDatabaseGate>
+        <LoginGate>
+          <WorkspaceDatabaseGate>
+            <App />
+          </WorkspaceDatabaseGate>
+        </LoginGate>
       </AppProviders>
     )}
   </React.StrictMode>

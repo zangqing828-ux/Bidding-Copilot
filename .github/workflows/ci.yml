@@ -79,10 +79,15 @@ jobs:
         run: npm ci
 
       - name: Check CommonJS syntax
-        run: find electron scripts -name '*.cjs' -print0 | xargs -0 -n1 node --check
+        run: find electron scripts server -name '*.cjs' -print0 | xargs -0 -n1 node --check
 
       - name: Build renderer
         run: npm run build
+
+      - name: Run Web Auth tests
+        run: |
+          npm rebuild better-sqlite3 --runtime=node
+          npm run test:web-auth
 
       - name: Block critical production vulnerabilities
         run: npm audit --omit=dev --audit-level=critical
