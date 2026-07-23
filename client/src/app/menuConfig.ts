@@ -98,22 +98,6 @@ export const appMenuItems: AppMenuItem[] = [
       },
     ],
   },
-  {
-    id: 'bid-opportunity',
-    label: '投标机会',
-    description: '机会发现与线索跟踪',
-    notice: githubStarNotice,
-  },
-  {
-    id: 'plugin-manager',
-    label: '插件管理',
-    description: '安装和管理插件，扩展软件功能',
-  },
-  {
-    id: 'resources',
-    label: '资源下载',
-    description: '投标相关资料、工具下载',
-  },
 ];
 
 const developerMenuItems: AppMenuItem[] = [
