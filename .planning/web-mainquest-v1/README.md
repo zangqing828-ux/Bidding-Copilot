@@ -21,6 +21,7 @@
 6. [Sprint 05：后台任务、Linux Runtime 与导出](./05-sprint-tasks-linux-and-export.spec.md)
 7. [Sprint 06：MQDS 浅色配色替换](./06-sprint-mqds-light-colors.spec.md)
 8. [Sprint 07：容器部署与整体验收](./07-sprint-deployment-and-acceptance.spec.md)
+9. [远端 CI 说明](../../.github/CI.md)
 
 ## v1 产品边界
 
