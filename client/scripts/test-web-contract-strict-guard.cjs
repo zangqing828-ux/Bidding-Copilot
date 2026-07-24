@@ -9,20 +9,26 @@ function isExpectedPendingFailureGuardResult(result) {
   }
 
   const output = `${result.stdout || ''}\n${result.stderr || ''}`;
-  if (!output.includes(EXPECTED_MACHINE_MARKER)) {
+  const markerCount = (output.match(new RegExp(EXPECTED_MACHINE_MARKER, 'g')) || []).length;
+  if (markerCount !== 1) {
     return false;
   }
 
-  if (!/\n失败:\s*1(\s|$)/.test(output)) {
+  const lines = output.replace(/\r\n/g, '\n').split('\n');
+  const summaryLines = lines.filter((line) => /^失败:\s*1$/.test(line.trim()));
+  if (summaryLines.length !== 1) {
     return false;
   }
 
-  const failLines = output.split('\n').filter((line) => line.startsWith('  - '));
+  const failLines = lines.filter((line) => /^  - /.test(line));
   if (failLines.length !== 1) {
     return false;
   }
+  if (!/^  - strict 模式不允许 pending（当前 [1-9][0-9]*）$/.test(failLines[0])) {
+    return false;
+  }
 
-  if (/uncaught\s+exception|UnhandledPromiseRejection|^\s+at\s/m.test(output)) {
+  if (/\bstack\b|uncaught|unhandled|Error:/i.test(output)) {
     return false;
   }
 
@@ -40,28 +46,49 @@ function runSelfCheck() {
     },
     {
       status: 1,
-      stdout: 'strict 模式不允许 pending（当前 1）\n失败: 1\n  - strict 模式不允许 pending',
+      stdout: '失败: 1\n  - strict 模式不允许 pending（当前 45）',
       stderr: '',
       error: null,
       expected: false,
     },
     {
       status: 1,
-      stdout: `CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE\n失败: 1\n  - strict 模式不允许 pending（当前 1）\n  at Object.someFunction (/tmp/test.js:1:1)`,
+      stdout: 'CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE\n失败: 1\n  - 参数校验失败',
       stderr: '',
       error: null,
       expected: false,
     },
     {
       status: 1,
-      stdout: `CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE\n失败: 1\n  - strict 模式不允许 pending（当前 1）\n  - 额外失败`,
+      stdout: 'CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE\n失败: 1\n  - strict 模式不允许 pending（当前 45）\n  - strict 模式不允许 pending（当前 46）',
       stderr: '',
+      error: null,
+      expected: false,
+    },
+    {
+      status: 1,
+      stdout: 'CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE\n失败: 1\n  - strict 模式不允许 pending（当前 45）',
+      stderr: 'stack: at Object.someFunction (/tmp/test.js:1:1)',
       error: null,
       expected: false,
     },
     {
       status: 0,
-      stdout: 'CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE\n失败: 1\n  - strict 模式不允许 pending（当前 1）',
+      stdout: 'CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE\n失败: 1\n  - strict 模式不允许 pending（当前 45）',
+      stderr: '',
+      error: null,
+      expected: false,
+    },
+    {
+      status: 1,
+      stdout: 'CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE\nCONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE\n失败: 1\n  - strict 模式不允许 pending（当前 45）',
+      stderr: '',
+      error: null,
+      expected: false,
+    },
+    {
+      status: 1,
+      stdout: 'CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE\n失败: 1 extra\n  - strict 模式不允许 pending（当前 45）',
       stderr: '',
       error: null,
       expected: false,
@@ -90,7 +117,7 @@ const result = spawnSync(process.execPath, [path.join(__dirname, 'test-web-contr
 
 const passed = isExpectedPendingFailureGuardResult(result);
 if (!passed) {
-  console.error('strict-guard 失败：未观察到仅 pending 相关的严格失败模式');
+  console.error('strict-guard 失败：未观察到仅 pending 失败相关的严格失败模式');
   process.exit(1);
 }
 

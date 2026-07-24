@@ -1,4 +1,4 @@
-// Web 导出测试：验证导出 API 在 Web 端返回可解释的未实现错误。
+// Web 导出合同边界，exportWord pending 501，openFile desktop-only removed 410。
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -59,7 +59,7 @@ async function runTests() {
   const sessionCookie = sessionMatch?.match(/yibiao_session=([^;]+)/)?.[1];
   const cookieStr = `yibiao_session=${sessionCookie}`;
 
-  // 1. export.exportWord → 501（需要 Chromium/LibreOffice，尚未实现）
+  // 1. export.exportWord → 501（pending）
   {
     const res = await httpRequest('POST', '/api/bridge', {
       'content-type': 'application/json', cookie: cookieStr,
@@ -69,7 +69,7 @@ async function runTests() {
     assert(body.code === 'WEB_CAPABILITY_PENDING', 'export.exportWord 返回 WEB_CAPABILITY_PENDING');
   }
 
-  // 2. export.openFile → 501
+  // 2. export.openFile → 410（desktop-only removed）
   {
     const res = await httpRequest('POST', '/api/bridge', {
       'content-type': 'application/json', cookie: cookieStr,
