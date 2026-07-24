@@ -360,13 +360,14 @@ function withFreshModuleOverrides(modulePath, overrides, callback) {
       return originalLoad.apply(this, arguments);
     };
     freshModule = require(resolvedModulePath);
+    try {
+      return callback(freshModule);
+    } finally {
+      Module._load = originalLoad;
+      delete require.cache[resolvedModulePath];
+    }
   } finally {
     Module._load = originalLoad;
-  }
-
-  try {
-    return callback(freshModule);
-  } finally {
     delete require.cache[resolvedModulePath];
   }
 }

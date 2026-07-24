@@ -798,6 +798,11 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
     emit(nextState.analysisTask || recoveredTask, { duplicateCheck: nextState });
   }
 
+  function close() {
+    subscribers.clear();
+    callbackSubscribers.clear();
+  }
+
   return {
     subscribe,
     subscribeCallback,
@@ -894,6 +899,7 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
       recoverInterruptedDuplicateCheckTask();
       return Array.from(activeTasks.values());
     },
+    close,
   };
 }
 

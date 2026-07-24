@@ -1,7 +1,7 @@
 // SSE 事件端点：GET /api/tasks/events
-// 连接时从 req.workspaceId 获取 taskService，调 subscribeCallback。
+// 连接时从 req.workspaceId 获取 taskEvents，调 subscribe。
 // callback 收到事件时 res.write SSE data。连接关闭时 unsubscribe。
-// subscribeCallback 自动重放当前 activeTasks 快照，支持页面刷新恢复。
+// taskEvents.subscribe 自动重放当前 activeTasks 快照，支持页面刷新恢复。
 const express = require('express');
 const { getWorkspaceContext } = require('../workspace/workspaceRegistry.cjs');
 
@@ -25,8 +25,8 @@ router.get('/tasks/events', (req, res) => {
   });
   res.write('\n');
 
-  // 订阅 taskService 事件
-  const unsubscribe = ctx.taskService.subscribeCallback((event) => {
+  // 订阅 taskEvents 事件
+  const unsubscribe = ctx.taskEvents.subscribe((event) => {
     try {
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     } catch {
@@ -46,7 +46,11 @@ router.get('/tasks/events', (req, res) => {
   // 客户端断开时清理
   req.on('close', () => {
     clearInterval(heartbeat);
-    unsubscribe();
+    try {
+      unsubscribe();
+    } catch (error) {
+      console.warn('SSE: 断开连接时取消任务事件订阅失败', error?.message || error);
+    }
   });
 });
 
