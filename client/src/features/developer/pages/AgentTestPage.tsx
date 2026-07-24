@@ -115,6 +115,10 @@ function AgentTestPage() {
         .catch(() => undefined);
     };
     refreshStatus();
+    if (window.yibiao?.platform === 'web') return () => {
+      disposed = true;
+      return;
+    };
     const unsubscribe = bridge.agent.onStatus((status) => {
       if (status.runtime_id === runtimeId) setRuntimeStatus(status);
       else refreshStatus();

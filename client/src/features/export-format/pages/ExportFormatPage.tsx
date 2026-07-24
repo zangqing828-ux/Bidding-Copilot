@@ -550,21 +550,23 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
         mermaidCount,
       });
 
-      unsubscribe = window.yibiao?.export.onWordExportProgress((event: WordExportProgressEvent) => {
-        if (event.requestId && event.requestId !== requestId) {
-          return;
-        }
+      if (window.yibiao?.platform !== 'web') {
+        unsubscribe = window.yibiao?.export.onWordExportProgress((event: WordExportProgressEvent) => {
+          if (event.requestId && event.requestId !== requestId) {
+            return;
+          }
 
-        setExportProgress((prev) => ({
-          ...prev,
-          open: true,
-          running: event.phase === 'running',
-          progress: event.progress,
-          message: event.message,
-          warnings: event.warnings || prev.warnings,
-          error: event.phase === 'error' ? event.message : undefined,
-        }));
-      });
+          setExportProgress((prev) => ({
+            ...prev,
+            open: true,
+            running: event.phase === 'running',
+            progress: event.progress,
+            message: event.message,
+            warnings: event.warnings || prev.warnings,
+            error: event.phase === 'error' ? event.message : undefined,
+          }));
+        });
+      }
 
       const result = await window.yibiao?.export.exportWord({
         requestId,

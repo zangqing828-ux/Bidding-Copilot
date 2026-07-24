@@ -46,7 +46,8 @@ function AgentRuntimeStatusBar() {
       })
       .catch(() => undefined);
 
-    const unsubscribe = window.yibiao?.agent.onStatus((nextStatus) => {
+    const isWeb = window.yibiao?.platform === 'web';
+    const unsubscribe = isWeb ? undefined : window.yibiao?.agent.onStatus((nextStatus) => {
       setStatus(nextStatus);
     });
 

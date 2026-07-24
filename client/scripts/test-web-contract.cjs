@@ -24,6 +24,11 @@ const DELETED_FEATURE_PATHS = [
   'electron/ipc/pluginIpc.cjs',
   'electron/preload-plugin-config.cjs',
 ];
+const DELETED_FEATURE_LEAVES = new Set([
+  'resources.list',
+  'tenderOpportunities.list',
+  'plugins.list',
+]);
 const DESKTOP_ONLY_CAPABILITIES = [
   'app.getGpuHardwareAccelerationStatus',
   'app.saveGpuHardwareAccelerationPreference',
@@ -61,12 +66,33 @@ const REQUIRED_WEB_BRIDGE_META_KEYS = [
 
 const requiredMetaFields = ['status', 'owner', 'workPackage', 'transport', 'contractRef', 'input', 'output', 'errors'];
 
-// 先创建独立工作区目录，避免影响本地真实数据。
-const tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-contract-test-'));
-process.env.YIBIAO_DATA_DIR = tmpDataDir;
-process.env.CONFIG_ENCRYPTION_KEY = 'test-key';
-process.env.OAUTH_MODE = 'mock';
-process.env.SESSION_SECRET = 'dev-secret';
+function getLeafFromManifest(manifestKey) {
+  const [, ...parts] = manifestKey.split('.');
+  if (parts.length === 0) {
+    return null;
+  }
+  return parts.join('.');
+}
+
+function assertSetEqual(actualSet, expectedSet, label) {
+  const missing = [];
+  const extra = [];
+
+  for (const item of expectedSet) {
+    if (!actualSet.has(item)) {
+      missing.push(item);
+    }
+  }
+
+  for (const item of actualSet) {
+    if (!expectedSet.has(item)) {
+      extra.push(item);
+    }
+  }
+
+  assert(missing.length === 0, `${label} 覆盖完整（缺失=${missing.length ? missing.join(',') : '无'}）`);
+  assert(extra.length === 0, `${label} 无超集（多余=${extra.length ? extra.join(',') : '无'}）`);
+}
 
 function assert(condition, message) {
   if (condition) {
@@ -314,19 +340,7 @@ function toManifestKeyFromWebBridgePath(pathValue, leafInfo) {
   return `locals.${pathValue}`;
 }
 
-const contractModule = require('../shared/bridgeContract.cjs');
-const contractVersion = contractModule.version;
-const { allEntries: contractEntries, removedProductEntries } = flattenManifest();
-
-const bridgeContractRouter = require('../server/routes/bridge.cjs');
-const bridgeBindingMetadata = bridgeContractRouter.__contractBindingMetadata;
-const routeDispatchers = bridgeContractRouter.__contractDispatchers || {};
-const setWorkspaceContextResolver = bridgeContractRouter.__setWorkspaceContextResolver;
-
-const { getWorkspaceContext, closeAll } = require('../server/workspace/workspaceRegistry.cjs');
-const { createApp } = require('../server/app.cjs');
-const app = createApp();
-const server = http.createServer(app);
+let server = null;
 let port = 0;
 
 function createRequest() {
@@ -428,16 +442,30 @@ async function assertContractFieldPresence(entry, manifestKey) {
   assert(ALLOWED_STATUSES.has(entry.status), `${manifestKey} 状态合法`);
 }
 
-function assertRemovedProductWhitelist() {
-  assert(removedProductEntries.size === 3, `deleted-product 移除项为 3 项（当前 ${removedProductEntries.size}）`);
-
+function assertRemovedProductWhitelist(removedProductEntries) {
+  const deletedProductLeaves = new Set();
   for (const [entryKey, spec] of removedProductEntries.entries()) {
     assert(spec.status === 'removed', `${entryKey} removed 状态正确`);
     assert(spec.source === 'deleted-product', `${entryKey} source 为 deleted-product`);
+    assert(typeof spec.contractRef === 'string', `${entryKey} contractRef 存在`);
+    deletedProductLeaves.add(spec.contractRef);
   }
+  assert(deletedProductLeaves.size >= 3, `deleted-product 可比较项不少于 3 项（当前 ${deletedProductLeaves.size}）`);
+  assert(deletedProductLeaves.size === DELETED_FEATURE_LEAVES.size, `deleted-product 可比较项数量为 3（当前 ${deletedProductLeaves.size}）`);
+  assertSetEqual(deletedProductLeaves, DELETED_FEATURE_LEAVES, 'deleted-product leaves 白名单');
 }
 
-async function runBridgeBehavior(inject) {
+async function runBridgeBehavior(inject, context) {
+  const {
+    contractEntries,
+    removedProductEntries,
+    bridgeBindingMetadata,
+    routeDispatchers,
+    getWorkspaceContext,
+    setWorkspaceContextResolver,
+    contractVersion,
+  } = context;
+
   const pendingEntries = [];
   const contractMap = contractEntries;
   REQUIRED_WEB_BRIDGE_META_KEYS.forEach((key) => {
@@ -487,6 +515,16 @@ async function runBridgeBehavior(inject) {
       assert(entry.status === 'pending', 'events.database.onStatus 按待实现待定返回');
     }
 
+    if (manifestKey.startsWith('events.')) {
+      assert(entry.transport === 'event', `${manifestKey} 事件 transport 应为 event`);
+      if (entry.status === 'pending') {
+        assert(Array.isArray(entry.errors) && entry.errors.includes('WEB_CAPABILITY_PENDING'), `${manifestKey} pending errors 应包含 WEB_CAPABILITY_PENDING`);
+      }
+      if (entry.status === 'removed') {
+        assert(Array.isArray(entry.errors) && entry.errors.includes('WEB_BRIDGE_DESKTOP_ONLY'), `${manifestKey} removed errors 应包含 WEB_BRIDGE_DESKTOP_ONLY`);
+      }
+    }
+
     if (DESKTOP_ONLY_CAPABILITIES.includes(manifestKey)) {
       assert(entry.status === 'removed', `${manifestKey} 标记为 removed`);
       assert(entry.source === 'desktop-only', `${manifestKey} 标记 desktop-only`);
@@ -496,13 +534,13 @@ async function runBridgeBehavior(inject) {
     }
   }
 
-  assertRemovedProductWhitelist();
+  assertRemovedProductWhitelist(removedProductEntries);
 
   const bindingMetadata = flattenBindingMetadata(bridgeBindingMetadata);
   const bindingKeys = collectBindingDispatcherKeys(routeDispatchers);
   const implementedContractEntries = Array.from(contractMap.entries()).filter(([, entry]) => entry.status === 'implemented');
 
-  const context = getWorkspaceContext('contract-test-context');
+  const workspaceContext = getWorkspaceContext('contract-test-context');
   try {
     for (const [contractKey, contractEntry] of implementedContractEntries) {
       const isMemberMeta = contractKey.startsWith('members.') || contractKey.startsWith('locals.') || contractKey.startsWith('events.');
@@ -523,7 +561,7 @@ async function runBridgeBehavior(inject) {
         assert(typeof binding.storeName === 'string' && binding.storeName.length > 0, `${contractKey} storeName 有值`);
         assert(typeof binding.storeMethod === 'string' && binding.storeMethod.length > 0, `${contractKey} storeMethod 有值`);
 
-        const store = context.stores?.[binding.storeName];
+        const store = workspaceContext.stores?.[binding.storeName];
         assert(Boolean(store), `${contractKey} 对应 Store 在真实 context 中存在`);
         assert(typeof store[binding.storeMethod] === 'function', `${contractKey} 对应 Store 方法存在`);
       }
@@ -533,8 +571,8 @@ async function runBridgeBehavior(inject) {
       }
     }
   } finally {
-    if (context && context.close) {
-      context.close();
+    if (workspaceContext && workspaceContext.close) {
+      workspaceContext.close();
     }
   }
 
@@ -576,14 +614,30 @@ async function runBridgeBehavior(inject) {
   assert(implementedRes.response.statusCode === 200, 'implemented 方法返回 200');
   assert(implementedRes.payload.code === 'OK', 'implemented 方法返回 OK');
 
+  for (const [manifestKey, entry] of Array.from(contractMap.entries()).filter(([key]) => key.startsWith('events.'))) {
+    const eventMethod = getLeafFromManifest(manifestKey);
+    if (!eventMethod || eventMethod.includes('.')) {
+      continue;
+    }
+
+    const response = await statusPayload({ namespace: 'events', method: eventMethod, args: [] });
+    if (entry.status === 'removed') {
+      assert(response.response.statusCode === 410, `${manifestKey} removed 返回 410`);
+      assert(response.payload.code === 'WEB_BRIDGE_REMOVED', `${manifestKey} removed 返回 WEB_BRIDGE_REMOVED`);
+    } else if (entry.status === 'pending') {
+      assert(response.response.statusCode === 501, `${manifestKey} pending 返回 501`);
+      assert(response.payload.code === 'WEB_CAPABILITY_PENDING', `${manifestKey} pending 返回 WEB_CAPABILITY_PENDING`);
+    } else if (entry.status === 'implemented') {
+      assert(response.response.statusCode === 200, `${manifestKey} implemented 返回 200`);
+      assert(response.payload.code === 'OK', `${manifestKey} implemented 返回 OK`);
+    }
+  }
+
   const pendingRes = await statusPayload({ namespace: 'technicalPlan', method: 'importTenderDocument', args: [] });
   assert(pendingRes.response.statusCode === 501, 'pending 方法返回 501');
   assert(pendingRes.payload.code === 'WEB_CAPABILITY_PENDING', 'pending 方法返回 WEB_CAPABILITY_PENDING');
 
   for (const entryName of DESKTOP_ONLY_CAPABILITIES) {
-    if (entryName.startsWith('events.')) {
-      continue;
-    }
     const [namespace, method] = entryName.split('.');
     const removedRes = await statusPayload({ namespace, method, args: [] });
     assert(removedRes.response.statusCode === 410, `${entryName} 返回 410`);
@@ -622,9 +676,6 @@ async function runBridgeBehavior(inject) {
     assert(workspaceResolved === 0, 'pending 能力未初始化 workspace');
 
     for (const entryName of DESKTOP_ONLY_CAPABILITIES) {
-      if (entryName.startsWith('events.')) {
-        continue;
-      }
       const [namespace, method] = entryName.split('.');
       const wsRemovedRes = await statusPayload({ namespace, method, args: [] });
       assert(wsRemovedRes.response.statusCode === 410, `${entryName} 返回 410，且不触发 workspace`);
@@ -686,6 +737,11 @@ async function runBridgeBehavior(inject) {
 
 async function startServer() {
   await new Promise((resolve, reject) => {
+    if (!server) {
+      reject(new Error('server 未初始化'));
+      return;
+    }
+
     server.listen(0, '127.0.0.1', () => resolve());
     server.once('error', reject);
   });
@@ -693,6 +749,9 @@ async function startServer() {
 }
 
 async function closeServer() {
+  if (!server) {
+    return;
+  }
   if (!server.listening) {
     return;
   }
@@ -708,15 +767,61 @@ async function closeServer() {
 }
 
 (async () => {
-  const inject = createRequest();
+  let tmpDataDir;
+  let closeWorkspace;
+  let contractVersion = 'unknown';
   let result = { failedCount: 0, isStrictPendingOnlyFailure: false };
-  await startServer();
+
   try {
-    result = await runBridgeBehavior(inject);
+    tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-contract-test-'));
+    process.env.YIBIAO_DATA_DIR = tmpDataDir;
+    process.env.CONFIG_ENCRYPTION_KEY = 'test-key';
+    process.env.OAUTH_MODE = 'mock';
+    process.env.SESSION_SECRET = 'dev-secret';
+
+    const contractModule = require('../shared/bridgeContract.cjs');
+    contractVersion = contractModule.version;
+    const { allEntries: contractEntries, removedProductEntries } = flattenManifest();
+    const bridgeContractRouter = require('../server/routes/bridge.cjs');
+    const bridgeBindingMetadata = bridgeContractRouter.__contractBindingMetadata;
+    const routeDispatchers = bridgeContractRouter.__contractDispatchers || {};
+    const setWorkspaceContextResolver = bridgeContractRouter.__setWorkspaceContextResolver;
+    const { getWorkspaceContext, closeAll } = require('../server/workspace/workspaceRegistry.cjs');
+    const { createApp } = require('../server/app.cjs');
+
+    const app = createApp();
+    server = http.createServer(app);
+    closeWorkspace = closeAll;
+
+    const inject = createRequest();
+    await startServer();
+
+    result = await runBridgeBehavior(inject, {
+      contractEntries,
+      removedProductEntries,
+      bridgeBindingMetadata,
+      routeDispatchers,
+      getWorkspaceContext,
+      setWorkspaceContextResolver,
+      contractVersion,
+    });
+  } catch (error) {
+    result.failedCount += 1;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    failed.push(`脚本执行异常：${errorMessage}`);
   } finally {
-    await closeServer();
     try {
-      closeAll();
+      await closeServer();
+    } catch (error) {
+      console.error('关闭服务器失败:', error instanceof Error ? error.message : error);
+      result.failedCount = (result.failedCount || 0) + 1;
+      failed.push('服务器关闭失败');
+    }
+
+    try {
+      if (typeof closeWorkspace === 'function') {
+        closeWorkspace();
+      }
     } catch {}
     try {
       fs.rmSync(tmpDataDir, { recursive: true, force: true });

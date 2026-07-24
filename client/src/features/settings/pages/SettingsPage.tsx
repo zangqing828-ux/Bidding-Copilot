@@ -571,26 +571,29 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
     void window.yibiao?.license?.getStatus().then(setLicenseStatus).catch(() => setLicenseStatus(null));
 
     const unsubs: Array<() => void> = [];
-    unsubs.push(
-      window.yibiao?.onUpdateProgress(({ percent }) => {
-        setUpdateStatus('downloading');
-        setUpdatePercent(Math.round(percent));
-      }) ?? (() => {})
-    );
-    unsubs.push(
-      window.yibiao?.onUpdateDownloaded(({ version }) => {
-        if (version) {
-          setUpdateVersion(version);
-        }
-        setUpdateStatus('downloaded');
-      }) ?? (() => {})
-    );
-    unsubs.push(
-      window.yibiao?.onUpdateError(({ message }) => {
-        setUpdateStatus('error');
-        setUpdateError(message);
-      }) ?? (() => {})
-    );
+    const isWeb = window.yibiao?.platform === 'web';
+    if (!isWeb) {
+      unsubs.push(
+        window.yibiao?.onUpdateProgress(({ percent }) => {
+          setUpdateStatus('downloading');
+          setUpdatePercent(Math.round(percent));
+        }) ?? (() => {})
+      );
+      unsubs.push(
+        window.yibiao?.onUpdateDownloaded(({ version }) => {
+          if (version) {
+            setUpdateVersion(version);
+          }
+          setUpdateStatus('downloaded');
+        }) ?? (() => {})
+      );
+      unsubs.push(
+        window.yibiao?.onUpdateError(({ message }) => {
+          setUpdateStatus('error');
+          setUpdateError(message);
+        }) ?? (() => {})
+      );
+    }
 
     return () => { unsubs.forEach((unsub) => unsub()); };
   }, []);
