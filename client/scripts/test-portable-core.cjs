@@ -11,12 +11,21 @@ const coreSqlite = require('../core/sqliteDatabase.cjs');
 const coreTemplateStore = require('../core/templateStore.cjs');
 const coreConfigStore = require('../core/configStore.cjs');
 const coreAgentRuntimeIds = require('../core/agentRuntimeIds.cjs');
+const coreTechnicalPlanStore = require('../core/stores/technicalPlanStore.cjs');
+const coreKnowledgeBaseStore = require('../core/stores/knowledgeBaseStore.cjs');
+const coreDuplicateCheckStore = require('../core/stores/duplicateCheckStore.cjs');
+const coreRejectionCheckStore = require('../core/stores/rejectionCheckStore.cjs');
+const coreWorkspaceCleanup = require('../core/workspaceCleanup.cjs');
 
 const sharedWorkspacePaths = require('../shared/workspacePaths.cjs');
 const electronSqlite = require('../electron/services/sqliteDatabase.cjs');
 const electronTemplateStore = require('../electron/services/templateStore.cjs');
 const electronConfigStore = require('../electron/services/configStore.cjs');
 const electronAgentRuntimeRegistry = require('../electron/services/agent/agentRuntimeRegistry.cjs');
+const electronTechnicalPlanStore = require('../electron/services/technicalPlanStore.cjs');
+const electronKnowledgeBaseStore = require('../electron/services/knowledgeBaseStore.cjs');
+const electronDuplicateCheckStore = require('../electron/services/duplicateCheckStore.cjs');
+const electronRejectionCheckStore = require('../electron/services/rejectionCheckStore.cjs');
 const { createWorkspaceContext } = require('../server/workspace/workspaceContext.cjs');
 const webServices = require('../server/workspace/webServices.cjs');
 
@@ -269,6 +278,7 @@ function runChildProcessCoreIsolationCheck(coreFiles) {
 
 function assertCoreHasNoElectronDependencies() {
   const coreFiles = listCjsFilesRecursively(CORE_DIR);
+  const workspaceRuntimeFactoryPath = path.join(CLIENT_DIR, 'server', 'workspace', 'workspaceRuntimeFactory.cjs');
 
   const forbiddenPatterns = [
     /\brequire\(\s*['"]electron/,
@@ -287,7 +297,8 @@ function assertCoreHasNoElectronDependencies() {
   });
 
   collectReachableCoreDeps(coreFiles, '依赖图扫描');
-  runChildProcessCoreIsolationCheck(coreFiles);
+  collectReachableCoreDeps([workspaceRuntimeFactoryPath], 'Web runtime factory 依赖图扫描');
+  runChildProcessCoreIsolationCheck([...coreFiles, workspaceRuntimeFactoryPath]);
 
   const fixtureDir = trackDir(fs.mkdtempSync(path.join(CLIENT_DIR, 'tmp-portable-core-fixture-')));
 
@@ -321,6 +332,197 @@ function assertCoreHasNoElectronDependencies() {
     dynamicFailureMessage.includes('非字面量 require'),
     '依赖图扫描: 计算型 require 失败原因应为非字面量',
   );
+}
+
+function assertLegacyStoreWrappersAreThin() {
+  const wrappers = [
+    ['technicalPlanStore.cjs', 'technicalPlanStore.cjs'],
+    ['knowledgeBaseStore.cjs', 'knowledgeBaseStore.cjs'],
+    ['duplicateCheckStore.cjs', 'duplicateCheckStore.cjs'],
+    ['rejectionCheckStore.cjs', 'rejectionCheckStore.cjs'],
+  ];
+
+  for (const [wrapperName, coreName] of wrappers) {
+    const wrapperPath = path.join(CLIENT_DIR, 'electron', 'services', wrapperName);
+    const source = fs.readFileSync(wrapperPath, 'utf-8');
+    const nonEmptyLines = source.split(/\r?\n/).filter((line) => line.trim()).length;
+    assert(nonEmptyLines <= 12, `Store compatibility wrapper: ${wrapperName} 保持薄入口`);
+    assert(
+      source.includes(`../../core/stores/${coreName}`),
+      `Store compatibility wrapper: ${wrapperName} 直连权威 core 实现`,
+    );
+    assert(source.includes('getWorkspaceDir'), `Store compatibility wrapper: ${wrapperName} 仅适配 legacy app 路径`);
+    assert(!source.includes('db.prepare'), `Store compatibility wrapper: ${wrapperName} 不包含业务 SQL`);
+    assert(!source.includes("require('node:fs')"), `Store compatibility wrapper: ${wrapperName} 不包含文件业务实现`);
+  }
+}
+
+function runWorkspaceCleanupChecks(tmpDir) {
+  const workspaceRoot = path.join(tmpDir, 'cleanup-workspace');
+  const paths = coreWorkspacePaths.resolveWorkspacePaths(workspaceRoot);
+  const importedScope = path.join(paths.importedImagesDir, 'technical-plan');
+  const importedBatch = path.join(paths.importedImagesDir, 'technical-plan-1700000000000-deadbeef');
+  const importedSibling = path.join(paths.importedImagesDir, 'other-scope');
+  const exactBatch = path.join(paths.importedImagesDir, 'rejection-check-bid-1700000000000-deadbeef');
+  const mermaidCache = path.join(paths.generatedImagesDir, 'mermaid-cache');
+  const insideTarget = path.join(workspaceRoot, 'cleanup-target');
+  const outsideTarget = path.join(tmpDir, 'cleanup-outside');
+
+  for (const dir of [
+    importedScope,
+    importedBatch,
+    importedSibling,
+    exactBatch,
+    mermaidCache,
+    insideTarget,
+    outsideTarget,
+  ]) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  coreWorkspaceCleanup.deleteImportedImageBatches(workspaceRoot, 'technical-plan');
+  assert(!fs.existsSync(importedScope), 'workspace cleanup: 删除 workspace 内精确 imported image scope');
+  assert(!fs.existsSync(importedBatch), 'workspace cleanup: 删除 workspace 内 imported image batch');
+  assert(fs.existsSync(importedSibling), 'workspace cleanup: 保留不匹配 imported image scope');
+
+  coreWorkspaceCleanup.deleteImportedImageBatchesForExactScope(workspaceRoot, 'rejection-check-bid');
+  assert(!fs.existsSync(exactBatch), 'workspace cleanup: exact scope 仅删除匹配批次');
+
+  coreWorkspaceCleanup.clearMermaidCache(workspaceRoot);
+  assert(!fs.existsSync(mermaidCache), 'workspace cleanup: Mermaid cache 按 workspaceRoot 删除');
+
+  assert(
+    coreWorkspaceCleanup.removeWorkspaceDirectory(workspaceRoot, insideTarget) === true,
+    'workspace cleanup: 允许删除 workspace 内目标',
+  );
+  assert(!fs.existsSync(insideTarget), 'workspace cleanup: workspace 内目标已删除');
+  assert(
+    coreWorkspaceCleanup.removeWorkspaceDirectory(workspaceRoot, outsideTarget) === false,
+    'workspace cleanup: 拒绝删除 workspace 外目标',
+  );
+  assert(fs.existsSync(outsideTarget), 'workspace cleanup: workspace 外目标保持存在');
+  assert(
+    coreWorkspaceCleanup.removeWorkspaceDirectory(workspaceRoot, workspaceRoot) === false,
+    'workspace cleanup: 禁止删除 workspaceRoot 本身',
+  );
+}
+
+function runPortableStoreChecks(tmpDir) {
+  let coreStoreDatabase;
+  try {
+    const workspaceRoot = path.join(tmpDir, 'core-store-workspace');
+    coreStoreDatabase = trackDb(coreSqlite.createSqliteDatabase({ workspaceRoot }));
+    const technicalPlanStore = coreTechnicalPlanStore.createTechnicalPlanStore({
+      db: coreStoreDatabase.db,
+      workspaceRoot,
+    });
+    const knowledgeBaseStore = coreKnowledgeBaseStore.createKnowledgeBaseStore({
+      db: coreStoreDatabase.db,
+      workspaceRoot,
+    });
+    const duplicateCheckStore = coreDuplicateCheckStore.createDuplicateCheckStore({
+      db: coreStoreDatabase.db,
+      workspaceRoot,
+    });
+    const rejectionCheckStore = coreRejectionCheckStore.createRejectionCheckStore({
+      db: coreStoreDatabase.db,
+      workspaceRoot,
+      technicalPlanStore,
+    });
+
+    assert(technicalPlanStore.loadTechnicalPlan().step === 'document-analysis', 'core Store smoke: technical plan load');
+    assert(technicalPlanStore.updateStep('bid-analysis').step === 'bid-analysis', 'core Store smoke: technical plan 轻量更新');
+
+    assert(Array.isArray(knowledgeBaseStore.list().folders), 'core Store smoke: knowledge base load');
+    const folder = knowledgeBaseStore.createFolder('portable-folder');
+    assert(knowledgeBaseStore.list().folders.some((item) => item.id === folder.id), 'core Store smoke: knowledge base 轻量更新');
+
+    assert(duplicateCheckStore.loadDuplicateCheck().step === 'upload', 'core Store smoke: duplicate check load');
+    const duplicateState = duplicateCheckStore.saveUiState({ step: 'analysis', activeAnalysisTab: 'metadata' });
+    assert(duplicateState && typeof duplicateState === 'object', 'core Store smoke: duplicate check 轻量更新');
+
+    assert(rejectionCheckStore.loadRejectionCheck().step === 'documents', 'core Store smoke: rejection check load');
+    const rejectionState = rejectionCheckStore.saveUiState({ step: 'results', activeCheckResultTab: 'rejection' });
+    assert(rejectionState && typeof rejectionState === 'object', 'core Store smoke: rejection check 轻量更新');
+  } finally {
+    const db = coreStoreDatabase?.db;
+    closeTrackedDb(coreStoreDatabase);
+    assert(!db || !db.open, 'core Store smoke: SQLite 已关闭');
+  }
+
+  let compatibilityDatabase;
+  try {
+    const userDataDir = path.join(tmpDir, 'legacy-store-userdata');
+    const workspaceRoot = path.join(userDataDir, 'workspace');
+    const fakeApp = {
+      getPath(name) {
+        return name === 'userData' ? userDataDir : '';
+      },
+    };
+    compatibilityDatabase = trackDb(coreSqlite.createSqliteDatabase({ workspaceRoot }));
+
+    const technicalCore = coreTechnicalPlanStore.createTechnicalPlanStore({
+      db: compatibilityDatabase.db,
+      workspaceRoot,
+    });
+    const technicalWrapper = electronTechnicalPlanStore.createTechnicalPlanStore({
+      app: fakeApp,
+      db: compatibilityDatabase.db,
+    });
+    const knowledgeCore = coreKnowledgeBaseStore.createKnowledgeBaseStore({
+      db: compatibilityDatabase.db,
+      workspaceRoot,
+    });
+    const knowledgeWrapper = electronKnowledgeBaseStore.createKnowledgeBaseStore({
+      app: fakeApp,
+      db: compatibilityDatabase.db,
+    });
+    const duplicateCore = coreDuplicateCheckStore.createDuplicateCheckStore({
+      db: compatibilityDatabase.db,
+      workspaceRoot,
+    });
+    const duplicateWrapper = electronDuplicateCheckStore.createDuplicateCheckStore({
+      app: fakeApp,
+      db: compatibilityDatabase.db,
+    });
+    const rejectionCore = coreRejectionCheckStore.createRejectionCheckStore({
+      db: compatibilityDatabase.db,
+      workspaceRoot,
+      technicalPlanStore: technicalCore,
+    });
+    const rejectionWrapper = electronRejectionCheckStore.createRejectionCheckStore({
+      app: fakeApp,
+      db: compatibilityDatabase.db,
+      technicalPlanStore: technicalWrapper,
+    });
+
+    technicalWrapper.updateStep('outline-generation');
+    assert(technicalCore.loadTechnicalPlan().step === 'outline-generation', 'Store compatibility: technical wrapper 与 core 共用 schema');
+    technicalWrapper.saveOriginalOutlineRuntime({ source: 'compat-wrapper' });
+    assert(
+      technicalCore.readOriginalOutlineRuntime()?.source === 'compat-wrapper',
+      'Store compatibility: technical wrapper 与 core 共用 workspace 文件',
+    );
+
+    const compatFolder = knowledgeWrapper.createFolder('compat-folder');
+    assert(knowledgeCore.list().folders.some((item) => item.id === compatFolder.id), 'Store compatibility: knowledge wrapper 与 core 交叉读取');
+
+    duplicateWrapper.saveUiState({ step: 'analysis', activeAnalysisTab: 'content' });
+    assert(duplicateCore.loadDuplicateCheck().activeAnalysisTab === 'content', 'Store compatibility: duplicate wrapper 与 core 交叉读取');
+
+    rejectionWrapper.saveUiState({ step: 'results', activeCheckResultTab: 'typo' });
+    assert(rejectionCore.loadRejectionCheck().activeCheckResultTab === 'typo', 'Store compatibility: rejection wrapper 与 core 交叉读取');
+
+    const paths = coreWorkspacePaths.resolveWorkspacePaths(workspaceRoot);
+    assert(fs.existsSync(paths.technicalPlanOriginalOutlineRuntimePath), 'legacy fake app: technical store 解析到 userData/workspace');
+    assert(fs.existsSync(paths.knowledgeBaseDir), 'legacy fake app: knowledge store 解析到 userData/workspace');
+    assert(fs.existsSync(paths.duplicateCheckDir), 'legacy fake app: duplicate store 解析到 userData/workspace');
+    assert(fs.existsSync(paths.rejectionCheckDir), 'legacy fake app: rejection store 解析到 userData/workspace');
+  } finally {
+    const db = compatibilityDatabase?.db;
+    closeTrackedDb(compatibilityDatabase);
+    assert(!db || !db.open, 'Store compatibility: SQLite 已关闭');
+  }
 }
 
 function withFreshModuleOverrides(modulePath, overrides, callback) {
@@ -640,7 +842,12 @@ function run() {
       closeTrackedDb(defaultSqliteWrapperContext);
     }
 
-    // 4. 配置归一化
+    // 4. Portable Store、兼容 wrapper 与工作区清理边界
+    assertLegacyStoreWrappersAreThin();
+    runWorkspaceCleanupChecks(tmpDir);
+    runPortableStoreChecks(tmpDir);
+
+    // 5. 配置归一化
     const coreConfigPath = path.join(tmpDir, 'core-config.json');
     const coreConfigStoreInstance = coreConfigStore.createConfigStore({ configPath: coreConfigPath });
     const c0 = coreConfigStoreInstance.load();
@@ -661,7 +868,7 @@ function run() {
     assert(c2.text_model_provider === 'custom', 'config normalize: 非法 provider 回退为 custom');
     assert(c2.image_model.provider === 'google-ai-studio', 'config normalize: image provider 可接受 google-ai-studio');
 
-    // 5. Web workspace 路径与装配失败回滚
+    // 6. Web workspace 路径与装配失败回滚
     let webContext;
     try {
       const workspaceId = 'portable-user';
@@ -685,13 +892,13 @@ function run() {
     }
     runWorkspaceRollbackCheck(tmpDir);
 
-    // 6. runtime ID 单源一致性
+    // 7. runtime ID 单源一致性
     runRuntimeIdConsistencyChecks();
 
-    // 7. 打包断言
+    // 8. 打包断言
     runPackagingAssertions();
 
-    // 8. 递归静态依赖与实际模块加载隔离
+    // 9. 递归静态依赖与实际模块加载隔离
     assertCoreHasNoElectronDependencies();
   } finally {
     closeAllDatabases();
