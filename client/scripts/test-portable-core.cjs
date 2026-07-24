@@ -31,6 +31,7 @@ const webServices = require('../server/workspace/webServices.cjs');
 
 const passed = [];
 const failed = [];
+const skipped = [];
 const activeDatabases = new Set();
 const activeTmpDirs = [];
 const CLIENT_DIR = path.join(__dirname, '..');
@@ -55,6 +56,11 @@ function expectThrow(fn, message) {
   }
   assert(Boolean(thrownError), message);
   return thrownError;
+}
+
+function skip(message) {
+  skipped.push(message);
+  console.log(`  SKIP: ${message}`);
 }
 
 function trackDir(dir) {
@@ -405,6 +411,92 @@ function runWorkspaceCleanupChecks(tmpDir) {
     coreWorkspaceCleanup.removeWorkspaceDirectory(workspaceRoot, workspaceRoot) === false,
     'workspace cleanup: 禁止删除 workspaceRoot 本身',
   );
+
+  const missingWorkspaceRoot = path.join(tmpDir, 'cleanup-missing-workspace');
+  coreWorkspaceCleanup.clearMermaidCache(missingWorkspaceRoot);
+  coreWorkspaceCleanup.deleteImportedImageBatches(missingWorkspaceRoot, 'technical-plan');
+  coreWorkspaceCleanup.deleteImportedImageBatchesForExactScope(missingWorkspaceRoot, 'rejection-check-bid');
+  assert(
+    coreWorkspaceCleanup.removeWorkspaceDirectory(missingWorkspaceRoot, path.join(missingWorkspaceRoot, 'target')) === false,
+    'workspace cleanup: 不存在的路径保持幂等 no-op',
+  );
+  assert(!fs.existsSync(missingWorkspaceRoot), 'workspace cleanup: no-op 不创建 workspace 目录');
+
+  const symlinkProbeTarget = path.join(tmpDir, 'cleanup-symlink-probe-target');
+  const symlinkProbeLink = path.join(tmpDir, 'cleanup-symlink-probe-link');
+  fs.mkdirSync(symlinkProbeTarget, { recursive: true });
+  try {
+    fs.symlinkSync(symlinkProbeTarget, symlinkProbeLink, 'dir');
+    fs.rmSync(symlinkProbeLink, { recursive: true, force: true });
+  } catch (error) {
+    if (['EACCES', 'EPERM', 'ENOSYS', 'ENOTSUP'].includes(error?.code)) {
+      skip(`workspace cleanup symlink 边界用例：当前平台不支持目录 symlink (${error.code})`);
+      return;
+    }
+    throw error;
+  }
+
+  const generatedWorkspaceRoot = path.join(tmpDir, 'cleanup-generated-symlink-workspace');
+  const generatedPaths = coreWorkspacePaths.resolveWorkspacePaths(generatedWorkspaceRoot);
+  const outsideGeneratedImages = path.join(tmpDir, 'cleanup-outside-generated-images');
+  const outsideMermaidCache = path.join(outsideGeneratedImages, 'mermaid-cache');
+  const outsideMermaidSentinel = path.join(outsideMermaidCache, 'sentinel.txt');
+  fs.mkdirSync(generatedWorkspaceRoot, { recursive: true });
+  fs.mkdirSync(outsideMermaidCache, { recursive: true });
+  fs.writeFileSync(outsideMermaidSentinel, 'keep', 'utf-8');
+  fs.symlinkSync(outsideGeneratedImages, generatedPaths.generatedImagesDir, 'dir');
+
+  coreWorkspaceCleanup.clearMermaidCache(generatedWorkspaceRoot);
+  assert(fs.lstatSync(generatedPaths.generatedImagesDir).isSymbolicLink(), 'workspace cleanup: generated-images 中间 symlink 保持存在');
+  assert(fs.existsSync(outsideMermaidCache), 'workspace cleanup: generated-images symlink 外部 Mermaid 目录保留');
+  assert(fs.readFileSync(outsideMermaidSentinel, 'utf-8') === 'keep', 'workspace cleanup: generated-images symlink 外部 sentinel 保留');
+
+  const importedWorkspaceRoot = path.join(tmpDir, 'cleanup-imported-symlink-workspace');
+  const importedPaths = coreWorkspacePaths.resolveWorkspacePaths(importedWorkspaceRoot);
+  const outsideImportedImages = path.join(tmpDir, 'cleanup-outside-imported-images');
+  const outsidePrefixBatch = path.join(outsideImportedImages, 'technical-plan-1700000000000-deadbeef');
+  const outsideExactBatch = path.join(outsideImportedImages, 'rejection-check-bid-1700000000000-deadbeef');
+  const outsideImportedSentinel = path.join(outsideImportedImages, 'sentinel.txt');
+  fs.mkdirSync(importedWorkspaceRoot, { recursive: true });
+  fs.mkdirSync(outsidePrefixBatch, { recursive: true });
+  fs.mkdirSync(outsideExactBatch, { recursive: true });
+  fs.writeFileSync(outsideImportedSentinel, 'keep', 'utf-8');
+  fs.symlinkSync(outsideImportedImages, importedPaths.importedImagesDir, 'dir');
+
+  coreWorkspaceCleanup.deleteImportedImageBatches(importedWorkspaceRoot, 'technical-plan');
+  coreWorkspaceCleanup.deleteImportedImageBatchesForExactScope(importedWorkspaceRoot, 'rejection-check-bid');
+  assert(fs.lstatSync(importedPaths.importedImagesDir).isSymbolicLink(), 'workspace cleanup: imported-images 中间 symlink 保持存在');
+  assert(fs.existsSync(outsidePrefixBatch), 'workspace cleanup: imported-images symlink 外部前缀批次保留');
+  assert(fs.existsSync(outsideExactBatch), 'workspace cleanup: imported-images symlink 外部 exact 批次保留');
+  assert(fs.readFileSync(outsideImportedSentinel, 'utf-8') === 'keep', 'workspace cleanup: imported-images symlink 外部 sentinel 保留');
+
+  const targetLinkWorkspaceRoot = path.join(tmpDir, 'cleanup-target-link-workspace');
+  const outsideTargetDirectory = path.join(tmpDir, 'cleanup-target-link-outside');
+  const outsideTargetSentinel = path.join(outsideTargetDirectory, 'sentinel.txt');
+  const targetLink = path.join(targetLinkWorkspaceRoot, 'target-link');
+  fs.mkdirSync(targetLinkWorkspaceRoot, { recursive: true });
+  fs.mkdirSync(outsideTargetDirectory, { recursive: true });
+  fs.writeFileSync(outsideTargetSentinel, 'keep', 'utf-8');
+  fs.symlinkSync(outsideTargetDirectory, targetLink, 'dir');
+
+  assert(
+    coreWorkspaceCleanup.removeWorkspaceDirectory(targetLinkWorkspaceRoot, targetLink) === true,
+    'workspace cleanup: 目标本身为 symlink 时允许删除链接',
+  );
+  assert(!fs.existsSync(targetLink), 'workspace cleanup: 目标 symlink 已删除');
+  assert(fs.existsSync(outsideTargetDirectory), 'workspace cleanup: 目标 symlink 的外部目录保留');
+  assert(fs.readFileSync(outsideTargetSentinel, 'utf-8') === 'keep', 'workspace cleanup: 目标 symlink 的外部 sentinel 保留');
+
+  const canonicalWorkspaceRoot = path.join(tmpDir, 'cleanup-canonical-workspace');
+  const linkedWorkspaceRoot = path.join(tmpDir, 'cleanup-linked-workspace');
+  const linkedInsideTarget = path.join(linkedWorkspaceRoot, 'inside-target');
+  fs.mkdirSync(path.join(canonicalWorkspaceRoot, 'inside-target'), { recursive: true });
+  fs.symlinkSync(canonicalWorkspaceRoot, linkedWorkspaceRoot, 'dir');
+  assert(
+    coreWorkspaceCleanup.removeWorkspaceDirectory(linkedWorkspaceRoot, linkedInsideTarget) === true,
+    'workspace cleanup: workspaceRoot 自身为 symlink 时使用 canonical root',
+  );
+  assert(!fs.existsSync(path.join(canonicalWorkspaceRoot, 'inside-target')), 'workspace cleanup: canonical workspace 内目标已删除');
 }
 
 function runPortableStoreChecks(tmpDir) {
@@ -908,6 +1000,10 @@ function run() {
   console.log(`\n=== Portable Core 测试结果 ===`);
   console.log(`通过: ${passed.length}`);
   console.log(`失败: ${failed.length}`);
+  console.log(`跳过: ${skipped.length}`);
+  skipped.forEach((message) => {
+    console.log(`  - ${message}`);
+  });
 
   if (failed.length > 0) {
     console.log('\n失败项:');
@@ -929,6 +1025,10 @@ try {
   console.log(`\n=== Portable Core 测试结果 ===`);
   console.log(`通过: ${passed.length}`);
   console.log(`失败: ${failed.length}`);
+  console.log(`跳过: ${skipped.length}`);
+  skipped.forEach((message) => {
+    console.log(`  - ${message}`);
+  });
   failed.forEach((message) => {
     console.log(`  - ${message}`);
   });
