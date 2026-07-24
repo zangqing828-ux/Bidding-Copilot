@@ -7,7 +7,7 @@
   color: var(--yb-text);
   background:
     radial-gradient(circle at 82% 6%, rgba(17, 24, 39, 0.13), transparent 30%),
-    radial-gradient(circle at 18% 16%, rgba(91, 84, 211, 0.1), transparent 32%),
+    radial-gradient(circle at 18% 16%, rgba(17, 24, 39, 0.1), transparent 32%),
     linear-gradient(180deg, #ffffff 0%, var(--yb-bg) 48%, #f1f6ff 100%);
 }
 
@@ -61,7 +61,7 @@
   pointer-events: none;
   background:
     linear-gradient(145deg, rgba(17, 24, 39, 0.07), transparent 34%),
-    radial-gradient(circle at 50% 0%, rgba(91, 84, 211, 0.09), transparent 26%);
+    radial-gradient(circle at 50% 0%, rgba(17, 24, 39, 0.09), transparent 26%);
 }
 
 .brand-block,
@@ -246,7 +246,7 @@
   flex: 0 0 34px;
   place-items: center;
   color: inherit;
-  background: linear-gradient(150deg, rgba(17, 24, 39, 0.1), rgba(91, 84, 211, 0.07));
+  background: linear-gradient(150deg, rgba(17, 24, 39, 0.1), rgba(17, 24, 39, 0.07));
   border: 1px solid rgba(17, 24, 39, 0.1);
   border-radius: 12px;
   transition: background var(--yb-duration-fast) ease, border-color var(--yb-duration-fast) ease;

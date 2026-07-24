@@ -101,6 +101,19 @@ jobs:
         env:
           CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
 
+      - name: Run Web Files tests
+        run: npm run test:web-files
+        env:
+          CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
+
+      - name: Run Web Export tests
+        run: npm run test:web-export
+        env:
+          CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
+
+      - name: Docker build
+        run: docker build -t bidding-copilot-web:ci .
+
       - name: Block critical production vulnerabilities
         run: npm audit --omit=dev --audit-level=critical
 

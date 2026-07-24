@@ -1,0 +1,16 @@
+node_modules
+client/node_modules
+client/release
+client/data
+client/dist
+.git
+.github
+.planning
+*.md
+*.log
+.env
+.env.*
+!.env.example
+analytics
+client/.tmp-opencode-download
+client/vendor

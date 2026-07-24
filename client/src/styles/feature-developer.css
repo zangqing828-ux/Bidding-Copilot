@@ -277,7 +277,7 @@
   overflow: hidden;
   padding: 32px;
   background:
-    radial-gradient(circle at 86% 14%, rgba(91, 84, 211, 0.18), transparent 32%),
+    radial-gradient(circle at 86% 14%, rgba(17, 24, 39, 0.18), transparent 32%),
     linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(246, 249, 255, 0.94));
 }
 
@@ -434,7 +434,7 @@
 
 .business-bid-demo .demo-hero-card {
   background:
-    radial-gradient(circle at 88% 16%, rgba(91, 84, 211, 0.18), transparent 34%),
+    radial-gradient(circle at 88% 16%, rgba(17, 24, 39, 0.18), transparent 34%),
     linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(245, 248, 255, 0.94));
 }
 

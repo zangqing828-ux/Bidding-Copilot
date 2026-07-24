@@ -12,10 +12,11 @@ const authRouter = require('./routes/auth.cjs');
 const uploadsRouter = require('./routes/uploads.cjs');
 const downloadsRouter = require('./routes/downloads.cjs');
 const sseRouter = require('./routes/sse.cjs');
+const readinessRouter = require('./routes/readiness.cjs');
 const { requireAuth } = require('./middleware/requireAuth.cjs');
 
 // 公开路由前缀：不需要登录即可访问。
-const PUBLIC_API_PREFIXES = ['/api/health', '/api/runtime-config', '/api/auth/login', '/api/auth/callback', '/api/auth/mock-login', '/api/auth/mock-callback'];
+const PUBLIC_API_PREFIXES = ['/api/health', '/api/runtime-config', '/api/readiness', '/api/auth/login', '/api/auth/callback', '/api/auth/mock-login', '/api/auth/mock-callback'];
 
 function isPublicApi(pathname) {
   return PUBLIC_API_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(prefix + '/'));
@@ -23,6 +24,9 @@ function isPublicApi(pathname) {
 
 function createApp() {
   const app = express();
+
+  // trust proxy：生产环境在反向代理后正确获取客户端 IP 和协议
+  app.set('trust proxy', config.isProduction ? 1 : false);
 
   app.use(compression());
   app.use(express.json({ limit: config.bodyLimit }));
@@ -40,6 +44,7 @@ function createApp() {
   // 公开 API 路由（无需登录）
   app.use('/api', healthRouter);
   app.use('/api', runtimeConfigRouter);
+  app.use('/api', readinessRouter);
   app.use('/api', authRouter);
 
   // 接口保护：非公开 /api 路由需要登录

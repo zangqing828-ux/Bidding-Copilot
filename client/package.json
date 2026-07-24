@@ -18,8 +18,9 @@
     "prepare-opencode-tools": "node scripts/prepare-opencode-tools.cjs",
     "verify-opencode-tools": "node scripts/verify-opencode-tools.cjs",
     "smoke:electron-native": "electron scripts/electron-native-smoke.cjs",
+    "presmoke:electron-native": "electron-builder install-app-deps",
     "start": "electron .",
-    "predev": "electron-builder install-app-deps",
+    "prestart": "electron-builder install-app-deps",
     "dev:web": "concurrently -k -n web,api -c blue,magenta \"vite --host 127.0.0.1 --port 5173 --strictPort\" \"wait-on http://127.0.0.1:5173 && cross-env OAUTH_MODE=mock SESSION_SECRET=dev-secret node server/index.cjs\"",
     "predev:web": "npm rebuild better-sqlite3 --runtime=node",
     "build:web": "tsc --noEmit && vite build",
@@ -27,7 +28,10 @@
     "start:web": "node server/index.cjs",
     "test:web-auth": "node scripts/test-web-auth.cjs",
     "test:web-workspace": "node scripts/test-web-workspace.cjs",
-    "test:web-tasks": "node scripts/test-web-tasks.cjs"
+    "test:web-tasks": "node scripts/test-web-tasks.cjs",
+    "test:web-files": "node scripts/test-web-files.cjs",
+    "test:web-export": "node scripts/test-web-export.cjs",
+    "test:web": "npm run test:web-auth && npm run test:web-workspace && npm run test:web-tasks && npm run test:web-files && npm run test:web-export"
   },
   "build": {
     "appId": "com.yibiao.openbidkit",

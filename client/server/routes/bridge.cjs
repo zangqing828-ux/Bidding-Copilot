@@ -1,61 +1,121 @@
 // POST /api/bridge：统一业务 API 入口。
-// Sprint 04：实现 config 命名空间（加密配置读写），其他 namespace 仍返回 501。
+// Sprint 04-07：config/tasks/technicalPlan/knowledgeBase/duplicateCheck/rejectionCheck/templates 已实现。
+// ai/agent/export 的 Electron 依赖方法返回 501，待 Linux Runtime/渲染/导出适配后实现。
 const express = require('express');
 const { getWorkspaceContext } = require('../workspace/workspaceRegistry.cjs');
 
 const router = express.Router();
 
-// 已实现的 namespace.method 分发器。
+// 通用 dispatcher 构建器：映射接口方法名到 Store 实际方法名。
+function buildStoreDispatcher(storeName, methodMap) {
+  const dispatcher = {};
+  for (const [ifaceMethod, storeMethod] of Object.entries(methodMap)) {
+    dispatcher[ifaceMethod] = (ctx, args) => {
+      const store = ctx.stores[storeName];
+      if (!store || typeof store[storeMethod] !== 'function') {
+        throw new Error(`${storeName}.${storeMethod} 不可用`);
+      }
+      return store[storeMethod](...args);
+    };
+  }
+  return dispatcher;
+}
+
 const dispatchers = {
   config: {
-    load: (ctx, _args) => {
-      return ctx.configStore.load();
-    },
-    save: (ctx, args) => {
-      const [config] = args;
-      return ctx.configStore.save(config);
-    },
-    listModels: () => {
-      throw new Error('config.listModels 尚未在 Web 端实现');
-    },
-    openConfigFolder: () => {
-      throw new Error('config.openConfigFolder 尚未在 Web 端实现');
-    },
+    load: (ctx) => ctx.configStore.load(),
+    save: (ctx, args) => ctx.configStore.save(args[0]),
+    listModels: () => { throw new Error('config.listModels 尚未在 Web 端实现'); },
+    openConfigFolder: () => { throw new Error('config.openConfigFolder 尚未在 Web 端实现'); },
   },
+
+  technicalPlan: buildStoreDispatcher('technicalPlanStore', {
+    loadState: 'loadTechnicalPlan',
+    readTenderMarkdown: 'readTenderMarkdown',
+    readTenderSourceMarkdown: 'readTenderSourceMarkdown',
+    readOriginalPlanMarkdown: 'readOriginalPlanMarkdown',
+    updateStep: 'updateStep',
+    setWorkflowKind: 'setWorkflowKind',
+    switchWorkflowKind: 'switchWorkflowKind',
+    saveBidAnalysisConfig: 'saveBidAnalysisConfig',
+    saveOutlineConfig: 'saveOutlineConfig',
+    saveOutline: 'saveOutline',
+    saveGlobalFacts: 'saveGlobalFacts',
+    saveContentGenerationOptions: 'saveContentGenerationOptions',
+    saveChapterContent: 'saveChapterContent',
+    clear: 'clearTechnicalPlan',
+    checkBidSections: 'checkBidSections',
+    selectBidSection: 'selectBidSection',
+  }),
+  // 文件导入方法依赖上传后的 fileId，需要适配层转换
+  importTenderDocument: undefined,
+  importOriginalPlanDocument: undefined,
+
+  knowledgeBase: buildStoreDispatcher('knowledgeBaseStore', {
+    getMigrationStatus: 'getMigrationStatus',
+    migrateLegacy: 'migrateLegacy',
+    renameFolder: 'renameFolder',
+    deleteFolder: 'deleteFolder',
+    deleteDocument: 'deleteDocument',
+    moveDocument: 'moveDocument',
+    retryDocument: 'recoverInterruptedDocuments',
+    readMarkdown: 'readMarkdown',
+    readItems: 'readItems',
+    readAnalysis: 'readAnalysis',
+  }),
+  // list/createFolder/uploadDocuments/startMatching 依赖 knowledgeBaseService（需要 aiService）
+
+  duplicateCheck: buildStoreDispatcher('duplicateCheckStore', {
+    loadState: 'loadDuplicateCheck',
+    saveFiles: 'saveFiles',
+    saveUiState: 'saveUiState',
+    updateState: 'updateDuplicateCheck',
+    clear: 'clearDuplicateCheck',
+  }),
+
+  rejectionCheck: buildStoreDispatcher('rejectionCheckStore', {
+    loadState: 'loadRejectionCheck',
+    removeDocument: 'removeDocument',
+    saveUiState: 'saveUiState',
+    updateState: 'updateRejectionCheck',
+    clear: 'clearRejectionCheck',
+    importTenderFromTechnicalPlan: 'importTenderFromTechnicalPlan',
+  }),
+
+  templates: buildStoreDispatcher('templateStore', {
+    list: 'listTemplates',
+    get: 'getTemplate',
+    create: 'createTemplate',
+    update: 'updateTemplate',
+    delete: 'deleteTemplate',
+  }),
+
   tasks: {
-    getActiveTasks: (ctx, _args) => {
-      return ctx.taskService.getActiveTasks();
-    },
-    // 任务启动方法依赖真实 aiService，留到后续 Sprint
-    startBidSectionExtraction: () => {
-      throw new Error('Web 端任务启动尚未实现');
-    },
-    startBidAnalysis: () => {
-      throw new Error('Web 端任务启动尚未实现');
-    },
-    startOutlineGeneration: () => {
-      throw new Error('Web 端任务启动尚未实现');
-    },
-    startGlobalFactsGeneration: () => {
-      throw new Error('Web 端任务启动尚未实现');
-    },
-    startContentGeneration: () => {
-      throw new Error('Web 端任务启动尚未实现');
-    },
-    pauseContentGeneration: () => {
-      throw new Error('Web 端任务暂停尚未实现');
-    },
-    startRejectionItemsExtraction: () => {
-      throw new Error('Web 端任务启动尚未实现');
-    },
-    startRejectionCheck: () => {
-      throw new Error('Web 端任务启动尚未实现');
-    },
-    startDuplicateAnalysis: () => {
-      throw new Error('Web 端任务启动尚未实现');
-    },
+    getActiveTasks: (ctx) => ctx.taskService.getActiveTasks(),
+    startBidSectionExtraction: () => { throw new Error('Web 端任务启动尚未实现（需要真实 AI 服务）'); },
+    startBidAnalysis: () => { throw new Error('Web 端任务启动尚未实现（需要真实 AI 服务）'); },
+    startOutlineGeneration: () => { throw new Error('Web 端任务启动尚未实现（需要真实 AI 服务）'); },
+    startGlobalFactsGeneration: () => { throw new Error('Web 端任务启动尚未实现（需要真实 AI 服务）'); },
+    startContentGeneration: () => { throw new Error('Web 端任务启动尚未实现（需要真实 AI 服务）'); },
+    pauseContentGeneration: () => { throw new Error('Web 端任务暂停尚未实现'); },
+    startRejectionItemsExtraction: () => { throw new Error('Web 端任务启动尚未实现（需要真实 AI 服务）'); },
+    startRejectionCheck: () => { throw new Error('Web 端任务启动尚未实现（需要真实 AI 服务）'); },
+    startDuplicateAnalysis: () => { throw new Error('Web 端任务启动尚未实现（需要真实 AI 服务）'); },
   },
+
+  file: {
+    selectDuplicateCheckFiles: () => { throw new Error('Web 端文件选择尚未实现（需要上传适配）'); },
+  },
+
+  // ai/agent/export 的 Electron 依赖方法返回 501（未注册，走 fallback）
 };
+
+// 文件导入方法单独注册（抛错说明需要适配）
+dispatchers.technicalPlan.importTenderDocument = () => { throw new Error('Web 端文件导入尚未实现（需要上传+解析适配）'); };
+dispatchers.technicalPlan.importOriginalPlanDocument = () => { throw new Error('Web 端文件导入尚未实现（需要上传+解析适配）'); };
+dispatchers.knowledgeBase.uploadDocuments = () => { throw new Error('Web 端文件上传尚未实现（需要 multipart 上传适配）'); };
+dispatchers.knowledgeBase.startMatching = () => { throw new Error('Web 端知识库匹配尚未实现（需要真实 AI 服务）'); };
+dispatchers.rejectionCheck.importDocument = () => { throw new Error('Web 端文件导入尚未实现（需要上传+解析适配）'); };
 
 router.post('/bridge', (req, res) => {
   const { namespace, method, args } = req.body || {};
@@ -78,7 +138,6 @@ router.post('/bridge', (req, res) => {
 
   try {
     const result = nsDispatcher[method](ctx, args || []);
-    // 支持同步和 Promise 返回
     Promise.resolve(result).then((data) => {
       res.json({ code: 'OK', data });
     }).catch((err) => {
