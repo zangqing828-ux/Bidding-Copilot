@@ -117,12 +117,31 @@ function loadWebBridgeRuntimeForEventCheck() {
     throw new Error(`Unexpected require in webBridge runtime load: ${request}`);
   };
 
-  const wrapped = new Function('require', 'exports', 'module', '__filename', '__dirname', `${transpiled}\nreturn module.exports;`);
-  global.window = { open: () => {} };
-  global.EventSource = FakeEventSource;
+  const fakeWindow = {
+    open: () => {},
+  };
+
+  const wrapped = new Function(
+    'require',
+    'exports',
+    'module',
+    '__filename',
+    '__dirname',
+    'window',
+    'EventSource',
+    `${transpiled}\nreturn module.exports;`
+  );
 
   const module = { exports: {} };
-  const moduleExports = wrapped(fakeRequire, module.exports, module, '/tmp/webBridge.ts', '/tmp');
+  const moduleExports = wrapped(
+    fakeRequire,
+    module.exports,
+    module,
+    '/tmp/webBridge.ts',
+    '/tmp',
+    fakeWindow,
+    FakeEventSource,
+  );
   const exportedBridge = moduleExports.webBridge || module.exports.webBridge;
 
   assert(Boolean(exportedBridge), 'webBridge 对象可从 TypeScript transpileModule 加载');
@@ -133,14 +152,6 @@ function loadWebBridgeRuntimeForEventCheck() {
     fakeEventSources,
     fakeEventSourceCtor: FakeEventSource,
   };
-}
-
-function getLeafFromManifest(manifestKey) {
-  const [, ...parts] = manifestKey.split('.');
-  if (parts.length === 0) {
-    return null;
-  }
-  return parts.join('.');
 }
 
 function assertSetEqual(actualSet, expectedSet, label) {
