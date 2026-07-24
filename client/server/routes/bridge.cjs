@@ -258,7 +258,7 @@ router.post('/bridge', (req, res) => {
       return res.status(410).json(createErrorPayload('WEB_BRIDGE_REMOVED', '该功能已下线'));
     }
 
-    return res.status(410).json(createErrorPayload('WEB_BRIDGE_REMOVED', '该能力暂不可用，已暂时下线'));
+    return res.status(500).json(createErrorPayload('BRIDGE_CONTRACT_MISMATCH', '契约来源配置异常：removed source 未识别'));
   }
   if (contract.status === 'pending') {
     return res.status(501).json(createErrorPayload('WEB_CAPABILITY_PENDING', '该能力在 Web 端尚未提供'));

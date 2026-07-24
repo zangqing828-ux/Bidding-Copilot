@@ -54,24 +54,6 @@ const DESKTOP_ONLY_CAPABILITIES = [
   'events.onUpdateError',
 ];
 
-const UPDATER_GUARD_CAPABILITIES = [
-  'events.onUpdateProgress',
-  'events.onUpdateDownloaded',
-  'events.onUpdateError',
-  'app.getGpuHardwareAccelerationStatus',
-  'app.saveGpuHardwareAccelerationPreference',
-  'app.startGpuHardwareAccelerationTrial',
-  'app.relaunchWithGpuHardwareAccelerationDisabled',
-  'app.getLatestVersion',
-  'app.getUpdateDownloadUrl',
-  'app.checkUpdate',
-  'app.startUpdate',
-  'app.quitAndInstall',
-  'config.openConfigFolder',
-  'developerTokenStats.openWindow',
-  'export.openFile',
-];
-
 const REQUIRED_WEB_BRIDGE_META_KEYS = [
   'members.appName',
   'members.platform',
@@ -93,6 +75,13 @@ const requiredMetaFields = ['status', 'owner', 'workPackage', 'transport', 'cont
 
 function resolvePropertyPath(target, pathParts) {
   return pathParts.reduce((current, part) => (current && typeof current === 'object' ? current[part] : undefined), target);
+}
+
+function assertSourceContains(source, regexOrText, label) {
+  const matched = typeof regexOrText === 'string'
+    ? source.includes(regexOrText)
+    : regexOrText.test(source);
+  assert(matched, label);
 }
 
 function extractErrorCode(error) {
@@ -642,18 +631,49 @@ async function runBridgeBehavior(inject, context) {
     }
   }
 
-  for (const updaterCapability of UPDATER_GUARD_CAPABILITIES) {
-    const entry = contractMap.get(updaterCapability);
-    assert(Boolean(entry), `${updaterCapability} 必须在 manifest 声明`);
-    if (!entry) {
-      continue;
-    }
+  const updateNotifierSource = readSource('src/app/UpdateNotifier.tsx');
+  assertSourceContains(
+    updateNotifierSource,
+    /const isWeb = window\.yibiao\?\.platform === ['"]web['"]/,
+    'UpdateNotifier 识别 web 平台',
+  );
+  assertSourceContains(
+    updateNotifierSource,
+    /if \(!isWeb\) {\s*void checkUpdate\(\);\s*}/s,
+    'UpdateNotifier web 平台不调用 checkUpdate',
+  );
+  assertSourceContains(
+    updateNotifierSource,
+    /void checkRemoteNotice\(\)/,
+    'UpdateNotifier 保留远程公告检查',
+  );
 
-    assert(entry.status === 'removed', `${updaterCapability} 为 removed 能力`);
-    assert(entry.source === 'desktop-only', `${updaterCapability} 来源为 desktop-only`);
-    assert(entry.owner === 'desktop', `${updaterCapability} owner 为 desktop`);
-    assert(entry.workPackage === 'WP-A', `${updaterCapability} workPackage 为 WP-A`);
-  }
+  const settingsPageSource = readSource('src/features/settings/pages/SettingsPage.tsx');
+  assertSourceContains(
+    settingsPageSource,
+    /const isWebPlatform = window\.yibiao\?\.platform === ['"]web['"]/,
+    'SettingsPage 识别 web 平台',
+  );
+  assertSourceContains(
+    settingsPageSource,
+    /void window\.yibiao\?\.getVersion\(\)\.then\(setAppVersion\)/,
+    'web 平台不会调用 getVersion',
+  );
+  assertSourceContains(
+    settingsPageSource,
+    /if \(isWebPlatform\) {\s*setUpdateStatus\('disabled'\);\s*return;\s*}/s,
+    'SettingsPage web 分支跳过 checkForUpdates 执行',
+  );
+  assertSourceContains(
+    settingsPageSource,
+    /if \(isWebPlatform\) {\s*return;\s*}\s*try {\s*const result = await window\.yibiao\?\.quitAndInstall\(\);/s,
+    'SettingsPage web 分支不调用 quitAndInstall',
+  );
+  assertSourceContains(
+    settingsPageSource,
+    /{!isWebPlatform \? \(/,
+    'SettingsPage web 平台不渲染自动更新卡片',
+  );
 
   assertRemovedProductWhitelist(removedProductEntries);
 
@@ -836,8 +856,8 @@ async function runBridgeBehavior(inject, context) {
     };
     try {
       const unknownRemovedRes = await statusPayload({ namespace: 'tasks', method: unknownRemovedMethod, args: [] });
-      assert(unknownRemovedRes.response.statusCode === 410, '未知 removed source 返回 410');
-      assert(unknownRemovedRes.payload.code === 'WEB_BRIDGE_REMOVED', '未知 removed source 使用 WEB_BRIDGE_REMOVED');
+      assert(unknownRemovedRes.response.statusCode === 500, '未知 removed source 返回 500');
+      assert(unknownRemovedRes.payload.code === 'BRIDGE_CONTRACT_MISMATCH', '未知 removed source 使用 BRIDGE_CONTRACT_MISMATCH');
       assert(Boolean(String(unknownRemovedRes.payload.message || '')), '未知 removed source 有明确错误文案');
     } finally {
       if (originalUnknownRemoved === undefined) {

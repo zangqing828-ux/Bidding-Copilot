@@ -76,7 +76,7 @@ async function runTests() {
     }, { namespace: 'export', method: 'openFile', args: ['/tmp/test.docx'] });
     assert(res.statusCode === 410, 'export.openFile 返回 410');
     const body = JSON.parse(res.body);
-    assert(body.code === 'WEB_BRIDGE_REMOVED', 'export.openFile 返回 WEB_BRIDGE_REMOVED');
+    assert(body.code === 'WEB_BRIDGE_DESKTOP_ONLY', 'export.openFile 返回 WEB_BRIDGE_DESKTOP_ONLY');
   }
 }
 
