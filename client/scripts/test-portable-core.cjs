@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const Module = require('node:module');
 const os = require('node:os');
 const path = require('node:path');
+const ts = require('typescript');
 const { spawnSync } = require('node:child_process');
 
 const coreWorkspacePaths = require('../core/workspacePaths.cjs');
@@ -112,54 +113,35 @@ function isPathUnderDirectory(targetPath, directory) {
   return normalizedTarget.startsWith(normalizedDirectory);
 }
 
-function normalizeLiteralString(literal) {
-  return literal
-    .replace(/\\\\/g, '\\')
-    .replace(/\\'/g, "'")
-    .replace(/\\"/g, '"')
-    .replace(/\\n/g, '\n')
-    .replace(/\\r/g, '\r')
-    .replace(/\\t/g, '\t')
-    .replace(/\\b/g, '\b')
-    .replace(/\\f/g, '\f')
-    .replace(/\\v/g, '\v');
-}
-
-function parseRequireLiteralArgument(rawArg) {
-  const trimmed = rawArg.trim();
-  const singleQuoted = trimmed.match(/^'((?:\\.|[^'\\])*)'$/);
-  if (singleQuoted) {
-    return normalizeLiteralString(singleQuoted[1]);
-  }
-  const doubleQuoted = trimmed.match(/^"((?:\\.|[^"\\])*)"$/);
-  if (doubleQuoted) {
-    return normalizeLiteralString(doubleQuoted[1]);
-  }
-  return null;
-}
-
-function stripSourceForRequireScan(source) {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/\/\/.*(?=[\r\n]|$)/g, ' ')
-    .replace(/'[^'\\\r\n]*(?:\\.[^'\\\r\n]*)*'/g, '')
-    .replace(/"[^"\\\r\n]*(?:\\.[^"\\\r\n]*)*"/g, '')
-    .replace(/`[^`\\]*(?:\\.[^`\\]*)*`/g, '');
-}
-
 function scanRequireCalls(filePath, source) {
-  const sanitized = stripSourceForRequireScan(source);
-  const requireCallPattern = /\brequire\s*\(\s*([^)]+?)\s*\)/g;
-  const matches = [];
-  let match;
-  while ((match = requireCallPattern.exec(sanitized)) !== null) {
-    matches.push({
-      file: filePath,
-      expression: match[1],
-      raw: match[0],
-    });
+  const sourceFile = ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const calls = [];
+
+  function visit(node) {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      if (ts.isIdentifier(callee) && callee.text === 'require') {
+        const callText = source.slice(node.getStart(), node.getEnd());
+        const argNode = node.arguments[0];
+        const hasSingleArg = node.arguments.length === 1;
+        const argText = argNode ? source.slice(argNode.getStart(), argNode.getEnd()) : '';
+        const literalArg = hasSingleArg && (ts.isStringLiteral(argNode) || ts.isNoSubstitutionTemplateLiteral(argNode))
+          ? argNode.text
+          : null;
+
+        calls.push({
+          file: filePath,
+          expression: literalArg,
+          raw: callText,
+          argText,
+          computed: !hasSingleArg || literalArg === null,
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
   }
-  return matches;
+  visit(sourceFile);
+  return calls;
 }
 
 function resolveLocalDependency(currentFilePath, request) {
@@ -196,11 +178,11 @@ function collectReachableCoreDeps(seedFiles, reasonPrefix = '依赖图扫描') {
     const source = fs.readFileSync(filePath, 'utf-8');
     const calls = scanRequireCalls(filePath, source);
     calls.forEach((call) => {
-      const literalArg = parseRequireLiteralArgument(call.expression);
-      if (literalArg === null) {
+      if (call.computed) {
         throw new Error(`${reasonPrefix}: 非字面量 require 调用 ${call.raw} 在 ${path.relative(CLIENT_DIR, call.file)}`);
       }
 
+      const literalArg = call.expression;
       if (literalArg === 'electron' || literalArg === 'node:electron' || literalArg.startsWith('electron/')) {
         throw new Error(`${reasonPrefix}: 禁止直接 require(${literalArg}) 在 ${path.relative(CLIENT_DIR, filePath)}`);
       }
@@ -307,18 +289,37 @@ function assertCoreHasNoElectronDependencies() {
   collectReachableCoreDeps(coreFiles, '依赖图扫描');
   runChildProcessCoreIsolationCheck(coreFiles);
 
-  const fixtureDir = trackDir(fs.mkdtempSync(path.join(os.tmpdir(), 'portable-core-fixture-')));
-  const fixturePath = path.join(fixtureDir, 'dynamic-require.cjs');
-  fs.writeFileSync(fixturePath, "require(['elec', 'tron'].join(''));\n");
+  const fixtureDir = trackDir(fs.mkdtempSync(path.join(CLIENT_DIR, 'tmp-portable-core-fixture-')));
+
+  const reachableFixturePath = path.join(fixtureDir, 'reachable-require-entry.cjs');
+  const reachableFixtureDep = path.join(fixtureDir, 'reachable-require-dep.cjs');
+  const computedFixturePath = path.join(fixtureDir, 'computed-require-entry.cjs');
+  const computedFixtureDep = path.join(fixtureDir, 'computed-require-helper.cjs');
+
+  fs.writeFileSync(reachableFixtureDep, 'module.exports = {};\n');
+  fs.writeFileSync(reachableFixturePath, `// 注释里的 require('electron') 不应触发静态扫描\nconst ignore = "require('electron')";\nrequire('./reachable-require-dep.cjs');\nmodule.exports = ignore;\n`);
+  fs.writeFileSync(computedFixtureDep, "module.exports = require(['elec', 'tron'].join(''));\n");
+  fs.writeFileSync(computedFixturePath, "require('./computed-require-helper.cjs');\n");
+
+  const reachableDeps = collectReachableCoreDeps([reachableFixturePath], '依赖图扫描');
+  assert(
+    reachableDeps.some((candidate) => path.basename(candidate) === path.basename(reachableFixtureDep)),
+    '依赖图扫描: 递归 require 工作于合法字面量依赖',
+  );
+
   let dynamicFailureMessage;
   try {
-    collectReachableCoreDeps([fixturePath], '依赖图扫描');
+    collectReachableCoreDeps([computedFixturePath], '依赖图扫描');
   } catch (error) {
     dynamicFailureMessage = error && error.message ? error.message : String(error);
   }
   assert(
     Boolean(dynamicFailureMessage),
     "依赖图扫描: 计算型 require(['elec', 'tron'].join('')) 应被拒绝",
+  );
+  assert(
+    dynamicFailureMessage.includes('非字面量 require'),
+    '依赖图扫描: 计算型 require 失败原因应为非字面量',
   );
 }
 
@@ -329,10 +330,18 @@ function withFreshModuleOverrides(modulePath, overrides, callback) {
   const overrideByResolved = new Map();
 
   for (const [key, value] of overrides.entries()) {
-    if (key.includes(path.sep) || key.includes('/')) {
-      overrideByResolved.set(path.resolve(key), value);
-    } else {
-      overrideByRequest.set(key, value);
+    overrideByRequest.set(key, value);
+    try {
+      const resolved = Module._resolveFilename(key, {
+        id: resolvedModulePath,
+        filename: resolvedModulePath,
+        paths: Module._nodeModulePaths(path.dirname(resolvedModulePath)),
+      });
+      if (resolved && typeof resolved === 'string') {
+        overrideByResolved.set(path.resolve(resolved), value);
+      }
+    } catch {
+      // keep request-only mapping
     }
   }
   let freshModule;
@@ -345,8 +354,8 @@ function withFreshModuleOverrides(modulePath, overrides, callback) {
       }
       const resolvedRequest = Module._resolveFilename(request, parent, isMain);
       const normalizedResolvedRequest = path.resolve(resolvedRequest);
-      if (overrideByResolved.has(normalizedResolvedRequest)) {
-        return overrideByResolved.get(normalizedResolvedRequest);
+      if (overrideByResolved.has(resolvedRequest) || overrideByResolved.has(normalizedResolvedRequest)) {
+        return overrideByResolved.get(overrideByResolved.has(resolvedRequest) ? resolvedRequest : normalizedResolvedRequest);
       }
       return originalLoad.apply(this, arguments);
     };
