@@ -520,7 +520,7 @@
 .knowledge-progress-track span {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, var(--yb-primary), #60a5fa);
+  background: linear-gradient(90deg, var(--yb-primary), #111827);
   border-radius: inherit;
   transition: width 0.2s ease;
 }
@@ -628,7 +628,7 @@
   inset: 0;
   z-index: 120;
   background: rgba(9, 16, 28, 0.52);
-  backdrop-filter: blur(8px);
+  backdrop-filter: none;
 }
 
 .knowledge-source-dialog-card {
@@ -724,7 +724,7 @@
 }
 
 .knowledge-item-content th {
-  background: #f1f6ff;
+  background: #f3f4f6;
 }
 
 .knowledge-item-card pre {

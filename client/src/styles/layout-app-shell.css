@@ -8,7 +8,7 @@
   background:
     radial-gradient(circle at 82% 6%, rgba(17, 24, 39, 0.13), transparent 30%),
     radial-gradient(circle at 18% 16%, rgba(17, 24, 39, 0.1), transparent 32%),
-    linear-gradient(180deg, #ffffff 0%, var(--yb-bg) 48%, #f1f6ff 100%);
+    linear-gradient(180deg, #ffffff 0%, var(--yb-bg) 48%, #f3f4f6 100%);
 }
 
 .app-shell.is-mac::before {

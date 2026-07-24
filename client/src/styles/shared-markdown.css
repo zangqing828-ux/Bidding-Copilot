@@ -136,7 +136,7 @@
   top: 0;
   z-index: 2;
   color: var(--yb-text);
-  background: #f1f6ff;
+  background: #f3f4f6;
 }
 
 .markdown-viewer th:first-child,
@@ -407,7 +407,7 @@
   inset: 0;
   z-index: 1100;
   background: rgba(9, 16, 28, 0.68);
-  backdrop-filter: blur(10px);
+  backdrop-filter: none;
 }
 
 .image-preview-card {
@@ -537,7 +537,7 @@
   inset: 0;
   z-index: 1000;
   background: rgba(15, 23, 42, 0.42);
-  backdrop-filter: blur(4px);
+  backdrop-filter: none;
 }
 
 .markdown-fullscreen-dialog,
@@ -550,7 +550,7 @@
   min-height: 0;
   overflow: hidden;
   padding: 0;
-  background: radial-gradient(circle at 18% 0%, rgba(229, 240, 255, 0.9), #f7fbff 42%, #eef5ff 100%);
+  background: radial-gradient(circle at 18% 0%, rgba(243, 244, 246, 0.9), #ffffff 42%, #f3f4f6 100%);
   border: 0;
   outline: none;
 }

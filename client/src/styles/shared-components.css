@@ -18,7 +18,7 @@
   border: 1px solid rgba(228, 233, 240, 0.92);
   border-radius: 999px;
   box-shadow: var(--yb-shadow-lg);
-  backdrop-filter: blur(18px);
+  backdrop-filter: none;
   -webkit-app-region: no-drag;
 }
 

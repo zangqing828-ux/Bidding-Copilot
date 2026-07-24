@@ -1047,7 +1047,7 @@
   align-content: start;
   background:
     radial-gradient(circle at top right, rgba(17, 24, 39, 0.16), transparent 42%),
-    linear-gradient(135deg, #ffffff, #f7fbff);
+    linear-gradient(135deg, #ffffff, #ffffff);
 }
 
 .about-card-head,

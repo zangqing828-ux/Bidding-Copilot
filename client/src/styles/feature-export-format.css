@@ -332,7 +332,7 @@
   z-index: 1001;
   overflow: hidden;
   padding: 0;
-  background: radial-gradient(circle at 20% 0%, rgba(229, 240, 255, 0.88), #f7fbff 42%, #eef5ff 100%);
+  background: radial-gradient(circle at 20% 0%, rgba(243, 244, 246, 0.88), #ffffff 42%, #f3f4f6 100%);
   border: 0;
   outline: none;
 }
