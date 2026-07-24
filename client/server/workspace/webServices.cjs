@@ -2,6 +2,66 @@
 // 真实 AI 请求和 Agent Runtime 留到后续 Sprint 实现。
 // 占位服务的方法存在但调用时抛 WEB_CAPABILITY_PENDING，确保 taskService 能实例化但任务执行不伪造成功。
 
+function createWebTaskServiceStub() {
+  const callbacks = new Set();
+
+  function createPendingError() {
+    return new Error('该能力在 Web 端尚未提供');
+  }
+
+  function subscribeCallback(callback) {
+    callbacks.add(callback);
+    return () => callbacks.delete(callback);
+  }
+
+  function unsubscribeCallback(callback) {
+    callbacks.delete(callback);
+  }
+
+  function close() {
+    callbacks.clear();
+  }
+
+  return {
+    getActiveTasks() {
+      return [];
+    },
+    subscribeCallback,
+    unsubscribeCallback,
+    close,
+    subscribe() {
+      throw createPendingError();
+    },
+    startBidSectionExtraction() {
+      return Promise.reject(createPendingError());
+    },
+    startBidAnalysis() {
+      return Promise.reject(createPendingError());
+    },
+    startOutlineGeneration() {
+      return Promise.reject(createPendingError());
+    },
+    startGlobalFactsGeneration() {
+      return Promise.reject(createPendingError());
+    },
+    startContentGeneration() {
+      return Promise.reject(createPendingError());
+    },
+    startRejectionItemsExtraction() {
+      return Promise.reject(createPendingError());
+    },
+    startRejectionCheck() {
+      return Promise.reject(createPendingError());
+    },
+    startDuplicateAnalysis() {
+      return Promise.reject(createPendingError());
+    },
+    pauseContentGeneration() {
+      return Promise.reject(createPendingError());
+    },
+  };
+}
+
 function createWebAiServiceStub() {
   const stubScope = {
     chat: () => Promise.reject(new Error('Web 端 AI 请求尚未实现')),
@@ -60,6 +120,7 @@ function createWebDuplicateCheckServiceStub({ duplicateCheckStore }) {
 }
 
 module.exports = {
+  createWebTaskServiceStub,
   createWebAiServiceStub,
   createWebAgentServiceStub,
   createWebKnowledgeBaseServiceStub,

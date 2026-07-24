@@ -388,17 +388,16 @@ function runWorkspaceRollbackCheck(tmpDir) {
     }],
     [require.resolve('../server/workspace/webServices.cjs'), {
       ...webServices,
+      createWebTaskServiceStub() {
+        throw expectedError;
+      },
       createWebAgentServiceStub() {
         return {
+          ...webServices.createWebAgentServiceStub(),
           close() {
             agentClosed = true;
           },
         };
-      },
-    }],
-    [require.resolve('../electron/services/taskService.cjs'), {
-      createTaskService() {
-        throw expectedError;
       },
     }],
   ]);

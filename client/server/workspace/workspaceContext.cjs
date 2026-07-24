@@ -3,6 +3,76 @@ const fs = require('node:fs');
 const { resolveWorkspacePaths } = require('../../core/workspacePaths.cjs');
 const { createWorkspaceRuntimeFactory } = require('./workspaceRuntimeFactory.cjs');
 
+function getCloseCandidate(target, label) {
+  if (!target || typeof target !== 'object') {
+    return { label, closeFn: null, cause: null };
+  }
+
+  try {
+    if (typeof target.close !== 'function') {
+      return { label, closeFn: null, cause: new Error(`${label} 缺少 close 方法`) };
+    }
+
+    return { label, closeFn: target.close };
+  } catch (error) {
+    return { label, closeFn: null, cause: error };
+  }
+}
+
+function collectFallbackCloseCandidates(runtime) {
+  return [
+    getCloseCandidate(runtime.taskEvents, 'runtime.taskEvents'),
+    getCloseCandidate(runtime.taskService, 'runtime.taskService'),
+    getCloseCandidate((runtime.ports && runtime.ports.agent) || runtime.agent, 'runtime.ports.agent/runtime.agent'),
+    getCloseCandidate(runtime.sqliteDatabase, 'runtime.sqliteDatabase'),
+  ];
+}
+
+function runCloseCandidates(targets) {
+  const errors = [];
+  const seen = new Set();
+
+  for (const target of targets) {
+    if (!target) {
+      continue;
+    }
+
+    if (target.cause) {
+      errors.push(target.cause);
+      continue;
+    }
+
+    const closeFn = target.closeFn;
+    if (typeof closeFn !== 'function' || seen.has(closeFn)) {
+      continue;
+    }
+
+    seen.add(closeFn);
+    try {
+      closeFn();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+
+  return errors;
+}
+
+function buildCloseError(errors) {
+  if (!errors.length) {
+    return null;
+  }
+  if (errors.length === 1) {
+    return errors[0];
+  }
+  const first = errors[0];
+  return new AggregateError(
+    errors,
+    `context.close: 关闭失败 (${errors.length} 项)`,
+    { cause: first },
+  );
+}
+
 function createWorkspaceContext({
   workspaceId,
   dataDir,
@@ -28,34 +98,18 @@ function createWorkspaceContext({
   if (!runtime || typeof runtime !== 'object') {
     throw new Error('runtimeFactory 必须返回对象');
   }
-  if (typeof runtime.close !== 'function') {
-    let cleanupError;
-    try {
-      runtime.close?.();
-    } catch (error) {
-      cleanupError = error;
+
+  const runtimeCloseCandidate = getCloseCandidate(runtime, 'runtime.close');
+  if (runtimeCloseCandidate.cause || !runtimeCloseCandidate.closeFn) {
+    const closeErrors = runCloseCandidates(collectFallbackCloseCandidates(runtime));
+    if (runtimeCloseCandidate.cause) {
+      closeErrors.unshift(runtimeCloseCandidate.cause);
+    } else {
+      closeErrors.push(new Error('runtime 缺少 close 方法'));
     }
 
-    if (runtime?.sqliteDatabase?.close && typeof runtime.sqliteDatabase.close === 'function') {
-      try {
-        runtime.sqliteDatabase.close();
-      } catch (closeError) {
-        if (cleanupError) {
-          cleanupError = new AggregateError(
-            [cleanupError, closeError],
-            'runtimeFactory 返回的运行时缺少 close 方法',
-          );
-        } else {
-          cleanupError = closeError;
-        }
-      }
-    }
-    if (cleanupError) {
-      const assembledError = new Error('runtimeFactory 返回的运行时缺少 close 方法');
-      assembledError.cleanupErrors = cleanupError;
-      throw assembledError;
-    }
-    throw new Error('runtimeFactory 返回的运行时缺少 close 方法');
+    const closeError = buildCloseError(closeErrors);
+    throw closeError || new Error('runtime 关闭能力无效');
   }
 
   let closed = false;
@@ -63,8 +117,9 @@ function createWorkspaceContext({
     if (closed) {
       return;
     }
+
+    runtimeCloseCandidate.closeFn.call(runtime);
     closed = true;
-    runtime.close();
   };
 
   return {

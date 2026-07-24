@@ -378,10 +378,19 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
    */
   function subscribeCallback(callback) {
     callbackSubscribers.add(callback);
-    for (const task of activeTasks.values()) {
-      callback({ task, ...getSnapshotForTask(task) });
+    try {
+      for (const task of activeTasks.values()) {
+        callback({ task, ...getSnapshotForTask(task) });
+      }
+    } catch (error) {
+      callbackSubscribers.delete(callback);
+      throw error;
     }
     return () => callbackSubscribers.delete(callback);
+  }
+
+  function unsubscribeCallback(callback) {
+    callbackSubscribers.delete(callback);
   }
 
   function getTaskField(type) {
@@ -899,6 +908,7 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
       recoverInterruptedDuplicateCheckTask();
       return Array.from(activeTasks.values());
     },
+    unsubscribeCallback,
     close,
   };
 }

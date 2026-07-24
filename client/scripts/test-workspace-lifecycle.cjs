@@ -9,9 +9,8 @@ const { assertPort, PORT_METHODS } = require('../core/ports.cjs');
 const { createTaskEventPort } = require('../core/taskEventPort.cjs');
 const { createWorkspaceContext } = require('../server/workspace/workspaceContext.cjs');
 
-const tests = [];
-const passes = [];
-const fails = [];
+const passed = [];
+const failed = [];
 const trackedTempDirs = new Set();
 
 function assert(condition, message) {
@@ -27,9 +26,8 @@ function expectThrow(fn, message) {
   } catch (error) {
     captured = error;
   }
-  tests.push(message);
   if (!captured) {
-    fails.push(`${message}（未抛错）`);
+    throw new Error(`${message}（未抛错）`);
   }
   return captured;
 }
@@ -37,10 +35,10 @@ function expectThrow(fn, message) {
 function run(name, fn) {
   try {
     fn();
-    passes.push(name);
+    passed.push(name);
     return true;
   } catch (error) {
-    fails.push(`${name}: ${error.message}`);
+    failed.push(`${name}: ${error.message}`);
     return false;
   }
 }
@@ -52,9 +50,7 @@ function trackTempDir(prefix) {
 }
 
 function cleanupTempDir(dir, label = '临时目录') {
-  if (!dir) {
-    return;
-  }
+  if (!dir) return;
   try {
     if (fs.existsSync(dir)) {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -67,6 +63,25 @@ function cleanupTempDir(dir, label = '临时目录') {
 
 function cleanupTrackedDirs() {
   for (const dir of Array.from(trackedTempDirs)) {
+    cleanupTempDir(dir, `临时目录 ${dir}`);
+  }
+}
+
+function cleanupContext(ctx) {
+  if (ctx && typeof ctx.close === 'function') {
+    try {
+      ctx.close();
+    } catch {
+      // 需要在调用层统计
+    }
+  }
+}
+
+function withTempDir(prefix, fn) {
+  const dir = trackTempDir(prefix);
+  try {
+    return fn(dir);
+  } finally {
     cleanupTempDir(dir, `临时目录 ${dir}`);
   }
 }
@@ -86,8 +101,8 @@ function withBlockedElectronRequire() {
   const script = `
     const Module = require('node:module');
     const factoryPath = ${JSON.stringify(factoryPath)};
-    const originalLoad = Module._load;
 
+    const originalLoad = Module._load;
     Module._load = function blockedLoad(request, parent, isMain) {
       if (request === 'electron' || request === 'node:electron' || (typeof request === 'string' && request.startsWith('electron/'))) {
         throw new Error('electron 依赖被禁止: ' + request);
@@ -96,15 +111,16 @@ function withBlockedElectronRequire() {
     };
 
     try {
-      const factoryModule = require(factoryPath);
-      if (!factoryModule || typeof factoryModule.createWorkspaceRuntimeFactory !== 'function') {
-        console.error('factory not loaded');
-        process.exit(1);
+      const { createWorkspaceRuntimeFactory } = require(factoryPath);
+      if (typeof createWorkspaceRuntimeFactory !== 'function') {
+        throw new Error('工厂导出缺失');
       }
       process.exit(0);
     } catch (error) {
       console.error(error && error.stack ? error.stack : String(error));
       process.exit(1);
+    } finally {
+      Module._load = originalLoad;
     }
   `;
 
@@ -113,22 +129,24 @@ function withBlockedElectronRequire() {
     cwd: process.cwd(),
     env: process.env,
   });
+
   if (result.error) {
     throw result.error;
   }
   return {
     ok: result.status === 0,
+    status: result.status,
     stdout: result.stdout,
     stderr: result.stderr,
-    status: result.status,
   };
 }
 
-run('ports: 七类契约声明完整且字段缺失可定位', () => {
-  assert(Object.keys(PORT_METHODS).length === 7, 'ports: 需保留七类端口声明');
-  assert(Array.isArray(PORT_METHODS.fileParser), 'ports: fileParser 声明存在');
-  assert(Array.isArray(PORT_METHODS.renderer), 'ports: renderer 声明存在');
-  assert(Array.isArray(PORT_METHODS.exporter), 'ports: exporter 声明存在');
+run('ports: 七类端口契约完整且缺失提示清晰', () => {
+  assert(Object.keys(PORT_METHODS).length === 7, '必须是七类端口契约');
+  assert(Array.isArray(PORT_METHODS.config) && PORT_METHODS.config.join(',') === 'load,save', 'config 契约不变');
+  assert(Array.isArray(PORT_METHODS.fileParser), 'fileParser 契约存在');
+  assert(Array.isArray(PORT_METHODS.renderer), 'renderer 契约存在');
+  assert(Array.isArray(PORT_METHODS.exporter), 'exporter 契约存在');
 
   assertPort('config', { load: () => ({}), save: () => ({}) });
   assertPort('fileParser', { parseDocument: () => '' });
@@ -148,11 +166,11 @@ run('ports: 七类契约声明完整且字段缺失可定位', () => {
   assertPort('exporter', { buildDocxBuffer: () => ({ success: true }) });
   assertPort('taskEvents', { subscribe: () => {}, close: () => {} });
 
-  const bad = expectThrow(() => assertPort('config', { load: () => {} }), 'ports: 缺少 save 时应抛错');
-  assert(bad instanceof Error && /缺少/.test(bad.message), 'ports: 缺少方法报错应包含“缺少”字样');
+  const bad = expectThrow(() => assertPort('config', { load: () => ({}) }), '缺少 save 应直接报错');
+  assert(/缺少/.test(bad.message), '缺少方法错误需含“缺少”');
 });
 
-run('taskEvents: 多订阅/单独取消/关闭聚合错误/幂等', () => {
+run('taskEvents: 多订阅/单独取消/close 聚合/幂等/异常路径', () => {
   const callbacks = new Set();
   const taskService = {
     subscribeCallback(callback) {
@@ -160,6 +178,9 @@ run('taskEvents: 多订阅/单独取消/关闭聚合错误/幂等', () => {
       return () => {
         callbacks.delete(callback);
       };
+    },
+    unsubscribeCallback(callback) {
+      callbacks.delete(callback);
     },
   };
 
@@ -177,344 +198,532 @@ run('taskEvents: 多订阅/单独取消/关闭聚合错误/幂等', () => {
     a += 1;
   });
 
-  for (const cb of [...callbacks]) {
+  for (const cb of Array.from(callbacks)) {
     cb({});
   }
-  assert(a === 2 && b === 1, 'taskEvents: 三订阅应分发到全部');
+  assert(a === 2 && b === 1, '三订阅发事件计数应正确');
 
   unsubscribeA();
-  for (const cb of [...callbacks]) {
+  for (const cb of Array.from(callbacks)) {
     cb({});
   }
-  assert(a === 3 && b === 2, 'taskEvents: A 取消后不再收到');
+  assert(a === 3 && b === 2, 'A 取消后仅剩 B、A2');
 
   unsubscribeA2();
-  for (const cb of [...callbacks]) {
+  for (const cb of Array.from(callbacks)) {
     cb({});
   }
-  assert(a === 3 && b === 3, 'taskEvents: 仅 B 收到');
-  const callbacksBeforeBUnsub = callbacks.size;
-  unsubscribeB();
-  assert(callbacks.size === callbacksBeforeBUnsub - 1, 'taskEvents: unsubscribeB 应移除订阅');
+  assert(a === 3 && b === 3, 'A2 取消后仅 B 收到');
 
-  const closeErrorTaskService = {
+  unsubscribeB();
+  assert(callbacks.size === 0, '明确 unsubscribe 应清理本体');
+
+  taskEvents.close();
+  assert(callbacks.size === 0, 'taskEvents.close 后应清空 callbacks');
+  taskEvents.close();
+
+  const closeRetryService = {
+    fallbackCallCount: 0,
     subscribeCallback(callback) {
+      this.callCount = (this.callCount || 0) + 1;
       return () => {
-        throw new Error('close fail');
+        this.unsubscribeCall = (this.unsubscribeCall || 0) + 1;
+        if (this.unsubscribeCall === 1) {
+          throw new Error('first unsubscribe fail');
+        }
       };
     },
+    unsubscribeCallback() {
+      this.fallbackCallCount = (this.fallbackCallCount || 0) + 1;
+    },
   };
-  const closeErrorPort = createTaskEventPort(closeErrorTaskService);
-  closeErrorPort.subscribe(() => {});
-  closeErrorPort.subscribe(() => {});
-  const closeErr = expectThrow(() => closeErrorPort.close(), 'taskEvents: close 应聚合全部订阅释放失败');
-  assert(closeErr instanceof AggregateError, 'taskEvents: close 返回 AggregateError');
-  assert(closeErr.errors.length === 2, 'taskEvents: close 聚合了两个订阅释放异常');
-  closeErrorPort.close();
 
-  const explicitUnsubscribeTaskService = {
+  const closeRetryPort = createTaskEventPort(closeRetryService);
+  closeRetryPort.subscribe(() => {});
+  const closeRetryErr = expectThrow(() => closeRetryPort.close(), '首次 close 应支持失败聚合');
+  assert(closeRetryErr instanceof AggregateError, '首次 close 失败应聚合异常');
+  assert(closeRetryService.fallbackCallCount === 0, 'unsub 失败后不应走 fallback');
+  closeRetryPort.close();
+  assert(closeRetryService.fallbackCallCount === 0, '重试成功后仍不应走 fallback');
+
+  const closeErrorService = {
+    callbacks: new Set(),
+    subscribeCallback(callback) {
+      this.callbacks.add(callback);
+      return () => {
+        throw new Error('explicit unsubscribe fail');
+      };
+    },
+    unsubscribeCallback(callback) {
+      this.callbacks.delete(callback);
+    },
+  };
+
+  const closeErrorPort = createTaskEventPort(closeErrorService);
+  closeErrorPort.subscribe(() => {});
+  closeErrorPort.subscribe(() => {});
+  const closeError = expectThrow(() => closeErrorPort.close(), 'close 应聚合多个释放异常');
+  assert(closeError instanceof AggregateError, 'close 需要返回 AggregateError');
+  assert(closeError.errors.length === 2, 'close 需聚合两个订阅错误');
+  const closeErrorAgain = expectThrow(() => closeErrorPort.close(), '重试 close 后仍应尝试每个订阅');
+  assert(closeErrorAgain instanceof AggregateError, '重试 close 仍应返回 AggregateError');
+
+  const explicitUnsubscribeService = {
     subscribeCallback() {
       return () => {
         throw new Error('explicit unsubscribe fail');
       };
     },
   };
-  const explicitPort = createTaskEventPort(explicitUnsubscribeTaskService);
+  const explicitPort = createTaskEventPort(explicitUnsubscribeService);
   const explicitUnsubscribe = explicitPort.subscribe(() => {});
-  const explicitErr = expectThrow(() => explicitUnsubscribe(), 'taskEvents: 显式 unsubscribe 不应吞异常');
-  assert(
-    explicitErr instanceof Error && /explicit unsubscribe fail/.test(explicitErr.message),
-    'taskEvents: 明确异常透传',
-  );
+  const explicitErr = expectThrow(() => explicitUnsubscribe(), '显式 unsubscribe 不能吞异常');
+  assert(/explicit unsubscribe fail/.test(explicitErr.message), '显式 unsubscribe 需透传底层异常');
 
-  const invalidUnsubscribeTaskService = {
+  const invalidReturnService = {
+    cleanupCount: 0,
     subscribeCallback() {
       return null;
     },
+    unsubscribeCallback() {
+      this.cleanupCount = (this.cleanupCount || 0) + 1;
+    },
   };
-  const invalidPort = createTaskEventPort(invalidUnsubscribeTaskService);
-  const invalidErr = expectThrow(() => invalidPort.subscribe(() => {}), 'taskEvents: subscribeCallback 非函数返回应报错');
-  assert(invalidErr instanceof Error && /未返回取消订阅函数/.test(invalidErr.message), 'taskEvents: 非函数返回必须失败');
+  const invalidReturnErr = expectThrow(() => createTaskEventPort(invalidReturnService).subscribe(() => {}), '非函数返回需失败');
+  assert(invalidReturnService.cleanupCount === 1, 'invalid-return 仅清理一次');
+  assert(
+    /未返回取消订阅函数/.test(invalidReturnErr.message),
+    'subscribeCallback 非函数返回应报错',
+  );
 
-  taskEvents.close();
-  assert(callbacks.size === 0, 'taskEvents: close 后内部分发集合应清空');
-  taskEvents.close();
+  const replayThrowServiceCallbacks = new Set();
+  const replayThrowService = {
+    subscribeCallback(callback) {
+      replayThrowServiceCallbacks.add(callback);
+      callback({});
+      throw new Error('replay throw');
+    },
+    unsubscribeCallback(callback) {
+      replayThrowServiceCallbacks.delete(callback);
+    },
+  };
+  const replayThrowPort = createTaskEventPort(replayThrowService);
+  const replayThrowErr = expectThrow(() => replayThrowPort.subscribe(() => {}), 'replay throw 要透传');
+  assert(/replay throw/.test(replayThrowErr.message), 'replay throw 应可见');
+  assert(replayThrowServiceCallbacks.size === 0, 'replay throw 后 callback 必须清理');
 
-  explicitPort.close();
-  const noOp = explicitPort.subscribe(() => {});
-  noOp();
-
-  let called = false;
-  const noSideEffectPort = createTaskEventPort({
+  const closedService = {
+    called: 0,
     subscribeCallback() {
-      called = true;
+      this.called += 1;
       return () => {};
     },
-  });
-  noSideEffectPort.close();
-  const closedSubscribe = noSideEffectPort.subscribe(() => {
-    called = true;
-  });
-  closedSubscribe();
-  assert(!called, 'taskEvents: 已关闭端口再次 subscribe 不应触发 taskService.subscribeCallback');
+    unsubscribeCallback() {
+      this.called += 1;
+    },
+  };
+  const closedPort = createTaskEventPort(closedService);
+  closedPort.close();
+  const noopUnsubscribe = closedPort.subscribe(() => {});
+  noopUnsubscribe();
+  assert(closedService.called === 0, '已关闭端口再次 subscribe 不应触发底层 callback');
 });
 
-run('workspaceContext: 默认行为与显式 factory 注入', () => {
-  const baseDir = trackTempDir('wc-ctx');
-  let ctx;
-  let ctx2;
-  let fakeRuntime;
-  let runtimeFactoryCalled = false;
-
-  try {
-    ctx = createWorkspaceContext({
+run('workspaceContext: 默认创建和注入 factory 的关闭校验', () => {
+  withTempDir('wc-ctx-default', (baseDir) => {
+    const ctx = createWorkspaceContext({
       workspaceId: 'default-user',
       dataDir: baseDir,
     });
 
-    const expectedWorkspaceRoot = path.join(baseDir, 'users', 'default-user', 'workspace');
-    assert(ctx.workspaceId === 'default-user', 'context: workspaceId 保持不变');
-    assert(ctx.workspaceRoot === expectedWorkspaceRoot, 'context: workspaceRoot 精确');
-    assert(ctx.paths.databasePath === path.join(expectedWorkspaceRoot, 'yibiao.sqlite'), 'context: paths.databasePath 精确');
-    assert(fs.existsSync(ctx.paths.uploadsDir), 'context: uploadsDir 已创建');
-    assert(Boolean(ctx.stores), 'context: stores 存在');
-    assert(Boolean(ctx.taskService), 'context: taskService 存在');
-    assert(Boolean(ctx.taskEvents), 'context: taskEvents 新增存在');
-    assert(typeof ctx.taskEvents.subscribe === 'function', 'context: taskEvents.subscribe 为函数');
-    assert(typeof ctx.close === 'function', 'context: close 存在');
-    assert(Boolean(ctx.db && ctx.db.open), 'context: db 初始打开');
+    try {
+      const expectedWorkspaceRoot = path.join(baseDir, 'users', 'default-user', 'workspace');
+      assert(ctx.workspaceId === 'default-user', 'context workspaceId 正确');
+      assert(ctx.workspaceRoot === expectedWorkspaceRoot, 'context workspaceRoot 正确');
+      assert(ctx.paths.databasePath === path.join(expectedWorkspaceRoot, 'yibiao.sqlite'), 'context databasePath 正确');
+      assert(fs.existsSync(ctx.paths.uploadsDir), 'uploadsDir 已创建');
+      assert(Boolean(ctx.stores), 'stores 存在');
+      assert(ctx.taskEvents && typeof ctx.taskEvents.subscribe === 'function', 'taskEvents 存在');
+      assert(ctx.db && ctx.db.open === true, 'db 初始打开');
 
-    ctx.close();
-    assert(ctx.db.open === false, 'context: close 后 db 关闭');
+      ctx.close();
+      assert(ctx.db.open === false, 'default close 后 db 关闭');
+      ctx.close();
+    } finally {
+      cleanupContext(ctx);
+    }
+  });
 
-    ctx.close();
-
-    fakeRuntime = {
-      closeCalled: false,
-      db: { open: true },
-      sqliteDatabase: {
+  const closeOrder = [];
+  const fakeRuntime = {
+    db: { open: true },
+    sqliteDatabase: {
+      close() {
+        closeOrder.push('sqliteDatabase');
+        fakeRuntime.db.open = false;
+      },
+    },
+    taskService: {
+      close() {
+        closeOrder.push('taskService');
+      },
+    },
+    taskEvents: {
+      close() {
+        closeOrder.push('taskEvents');
+      },
+      subscribe() {
+        return () => {};
+      },
+    },
+    ports: {
+      agent: {
         close() {
-          fakeRuntime.closeCalled = true;
-          fakeRuntime.sqliteDatabase.closed = true;
+          closeOrder.push('agent');
         },
       },
-      configStore: {},
-      stores: {},
-      taskService: {},
-      taskEvents: { subscribe() {}, close() {} },
-      close() {
-        fakeRuntime.closeCalled = true;
-      },
-    };
-    fakeRuntime.sqliteDatabase.closed = false;
+    },
+    close() {
+      closeOrder.push('runtime');
+      fakeRuntime.db.open = false;
+    },
+  };
+  let closeCalled = false;
+
+  withTempDir('wc-ctx-factory', (baseDir) => {
     const runtimeFactory = (opts) => {
-      runtimeFactoryCalled = true;
-      assert(opts.workspaceId === 'injected-user', 'context: runtimeFactory 收到 workspaceId');
-      assert(opts.paths?.databasePath === path.join(opts.workspaceRoot, 'yibiao.sqlite'), 'context: runtimeFactory 收到 databasePath');
+      assert(opts.workspaceId === 'injected-user', 'runtimeFactory 接收 workspaceId');
+      assert(opts.databasePath === path.join(opts.workspaceRoot, 'yibiao.sqlite'), 'runtimeFactory 接收 databasePath');
       return fakeRuntime;
     };
 
-    ctx2 = createWorkspaceContext({
+    const ctx = createWorkspaceContext({
       workspaceId: 'injected-user',
       dataDir: baseDir,
       runtimeFactory,
     });
-    assert(runtimeFactoryCalled, 'context: runtimeFactory 显式注入被调用');
-    ctx2.close();
-    assert(fakeRuntime.closeCalled, 'context: runtime.close 被 context.close 转发');
-  } finally {
-    if (ctx) {
-      ctx.close();
-    }
-    if (ctx2) {
-      ctx2.close();
-    }
-    cleanupTempDir(baseDir, 'context 测试目录');
-  }
-});
-
-run('workspaceRuntimeFactory: 中途失败回滚且原异常保留，electron 阻断环境可加载', () => {
-  const baseDir = trackTempDir('wc-factory-fail');
-  const workspaceRoot = path.join(baseDir, 'users', 'rollback-user', 'workspace');
-  const paths = coreWorkspacePaths.resolveWorkspacePaths(workspaceRoot);
-  fs.mkdirSync(paths.uploadsDir, { recursive: true });
-  const sqlitePath = paths.databasePath;
-  const configPath = path.join(baseDir, 'users', 'rollback-user', 'config.enc.json');
-
-  const factoryModulePath = '../server/workspace/workspaceRuntimeFactory.cjs';
-  const sqliteModulePath = require.resolve('../core/sqliteDatabase.cjs');
-  const taskServiceModulePath = require.resolve('../electron/services/taskService.cjs');
-  const runtimeFactoryPath = require.resolve(factoryModulePath);
-  const originalLoad = Module._load;
-  const realSqliteModule = originalLoad(sqliteModulePath);
-
-  const expectedError = new Error('受控装配失败');
-  let sqliteClosed = false;
-  let caughtError;
-
-  const overrides = new Map();
-  overrides.set(sqliteModulePath, {
-    createSqliteDatabase(config) {
-      const sqliteDatabase = realSqliteModule.createSqliteDatabase(config);
-      return {
-        ...sqliteDatabase,
-        close() {
-          sqliteClosed = true;
-          return sqliteDatabase.close();
-        },
-      };
-    },
-  });
-  overrides.set(taskServiceModulePath, {
-    createTaskService() {
-      throw expectedError;
-    },
-  });
-
-  try {
-    Module._load = function loadWithOverrides(request, parent, isMain) {
-      if (overrides.has(request)) {
-        return overrides.get(request);
-      }
-      let resolved;
-      try {
-        resolved = Module._resolveFilename(request, parent, isMain);
-      } catch {
-        resolved = undefined;
-      }
-      if (resolved && overrides.has(path.resolve(resolved))) {
-        return overrides.get(path.resolve(resolved));
-      }
-      return originalLoad.apply(this, [request, parent, isMain]);
-    };
-
-    delete require.cache[runtimeFactoryPath];
-    const { createWorkspaceRuntimeFactory } = require(runtimeFactoryPath);
-    caughtError = expectThrow(() => createWorkspaceRuntimeFactory({
-      workspaceId: 'rollback-user',
-      userDir: path.join(baseDir, 'users', 'rollback-user'),
-      workspaceRoot,
-      paths,
-      databasePath: sqlitePath,
-      configPath,
-    }), 'factory 回滚: createWorkspaceRuntimeFactory 应抛原始异常');
-  } finally {
-    Module._load = originalLoad;
-    delete require.cache[runtimeFactoryPath];
-    assert(caughtError === expectedError, 'factory 回滚: 抛出原始异常对象');
-    assert(sqliteClosed, 'factory 回滚: SQLite 已关闭');
-    assert(!caughtError?.cleanupErrors, 'factory 回滚: 无清理失败时不挂载 cleanupErrors');
-    cleanupTempDir(baseDir, 'factory 回滚测试目录');
-  }
-
-  const loadResult = withBlockedElectronRequire();
-  assert(loadResult.ok, `factory: 阻断 electron 后 factory 可加载 (status=${loadResult.status})`);
-});
-
-run('workspaceRuntimeFactory: close 失败聚合，幂等并保留主语义', () => {
-  const baseDir = trackTempDir('wc-factory-closeerr');
-  const workspaceRoot = path.join(baseDir, 'users', 'closeerr', 'workspace');
-  const paths = coreWorkspacePaths.resolveWorkspacePaths(workspaceRoot);
-  const databasePath = paths.databasePath;
-  const configPath = path.join(baseDir, 'users', 'closeerr', 'config.enc.json');
-  const runtimeFactoryPath = require.resolve('../server/workspace/workspaceRuntimeFactory.cjs');
-  const taskServicePath = require.resolve('../electron/services/taskService.cjs');
-  const webServicesPath = require.resolve('../server/workspace/webServices.cjs');
-  const originalLoad = Module._load;
-  let runtime;
-
-  try {
-    const overrides = new Map();
-    const realTaskService = originalLoad(taskServicePath);
-    const realWebServices = originalLoad(webServicesPath);
-
-    overrides.set(taskServicePath, {
-      createTaskService(options) {
-        const original = realTaskService.createTaskService(options);
-        return {
-          ...original,
-          close() {
-            throw new Error('taskService close fail');
-          },
-        };
-      },
-    });
-    overrides.set(webServicesPath, {
-      ...realWebServices,
-      createWebAgentServiceStub() {
-        const original = realWebServices.createWebAgentServiceStub();
-        return {
-          ...original,
-          close() {
-            throw new Error('agent close fail');
-          },
-        };
-      },
-    });
-
-    Module._load = function loadWithOverrides(request, parent, isMain) {
-      if (overrides.has(request)) {
-        return overrides.get(request);
-      }
-      let resolved;
-      try {
-        resolved = Module._resolveFilename(request, parent, isMain);
-      } catch {
-        resolved = undefined;
-      }
-      if (resolved && overrides.has(path.resolve(resolved))) {
-        return overrides.get(path.resolve(resolved));
-      }
-      return originalLoad.apply(this, [request, parent, isMain]);
-    };
-
-    delete require.cache[runtimeFactoryPath];
-    const { createWorkspaceRuntimeFactory } = require(runtimeFactoryPath);
-    runtime = createWorkspaceRuntimeFactory({
-      workspaceId: 'closeerr',
-      userDir: path.join(baseDir, 'users', 'closeerr'),
-      workspaceRoot,
-      paths,
-      databasePath,
-      configPath,
-    });
-
-    assert(!runtime.ports.fileParser, 'factory: 当前只装配 config/ai/agent/taskEvents');
-    assert(!runtime.ports.renderer, 'factory: 当前只装配 config/ai/agent/taskEvents');
-    assert(!runtime.ports.exporter, 'factory: 当前只装配 config/ai/agent/taskEvents');
-
-    const closeErr = expectThrow(() => runtime.close(), 'factory.close: 聚合错误');
-    assert(closeErr instanceof AggregateError, 'factory.close: 聚合关闭返回 AggregateError');
-    assert(closeErr.errors.length === 2, 'factory.close: 聚合错误数为 2');
-    assert(runtime.db.open === false, 'factory.close: 即使失败也应继续清理并关闭 db');
 
     try {
-      runtime.close();
-    } catch (closeSecondError) {
-      throw new Error(`factory.close: 幂等调用不应抛错（${closeSecondError.message}）`);
+      ctx.close();
+      closeCalled = true;
+      assert(fakeRuntime.db.open === false, 'sqlite db 已关闭');
+      assert(closeOrder.join(',') === 'runtime', 'context close 仅走 runtime.close');
+    } finally {
+      cleanupContext(ctx);
     }
-  } finally {
-    Module._load = originalLoad;
-    if (runtime?.taskService?.activeTasks?.size) {
-      runtime.taskService.activeTasks.clear();
-    }
-    delete require.cache[runtimeFactoryPath];
-    cleanupTempDir(baseDir, 'factory closeErr 测试目录');
-  }
+  });
+
+  assert(closeCalled, 'runtimeFactory 注入生效');
+
+  withTempDir('wc-ctx-invalid-close', (baseDir) => {
+    const fallbackOrder = [];
+    const fallbackRuntime = {
+      db: { open: true },
+      sqliteDatabase: {
+        close() {
+          fallbackOrder.push('sqliteDatabase');
+          fallbackRuntime.db.open = false;
+        },
+      },
+      taskService: {
+        close() {
+          fallbackOrder.push('taskService');
+        },
+      },
+      taskEvents: {
+        close() {
+          fallbackOrder.push('taskEvents');
+        },
+      },
+      ports: {
+        agent: {
+          close() {
+            fallbackOrder.push('agent');
+          },
+        },
+      },
+    };
+
+    const missingCloseError = expectThrow(() => createWorkspaceContext({
+      workspaceId: 'invalid-close',
+      dataDir: baseDir,
+      runtimeFactory: () => fallbackRuntime,
+    }), 'runtime 缺少 close 时应抛错并兜底清理');
+    assert(fallbackOrder.join(',') === 'taskEvents,taskService,agent,sqliteDatabase', '缺少 runtime.close 时应按约定顺序兜底关闭');
+    assert(/runtime 缺少 close 方法|runtime.close/.test(missingCloseError.message), '缺 close 的异常应可见');
+
+    const getterOrder = [];
+    const getterErrorRuntime = {
+      db: { open: true },
+      taskService: {
+        close() {
+          getterOrder.push('getter-taskService');
+        },
+      },
+      taskEvents: {
+        close() {
+          getterOrder.push('getter-taskEvents');
+        },
+      },
+      ports: {
+        agent: {
+          close() {
+            getterOrder.push('getter-agent');
+          },
+        },
+      },
+      sqliteDatabase: {
+        close() {
+          getterOrder.push('getter-sqlite');
+        },
+      },
+    };
+    Object.defineProperty(getterErrorRuntime, 'close', {
+      get() {
+        throw new Error('runtime close getter throw');
+      },
+    });
+
+    const getterError = expectThrow(() => createWorkspaceContext({
+      workspaceId: 'getter-close',
+      dataDir: baseDir,
+      runtimeFactory: () => getterErrorRuntime,
+    }), 'runtime close getter 抛错应抛主错误');
+    assert(getterError instanceof Error, 'getter 抛错应为异常');
+    assert(/runtime close getter throw/.test(getterError.message), 'getter 错误消息应可见');
+    assert(getterOrder.includes('getter-taskEvents'), 'getter close 失败后应兜底关闭 taskEvents');
+    assert(getterOrder.includes('getter-taskService'), 'getter close 失败后应兜底关闭 taskService');
+    assert(getterOrder.includes('getter-agent'), 'getter close 失败后应兜底关闭 agent');
+    assert(getterOrder.includes('getter-sqlite'), 'getter close 失败后应兜底关闭 sqlite');
+  });
 });
 
-run('workspaceContext x100: create/close 不泄漏资源', () => {
-  const baseDir = trackTempDir('wc-loop');
-  const before = snapshotActiveHandles();
-  let maxCount = before.count;
-  const dbRefs = [];
-  const iterationDeltas = [];
+run('workspaceRuntimeFactory: 依赖失败需回滚并保留原始错误', () => {
+  withTempDir('wc-factory-rollback', (baseDir) => {
+    const workspaceRoot = path.join(baseDir, 'users', 'rollback-user', 'workspace');
+    const paths = coreWorkspacePaths.resolveWorkspacePaths(workspaceRoot);
+    const databasePath = paths.databasePath;
+    const configPath = path.join(baseDir, 'users', 'rollback-user', 'config.enc.json');
 
-  try {
+    const factoryPath = require.resolve('../server/workspace/workspaceRuntimeFactory.cjs');
+    const sqlitePath = require.resolve('../core/sqliteDatabase.cjs');
+    const webServicesPath = require.resolve('../server/workspace/webServices.cjs');
+
+    const originalLoad = Module._load;
+    const realSqlite = originalLoad(sqlitePath);
+    const realWebServices = originalLoad(webServicesPath);
+    const expectedError = new Error('受控装配失败');
+    let sqliteClosed = false;
+
+    let caughtError;
+    try {
+      Module._load = function loadWithOverrides(request, parent, isMain) {
+        if (request === sqlitePath || request === webServicesPath) {
+          const resolved = Module._resolveFilename(request, parent, isMain);
+          if (path.resolve(resolved) === sqlitePath) {
+            return {
+              ...realSqlite,
+              createSqliteDatabase(options) {
+                const sqliteDatabase = realSqlite.createSqliteDatabase(options);
+                return {
+                  ...sqliteDatabase,
+                  close() {
+                    sqliteClosed = true;
+                    return sqliteDatabase.close();
+                  },
+                };
+              },
+            };
+          }
+          if (path.resolve(resolved) === webServicesPath) {
+            return {
+              ...realWebServices,
+              createWebTaskServiceStub() {
+                throw expectedError;
+              },
+            };
+          }
+        }
+
+        let resolved;
+        try {
+          resolved = Module._resolveFilename(request, parent, isMain);
+        } catch {
+          resolved = undefined;
+        }
+        if (resolved && path.resolve(resolved) === sqlitePath) {
+          return {
+            ...realSqlite,
+            createSqliteDatabase(options) {
+              const sqliteDatabase = realSqlite.createSqliteDatabase(options);
+              return {
+                ...sqliteDatabase,
+                close() {
+                  sqliteClosed = true;
+                  return sqliteDatabase.close();
+                },
+              };
+            },
+          };
+        }
+        if (resolved && path.resolve(resolved) === webServicesPath) {
+          return {
+            ...realWebServices,
+            createWebTaskServiceStub() {
+              throw expectedError;
+            },
+          };
+        }
+
+        return originalLoad.apply(this, arguments);
+      };
+
+      delete require.cache[factoryPath];
+      const { createWorkspaceRuntimeFactory } = require(factoryPath);
+      caughtError = expectThrow(
+        () => createWorkspaceRuntimeFactory({
+          workspaceId: 'rollback-user',
+          userDir: path.join(baseDir, 'users', 'rollback-user'),
+          workspaceRoot,
+          paths,
+          databasePath,
+          configPath,
+        }),
+        '回滚期间应抛原始装配错误',
+      );
+    } finally {
+      Module._load = originalLoad;
+      delete require.cache[factoryPath];
+    }
+
+    assert(caughtError === expectedError, '回滚异常引用不变');
+    assert(sqliteClosed, '回滚前的 sqlite 已关闭');
+    assert(!caughtError?.cleanupErrors, '不应给错误追加 cleanupErrors 属性');
+  });
+
+  const blockedResult = withBlockedElectronRequire();
+  assert(blockedResult.ok, `electron 禁止环境加载 factory 成功 (status=${blockedResult.status})`);
+});
+
+run('workspaceRuntimeFactory: close 按顺序关闭并聚合失败', () => {
+  withTempDir('wc-factory-close', (baseDir) => {
+    const workspaceRoot = path.join(baseDir, 'users', 'closeerr', 'workspace');
+    const paths = coreWorkspacePaths.resolveWorkspacePaths(workspaceRoot);
+    const databasePath = paths.databasePath;
+    const configPath = path.join(baseDir, 'users', 'closeerr', 'config.enc.json');
+    const factoryPath = require.resolve('../server/workspace/workspaceRuntimeFactory.cjs');
+    const webServicesPath = require.resolve('../server/workspace/webServices.cjs');
+
+    const originalLoad = Module._load;
+    const realWebServices = originalLoad(webServicesPath);
+    let runtime;
+
+    try {
+      Module._load = function loadWithOverrides(request, parent, isMain) {
+        if (request === webServicesPath) {
+          const resolved = Module._resolveFilename(request, parent, isMain);
+          if (path.resolve(resolved) === webServicesPath) {
+            return {
+              ...realWebServices,
+              createWebAgentServiceStub() {
+                const originalAgent = realWebServices.createWebAgentServiceStub();
+                return {
+                  ...originalAgent,
+                  close() {
+                    throw new Error('agent close fail');
+                  },
+                };
+              },
+              createWebTaskServiceStub() {
+                const stub = realWebServices.createWebTaskServiceStub();
+                return {
+                  ...stub,
+                  close() {
+                    throw new Error('taskService close fail');
+                  },
+                };
+              },
+            };
+          }
+        }
+
+        let resolved;
+        try {
+          resolved = Module._resolveFilename(request, parent, isMain);
+        } catch {
+          resolved = undefined;
+        }
+        if (resolved && path.resolve(resolved) === webServicesPath) {
+          return {
+            ...realWebServices,
+            createWebAgentServiceStub() {
+              const originalAgent = realWebServices.createWebAgentServiceStub();
+              return {
+                ...originalAgent,
+                close() {
+                  throw new Error('agent close fail');
+                },
+              };
+            },
+            createWebTaskServiceStub() {
+              const stub = realWebServices.createWebTaskServiceStub();
+              return {
+                ...stub,
+                close() {
+                  throw new Error('taskService close fail');
+                },
+              };
+            },
+          };
+        }
+
+        return originalLoad.apply(this, arguments);
+      };
+
+      delete require.cache[factoryPath];
+      const { createWorkspaceRuntimeFactory } = require(factoryPath);
+      runtime = createWorkspaceRuntimeFactory({
+        workspaceId: 'closeerr',
+        userDir: path.join(baseDir, 'users', 'closeerr'),
+        workspaceRoot,
+        paths,
+        databasePath,
+        configPath,
+      });
+
+      assert(!runtime.ports.fileParser, 'Web factory 不暴露 fileParser');
+      assert(!runtime.ports.renderer, 'Web factory 不暴露 renderer');
+      assert(!runtime.ports.exporter, 'Web factory 不暴露 exporter');
+
+      const closeError = expectThrow(() => runtime.close(), 'close 异常应聚合');
+      assert(closeError instanceof AggregateError, 'close 应聚合多个关闭错误');
+      assert(closeError.errors.length === 2, '关闭错误数应为 2');
+      assert(runtime.db.open === false, 'runtime.close 即使部分失败也应关闭 sqlite');
+
+      runtime.close();
+    } finally {
+      Module._load = originalLoad;
+      if (runtime && runtime.db?.open) {
+        runtime.db.close();
+      }
+      delete require.cache[factoryPath];
+    }
+  });
+});
+
+run('workspaceContext x100: 每次只开一个上下文并完整回收', () => {
+  withTempDir('wc-loop', (baseDir) => {
+    const before = snapshotActiveHandles();
+    const dbRefs = [];
+    let maxDelta = 0;
+    const iterationSnapshots = [];
+
     for (let i = 0; i < 100; i += 1) {
       let ctx;
       let unsubscribe;
-      const shouldUnsubscribe = i % 2 === 0;
+      let snapshot;
+      let shouldUnsubscribe = i % 2 === 0;
+
       try {
         ctx = createWorkspaceContext({
           workspaceId: `wp-${String(i).padStart(3, '0')}`,
@@ -527,52 +736,55 @@ run('workspaceContext x100: create/close 不泄漏资源', () => {
         }
 
         const db = ctx.db;
-        assert(db && db.open, 'context loop: 上下文创建后 db 应打开');
+        assert(db && db.open, `第 ${i + 1} 次上下文 db 打开`);
         dbRefs.push(db);
       } finally {
         if (ctx) {
-          ctx.close();
+          try {
+            ctx.close();
+          } catch (error) {
+            throw new Error(`第 ${i + 1} 次 ctx.close 失败: ${error.message}`);
+          }
         }
-        if (i % 2 === 0 && unsubscribe) {
+        if (!shouldUnsubscribe && typeof unsubscribe === 'function') {
           try {
             unsubscribe();
           } catch (error) {
-            throw new Error(`context loop: 重复 unsubscribe 应不抛错（第 ${i} 次）`);
+            throw new Error(`第 ${i + 1} 次重复 unsubscribe 失败: ${error.message}`);
           }
         }
-
-        const snapshot = snapshotActiveHandles();
-        if (snapshot.count > maxCount) {
-          maxCount = snapshot.count;
-        }
-        if (((i + 1) % 10 === 0) || ((i + 1) % 20 === 0)) {
-          iterationDeltas.push({
-            iteration: i + 1,
-            count: snapshot.count,
-            delta: snapshot.count - before.count,
-          });
-        }
       }
+
+      snapshot = snapshotActiveHandles();
+      if (snapshot.count > maxDelta + before.count) {
+        maxDelta = snapshot.count - before.count;
+      }
+      if ((i + 1) % 10 === 0) {
+        iterationSnapshots.push({
+          iteration: i + 1,
+          delta: snapshot.count - before.count,
+        });
+      }
+      assert(snapshot.count - before.count <= 4, `第 ${i + 1} 次循环句柄增量受控`);
     }
 
     const after = snapshotActiveHandles();
-    const maxDelta = maxCount - before.count;
-    assert(maxDelta <= 16, `context loop: 创建期间句柄增长必须可控（max=${maxDelta}）`);
-    assert(after.count - before.count <= 16, `context loop: 100 次 close 后句柄回落（delta=${after.count - before.count}）`);
-    assert(dbRefs.length === 100, 'context loop: 已记录 100 个 db 引用');
-    assert(dbRefs.every((db) => db && db.open === false), 'context loop: 全部 db 引用均已关闭');
-    for (const sample of iterationDeltas) {
-      assert(sample.delta <= 16, `context loop: 第 ${sample.iteration} 次句柄增量(${sample.delta}) 应稳定`);
+    const finalDelta = after.count - before.count;
+    assert(finalDelta <= 4, `100 次循环后句柄回落 <=4（实际 ${finalDelta}）`);
+    assert(maxDelta <= 4, `100 次循环过程中句柄最大增量 <=4（实际 ${maxDelta}）`);
+    assert(dbRefs.length === 100, '记录 100 个 db 引用');
+    assert(dbRefs.every((db) => db.open === false), '全部 db 已关闭');
+
+    for (const item of iterationSnapshots) {
+      assert(item.delta <= 4, `第 ${item.iteration} 次句柄增量 ${item.delta} 超限`);
     }
-  } finally {
-    cleanupTempDir(baseDir, 'workspace loop 测试目录');
-  }
+  });
 });
 
-if (fails.length) {
+if (failed.length) {
   cleanupTrackedDirs();
-  console.error(`\n=== Workspace 生命周期测试失败：${fails.length} ===`);
-  fails.forEach((item) => {
+  console.error(`\n=== Workspace 生命周期测试失败：${failed.length} ===`);
+  failed.forEach((item) => {
     console.error(`- ${item}`);
   });
   process.exit(1);
@@ -580,5 +792,5 @@ if (fails.length) {
 
 cleanupTrackedDirs();
 console.log(`\n=== Workspace 生命周期测试结果 ===`);
-console.log(`通过: ${passes.length}`);
-console.log(`失败: ${fails.length}`);
+console.log(`通过: ${passed.length}`);
+console.log(`失败: ${failed.length}`);

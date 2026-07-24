@@ -8,44 +8,107 @@ function createTaskEventPort(taskService) {
   const records = new Set();
   let closed = false;
 
-  function unsubscribeRecord(record) {
-    if (record.closed) {
-      return;
+  function createRecord(callback) {
+    return {
+      callback,
+      closed: false,
+      taskServiceUnsubscribe: null,
+    };
+  }
+
+  function mergeCleanupError(primary, cleanupErrors, message) {
+    if (!cleanupErrors.length) {
+      throw primary;
     }
-    record.closed = true;
-    records.delete(record);
-    return record.taskServiceUnsubscribe();
+    throw new AggregateError(
+      [primary, ...cleanupErrors],
+      message,
+      { cause: primary },
+    );
+  }
+
+  function releaseRecord(record) {
+    if (!record || record.closed) {
+      return [];
+    }
+
+    const errors = [];
+    const unsubscribeFn = record.taskServiceUnsubscribe;
+
+    if (typeof unsubscribeFn === 'function') {
+      try {
+        unsubscribeFn();
+      } catch (error) {
+        errors.push(error);
+      }
+    } else if (typeof taskService.unsubscribeCallback === 'function') {
+      try {
+        taskService.unsubscribeCallback(record.callback);
+      } catch (error) {
+        errors.push(error);
+      }
+    } else {
+      errors.push(new Error('taskEvents 清理失败：taskService 缺少取消订阅接口'));
+    }
+
+    if (!errors.length) {
+      record.closed = true;
+      records.delete(record);
+    }
+
+    return errors;
   }
 
   function subscribe(callback) {
     if (closed) {
       return () => {};
     }
+
     if (typeof callback !== 'function') {
       throw new Error('taskEvents.subscribe 需要函数 callback');
     }
 
     const wrappedCallback = (event) => callback(event);
-    const taskServiceUnsubscribe = taskService.subscribeCallback(wrappedCallback);
-    if (typeof taskServiceUnsubscribe !== 'function') {
-      throw new Error('taskEvents.subscribeCallback 未返回取消订阅函数');
-    }
-
-    const record = {
-      closed: false,
-      taskServiceUnsubscribe,
-    };
+    const record = createRecord(wrappedCallback);
     records.add(record);
 
-    const unsubscribe = () => {
-      unsubscribeRecord(record);
-    };
-    record.unsubscribe = unsubscribe;
+    let taskServiceUnsubscribe;
+    try {
+      taskServiceUnsubscribe = taskService.subscribeCallback(wrappedCallback);
+    } catch (error) {
+      const cleanupErrors = releaseRecord(record);
+      mergeCleanupError(error, cleanupErrors, 'taskEvents.subscribe 订阅失败');
+    }
+
+    if (typeof taskServiceUnsubscribe !== 'function') {
+      const cleanupErrors = releaseRecord(record);
+      mergeCleanupError(new Error('taskEvents.subscribeCallback 未返回取消订阅函数'), cleanupErrors, 'taskEvents.subscribeCallback 未返回取消订阅函数');
+    }
+
+    record.taskServiceUnsubscribe = taskServiceUnsubscribe;
 
     if (closed) {
-      unsubscribe();
+      const cleanupErrors = releaseRecord(record);
+      if (cleanupErrors.length > 0) {
+        return () => {};
+      }
       return () => {};
     }
+
+    const unsubscribe = () => {
+      const errors = releaseRecord(record);
+      if (!errors.length) {
+        return;
+      }
+      if (errors.length === 1) {
+        throw errors[0];
+      }
+      throw new AggregateError(
+        errors,
+        `taskEvents.unsubscribe 取消订阅失败 (${errors.length} 个错误)`,
+        { cause: errors[0] },
+      );
+    };
 
     return unsubscribe;
   }
@@ -54,27 +117,24 @@ function createTaskEventPort(taskService) {
     if (closed) {
       return;
     }
-    closed = true;
 
     const errors = [];
     for (const record of Array.from(records)) {
-      try {
-        unsubscribeRecord(record);
-      } catch (error) {
-        errors.push(error);
+      const releaseErrors = releaseRecord(record);
+      for (const releaseError of releaseErrors) {
+        errors.push(releaseError);
       }
     }
 
-    records.clear();
-
-    if (errors.length) {
-      const aggregateError = new AggregateError(
+    if (errors.length > 0) {
+      throw new AggregateError(
         errors,
-        `taskEvents.close 关闭失败: ${errors.length} 个订阅释放异常`,
+        `taskEvents.close 关闭失败 (${errors.length} 个订阅释放异常)`,
+        { cause: errors[0] },
       );
-      aggregateError.name = 'AggregateError';
-      throw aggregateError;
     }
+
+    closed = true;
   }
 
   return assertPort('taskEvents', {
