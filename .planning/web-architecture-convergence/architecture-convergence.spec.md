@@ -1,8 +1,8 @@
 # Web 架构收敛 Spec
 
-状态：Draft for implementation  
-基线：`main@e71e87c633de`（PR #3 已合并）  
-前置：`project.md` 的 2026-07-24 锁定决策  
+状态：Draft for implementation
+基线：`main@e71e87c633de`（PR #3 已合并）
+前置：`project.md` 的 2026-07-24 锁定决策
 后续：本 Spec 验收通过后，才能执行 `.planning/yibiao-brand-cleanup/brand-cleanup.spec.md`
 
 ## 1. 目的
