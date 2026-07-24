@@ -699,8 +699,137 @@ run('workspaceRuntimeFactory: close 按顺序关闭并聚合失败', () => {
       assert(closeError instanceof AggregateError, 'close 应聚合多个关闭错误');
       assert(closeError.errors.length === 2, '关闭错误数应为 2');
       assert(runtime.db.open === false, 'runtime.close 即使部分失败也应关闭 sqlite');
+    } finally {
+      Module._load = originalLoad;
+      if (runtime && runtime.db?.open) {
+        runtime.db.close();
+      }
+      delete require.cache[factoryPath];
+    }
+  });
+});
+
+run('workspaceRuntimeFactory: close 重试会保留失败 handler，成功 handler 不重复执行', () => {
+  withTempDir('wc-factory-close-retry', (baseDir) => {
+    const workspaceRoot = path.join(baseDir, 'users', 'closeretry', 'workspace');
+    const paths = coreWorkspacePaths.resolveWorkspacePaths(workspaceRoot);
+    const databasePath = paths.databasePath;
+    const configPath = path.join(baseDir, 'users', 'closeretry', 'config.enc.json');
+    const factoryPath = require.resolve('../server/workspace/workspaceRuntimeFactory.cjs');
+    const sqlitePath = require.resolve('../core/sqliteDatabase.cjs');
+    const taskEventPortPath = require.resolve('../core/taskEventPort.cjs');
+    const webServicesPath = require.resolve('../server/workspace/webServices.cjs');
+
+    const originalLoad = Module._load;
+    const realWebServices = originalLoad(webServicesPath);
+    const realSqlite = originalLoad(sqlitePath);
+    const realTaskEventPort = originalLoad(taskEventPortPath);
+    const closeStats = {
+      agentClose: 0,
+      sqliteClose: 0,
+      taskServiceClose: 0,
+      taskEventsClose: 0,
+      agentCloseAttempts: 0,
+    };
+    let runtime;
+
+    try {
+      Module._load = function loadWithOverrides(request, parent, isMain) {
+        let resolved;
+        try {
+          resolved = Module._resolveFilename(request, parent, isMain);
+        } catch {
+          resolved = undefined;
+        }
+
+        if (resolved && path.resolve(resolved) === sqlitePath) {
+          return {
+            ...realSqlite,
+            createSqliteDatabase(options) {
+              const sqliteDatabase = realSqlite.createSqliteDatabase(options);
+              const originalClose = sqliteDatabase.close;
+              return {
+                ...sqliteDatabase,
+                close() {
+                  closeStats.sqliteClose += 1;
+                  return originalClose.call(sqliteDatabase);
+                },
+              };
+            },
+          };
+        }
+
+        if (resolved && path.resolve(resolved) === taskEventPortPath) {
+          return {
+            ...realTaskEventPort,
+            createTaskEventPort(taskService) {
+              const taskEvents = realTaskEventPort.createTaskEventPort(taskService);
+              const originalClose = taskEvents.close;
+              return {
+                ...taskEvents,
+                close() {
+                  closeStats.taskEventsClose += 1;
+                  return originalClose.call(taskEvents);
+                },
+              };
+            },
+          };
+        }
+
+        if (resolved && path.resolve(resolved) === webServicesPath) {
+          return {
+            ...realWebServices,
+            createWebAgentServiceStub() {
+              const originalAgent = realWebServices.createWebAgentServiceStub();
+              return {
+                ...originalAgent,
+                close() {
+                  closeStats.agentCloseAttempts += 1;
+                  closeStats.agentClose += 1;
+                  if (closeStats.agentCloseAttempts === 1) {
+                    throw new Error('agent close should fail once');
+                  }
+                },
+              };
+            },
+            createWebTaskServiceStub() {
+              const stub = realWebServices.createWebTaskServiceStub();
+              return {
+                ...stub,
+                close() {
+                  closeStats.taskServiceClose += 1;
+                },
+              };
+            },
+          };
+        }
+
+        return originalLoad.apply(this, arguments);
+      };
+
+      delete require.cache[factoryPath];
+      const { createWorkspaceRuntimeFactory } = require(factoryPath);
+      runtime = createWorkspaceRuntimeFactory({
+        workspaceId: 'closeretry',
+        userDir: path.join(baseDir, 'users', 'closeretry'),
+        workspaceRoot,
+        paths,
+        databasePath,
+        configPath,
+      });
+
+      const first = expectThrow(() => runtime.close(), '第一次 close 应透出首次失败');
+      assert(first instanceof Error, '第一次 close 需可见错误');
+      assert(closeStats.agentClose === 1, 'agent close 首次执行一次');
+      assert(closeStats.taskServiceClose === 1, 'taskService close 应只执行一次');
+      assert(closeStats.taskEventsClose === 1, 'taskEvents close 应只执行一次');
+      assert(closeStats.sqliteClose === 1, 'sqlite close 执行一次');
 
       runtime.close();
+      assert(closeStats.agentClose === 2, 'agent 失败后重试只执行第二次并成功');
+      assert(closeStats.taskServiceClose === 1, 'taskService close 不应在成功后重复');
+      assert(closeStats.taskEventsClose === 1, 'taskEvents close 不应在成功后重复');
+      assert(closeStats.sqliteClose === 1, 'sqlite close 不应在成功后重复');
     } finally {
       Module._load = originalLoad;
       if (runtime && runtime.db?.open) {

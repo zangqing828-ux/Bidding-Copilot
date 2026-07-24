@@ -24,17 +24,34 @@ function pushCloseHandler(closeHandlers, closeHandler, label) {
   }
 }
 
-function runCloseHandlers(closeHandlers) {
+function runCloseHandlers(closeHandlers, { preserveFailures = false } = {}) {
   const errors = [];
+  const failedHandlers = [];
+
   for (let i = closeHandlers.length - 1; i >= 0; i -= 1) {
     const handler = closeHandlers[i];
     try {
       handler();
+      closeHandlers.splice(i, 1);
     } catch (error) {
       errors.push(error);
+      if (preserveFailures) {
+        failedHandlers.push(handler);
+      }
     }
   }
-  closeHandlers.length = 0;
+
+  if (preserveFailures) {
+    closeHandlers.length = 0;
+    for (let i = failedHandlers.length - 1; i >= 0; i -= 1) {
+      const failedHandler = failedHandlers[i];
+      if (!closeHandlers.includes(failedHandler)) {
+        closeHandlers.push(failedHandler);
+      }
+    }
+  } else {
+    closeHandlers.length = 0;
+  }
 
   if (errors.length > 1) {
     return new AggregateError(
@@ -160,12 +177,13 @@ function createWebWorkspaceRuntime({
         if (runtimeClosed) {
           return;
         }
-        runtimeClosed = true;
 
-        const closeError = runCloseHandlers(closeHandlers);
+        const closeError = runCloseHandlers(closeHandlers, { preserveFailures: true });
         if (closeError) {
           throw closeError;
         }
+
+        runtimeClosed = true;
       },
     };
 
@@ -176,7 +194,7 @@ function createWebWorkspaceRuntime({
 
     return runtime;
   } catch (error) {
-    const closeError = runCloseHandlers(closeHandlers);
+    const closeError = runCloseHandlers(closeHandlers, { preserveFailures: false });
     if (closeError) {
       throw wrapSetupError(error, closeError);
     }
