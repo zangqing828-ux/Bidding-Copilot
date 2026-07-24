@@ -53,12 +53,27 @@ function buildStoreDispatcher(storeName, methodMap) {
   return dispatcher;
 }
 
+function createReadOnlyDispatcherRegistry(source) {
+  const result = {};
+  for (const [namespace, methods] of Object.entries(source)) {
+    const namespaceMethods = {};
+    for (const [method, handler] of Object.entries(methods || {})) {
+      if (typeof handler === 'function') {
+        namespaceMethods[method] = handler;
+      }
+    }
+    if (Object.keys(namespaceMethods).length > 0) {
+      Object.freeze(namespaceMethods);
+      result[namespace] = namespaceMethods;
+    }
+  }
+  return Object.freeze(result);
+}
+
 const dispatchers = {
   config: {
     load: (ctx) => ctx.configStore.load(),
     save: (ctx, args) => ctx.configStore.save(args[0]),
-    listModels: () => { throw new Error('config.listModels 尚未在 Web 端实现'); },
-    openConfigFolder: () => { throw new Error('config.openConfigFolder 尚未在 Web 端实现'); },
   },
 
   technicalPlan: buildStoreDispatcher('technicalPlanStore', {
@@ -79,9 +94,6 @@ const dispatchers = {
     checkBidSections: 'checkBidSections',
     selectBidSection: 'selectBidSection',
   }),
-  // 文件导入方法依赖上传后的 fileId，需要适配层转换
-  importTenderDocument: undefined,
-  importOriginalPlanDocument: undefined,
 
   knowledgeBase: buildStoreDispatcher('knowledgeBaseStore', {
     getMigrationStatus: 'getMigrationStatus',
@@ -95,7 +107,6 @@ const dispatchers = {
     readItems: 'readItems',
     readAnalysis: 'readAnalysis',
   }),
-  // list/createFolder/uploadDocuments/startMatching 依赖 knowledgeBaseService（需要 aiService）
 
   duplicateCheck: buildStoreDispatcher('duplicateCheckStore', {
     loadState: 'loadDuplicateCheck',
@@ -124,30 +135,16 @@ const dispatchers = {
 
   tasks: {
     getActiveTasks: (ctx) => ctx.taskService.getActiveTasks(),
-    startBidSectionExtraction: () => { throw new Error('Web 端任务启动尚未实现（需要真实 AI 服务）'); },
-    startBidAnalysis: () => { throw new Error('Web 端任务启动尚未实现（需要真实 AI 服务）'); },
-    startOutlineGeneration: () => { throw new Error('Web 端任务启动尚未实现（需要真实 AI 服务）'); },
-    startGlobalFactsGeneration: () => { throw new Error('Web 端任务启动尚未实现（需要真实 AI 服务）'); },
-    startContentGeneration: () => { throw new Error('Web 端任务启动尚未实现（需要真实 AI 服务）'); },
-    pauseContentGeneration: () => { throw new Error('Web 端任务暂停尚未实现'); },
-    startRejectionItemsExtraction: () => { throw new Error('Web 端任务启动尚未实现（需要真实 AI 服务）'); },
-    startRejectionCheck: () => { throw new Error('Web 端任务启动尚未实现（需要真实 AI 服务）'); },
-    startDuplicateAnalysis: () => { throw new Error('Web 端任务启动尚未实现（需要真实 AI 服务）'); },
   },
-
-  file: {
-    selectDuplicateCheckFiles: () => { throw new Error('Web 端文件选择尚未实现（需要上传适配）'); },
-  },
-
-  // ai/agent/export 的 Electron 依赖方法返回 501（未注册，走 fallback）
 };
 
-// 文件导入方法单独注册（抛错说明需要适配）
-dispatchers.technicalPlan.importTenderDocument = () => { throw new Error('Web 端文件导入尚未实现（需要上传+解析适配）'); };
-dispatchers.technicalPlan.importOriginalPlanDocument = () => { throw new Error('Web 端文件导入尚未实现（需要上传+解析适配）'); };
-dispatchers.knowledgeBase.uploadDocuments = () => { throw new Error('Web 端文件上传尚未实现（需要 multipart 上传适配）'); };
-dispatchers.knowledgeBase.startMatching = () => { throw new Error('Web 端知识库匹配尚未实现（需要真实 AI 服务）'); };
-dispatchers.rejectionCheck.importDocument = () => { throw new Error('Web 端文件导入尚未实现（需要上传+解析适配）'); };
+const readOnlyDispatchers = createReadOnlyDispatcherRegistry(dispatchers);
+Object.defineProperty(router, '__contractDispatchers', {
+  value: readOnlyDispatchers,
+  enumerable: false,
+  configurable: false,
+  writable: false,
+});
 
 router.post('/bridge', (req, res) => {
   const body = req.body || {};
