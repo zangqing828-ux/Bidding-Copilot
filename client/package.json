@@ -33,7 +33,8 @@
     "test:web-export": "node scripts/test-web-export.cjs",
     "test:web-contract": "node scripts/test-web-contract.cjs",
     "test:web-contract:strict-guard": "node scripts/test-web-contract-strict-guard.cjs",
-    "test:web": "npm run test:web-auth && npm run test:web-workspace && npm run test:web-contract && npm run test:web-contract:strict-guard && npm run test:web-tasks && npm run test:web-files && npm run test:web-export"
+    "test:portable-core": "node scripts/test-portable-core.cjs",
+    "test:web": "npm run test:portable-core && npm run test:web-auth && npm run test:web-workspace && npm run test:web-contract && npm run test:web-contract:strict-guard && npm run test:web-tasks && npm run test:web-files && npm run test:web-export"
   },
   "build": {
     "appId": "com.yibiao.openbidkit",
@@ -46,6 +47,8 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "core/**/*",
+      "shared/**/*",
       "assets/**/*",
       "package.json"
     ],

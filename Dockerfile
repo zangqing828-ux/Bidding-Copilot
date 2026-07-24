@@ -41,6 +41,7 @@ RUN cd client && npm ci --omit=dev --ignore-scripts && npm rebuild better-sqlite
 COPY --from=builder /app/client/dist ./client/dist
 COPY client/server/ ./client/server/
 COPY client/shared/ ./client/shared/
+COPY client/core/ ./client/core/
 COPY client/electron/ ./client/electron/
 COPY client/package.json ./client/
 

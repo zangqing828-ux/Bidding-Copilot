@@ -2,14 +2,14 @@
 // 由 workspaceRegistry 按需创建并缓存。
 const path = require('node:path');
 const fs = require('node:fs');
-const { createSqliteDatabase } = require('../../electron/services/sqliteDatabase.cjs');
+const { createSqliteDatabase } = require('../../core/sqliteDatabase.cjs');
 const { createTechnicalPlanStore } = require('../../electron/services/technicalPlanStore.cjs');
 const { createKnowledgeBaseStore } = require('../../electron/services/knowledgeBaseStore.cjs');
 const { createDuplicateCheckStore } = require('../../electron/services/duplicateCheckStore.cjs');
 const { createRejectionCheckStore } = require('../../electron/services/rejectionCheckStore.cjs');
-const { createTemplateStore } = require('../../electron/services/templateStore.cjs');
+const { createTemplateStore } = require('../../core/templateStore.cjs');
 const { createTaskService } = require('../../electron/services/taskService.cjs');
-const { resolveWorkspacePaths } = require('../../shared/workspacePaths.cjs');
+const { resolveWorkspacePaths } = require('../../core/workspacePaths.cjs');
 const { createEncryptedConfigStore } = require('../config/encryptedConfigStore.cjs');
 const {
   createWebAiServiceStub,
@@ -28,7 +28,7 @@ function createWorkspaceContext({ workspaceId, dataDir }) {
   fs.mkdirSync(paths.uploadsDir, { recursive: true });
 
   // 初始化 SQLite（复用 Electron 的 migration 逻辑，不传 app）
-  const sqliteDatabase = createSqliteDatabase(null, { workspaceRoot });
+  const sqliteDatabase = createSqliteDatabase({ databasePath: paths.databasePath });
 
   // 初始化加密配置
   const configStore = createEncryptedConfigStore({

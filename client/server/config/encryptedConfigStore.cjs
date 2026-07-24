@@ -6,7 +6,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { normalizeConfig } = require('../../electron/services/configStore.cjs');
+const { normalizeConfig } = require('../../core/configStore.cjs');
 
 const ENCRYPTED_FIELDS = [
   'api_key',

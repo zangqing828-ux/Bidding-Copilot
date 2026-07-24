@@ -1,67 +1,68 @@
-const runtimeDefinitions = [
-  {
-    id: 'opencode',
+const {
+  AGENT_RUNTIME_IDS,
+  getDefaultAgentRuntimeId,
+  normalizeAgentRuntimeId,
+} = require('../../../core/agentRuntimeIds.cjs');
+
+const runtimeById = new Map([
+  ['opencode', {
     displayName: 'OpenCode Agent',
     description: '使用现有常驻 OpenCode Server 智能体链路。',
-    isDefault: true,
     createRuntime(options) {
       const { createOpenCodeRuntimeService } = require('../opencode/opencodeRuntimeService.cjs');
       return createOpenCodeRuntimeService(options);
     },
-  },
-  {
-    id: 'pi',
+  }],
+  ['pi', {
     displayName: 'Pi Agent',
     description: '使用内嵌 Pi SDK 智能体链路。',
-    isDefault: false,
     createRuntime(options) {
       const { createPiRuntimeService } = require('../pi/piRuntimeService.cjs');
       return createPiRuntimeService(options);
     },
-  },
-];
+  }],
+]);
 
-const runtimeById = new Map(runtimeDefinitions.map((item) => [item.id, item]));
-const defaultRuntime = runtimeDefinitions.find((item) => item.isDefault);
+if (!AGENT_RUNTIME_IDS.every((id) => runtimeById.has(id))) {
+  throw new Error('智能体运行时注册表缺少完整实现映射');
+}
 
-if (!defaultRuntime) {
-  throw new Error('智能体运行时注册表缺少默认项');
+const defaultRuntimeId = getDefaultAgentRuntimeId();
+
+if (!runtimeById.has(defaultRuntimeId)) {
+  throw new Error('智能体运行时注册表缺少默认实现');
 }
 
 // 返回可安全发送给 Renderer 的运行时元数据。
 function listAgentRuntimeDescriptors() {
-  return runtimeDefinitions.map(({ id, displayName, description, isDefault }) => ({
-    id,
-    display_name: displayName,
-    description,
-    is_default: isDefault,
-  }));
-}
-
-function getDefaultAgentRuntimeId() {
-  return defaultRuntime.id;
-}
-
-// 空配置应用统一默认值，未知配置直接报错。
-function normalizeAgentRuntimeId(value) {
-  const runtimeId = String(value || '').trim() || getDefaultAgentRuntimeId();
-  if (!runtimeById.has(runtimeId)) {
-    throw new Error(`未知的智能体运行时：${runtimeId}`);
-  }
-  return runtimeId;
+  return AGENT_RUNTIME_IDS.map((id) => {
+    const definition = runtimeById.get(id);
+    return {
+      id,
+      display_name: definition.displayName,
+      description: definition.description,
+      is_default: id === defaultRuntimeId,
+    };
+  });
 }
 
 function getAgentRuntimeDefinition(runtimeId) {
   const normalizedId = normalizeAgentRuntimeId(runtimeId);
-  return runtimeById.get(normalizedId);
+  const definition = runtimeById.get(normalizedId);
+  return {
+    id: normalizedId,
+    displayName: definition.displayName,
+    description: definition.description,
+  };
 }
 
 function createAgentRuntime(runtimeId, options) {
-  const definition = getAgentRuntimeDefinition(runtimeId);
+  const normalizedId = normalizeAgentRuntimeId(runtimeId);
+  const definition = runtimeById.get(normalizedId);
   return definition.createRuntime({
     ...options,
     runtime: {
-      id: definition.id,
+      id: normalizedId,
       displayName: definition.displayName,
       description: definition.description,
     },
