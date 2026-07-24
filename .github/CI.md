@@ -21,12 +21,24 @@
 | Check | 内容 |
 | --- | --- |
 | `CI / Repository Hygiene` | lockfile 完整性、变更范围 whitespace |
-| `CI / Client Build` | `npm ci`、CommonJS 语法、TypeScript/Vite 构建、critical 审计 |
+| `CI / Client Build` | `npm ci`、CommonJS 语法、TypeScript/Vite 构建、Web Auth/Workspace/Tasks/Files/Export 测试、Docker 构建与启动检查、critical 审计 |
 | `CI / Analytics Worker Check` | `npm ci`、Wrangler dry-run、critical 审计 |
 | `CI / Analytics Dashboard Check` | `npm ci`、Wrangler dry-run、critical 审计 |
 | `CI / Quality Gate` | 汇总以上四项，任一失败时整体失败 |
 
 主分支保护应使用稳定检查名 `CI / Quality Gate`。
+
+`CI / Client Build` 中的 Web 与容器门禁按以下顺序执行：
+
+1. 把 `better-sqlite3` 重建为 Node ABI。
+2. 运行 Web Auth、Workspace、Tasks、Files、Export 五组测试。
+3. 从仓库根目录构建 `bidding-copilot-web:ci` 镜像。
+4. 以 mock OAuth 和独立 `/data` 目录启动容器。
+5. 最多等待 30 秒，轮询 `/api/health`；失败时输出容器日志并阻断 CI。
+6. 同时验证 `/api/health` 和 `/api/readiness`。
+7. 停止并删除 CI 测试容器。
+
+Docker 镜像构建成功只证明构建链路可用。容器必须实际启动并通过 health/readiness，才能通过该门禁。
 
 ### Release Client
 
@@ -48,10 +60,36 @@
 ```bash
 cd client
 npm ci
-find electron scripts -name '*.cjs' -print0 | xargs -0 -n1 node --check
+find electron scripts server -name '*.cjs' -print0 | xargs -0 -n1 node --check
 npm run build
+npm rebuild better-sqlite3 --runtime=node
+npm run test:web-auth
+CONFIG_ENCRYPTION_KEY=ci-test-encryption-key npm run test:web-workspace
+CONFIG_ENCRYPTION_KEY=ci-test-encryption-key npm run test:web-tasks
+CONFIG_ENCRYPTION_KEY=ci-test-encryption-key npm run test:web-files
+CONFIG_ENCRYPTION_KEY=ci-test-encryption-key npm run test:web-export
 npm audit --omit=dev --audit-level=critical
 ```
+
+Docker 构建与启动：
+
+```bash
+cd ..
+docker build -t bidding-copilot-web:ci .
+docker run -d --name web-test -p 3000:3000 \
+  -e NODE_ENV=development \
+  -e OAUTH_MODE=mock \
+  -e SESSION_SECRET=ci-test-secret \
+  -e CONFIG_ENCRYPTION_KEY=ci-test-key \
+  -e YIBIAO_DATA_DIR=/data \
+  bidding-copilot-web:ci
+curl -fsS http://127.0.0.1:3000/api/health
+curl -fsS http://127.0.0.1:3000/api/readiness
+docker stop web-test
+docker rm web-test
+```
+
+本地首次验证时应像 workflow 一样为 health 增加重试等待，避免服务仍在启动时产生误报。容器启动失败时先执行 `docker logs web-test` 查看真实错误。
 
 Analytics Worker：
 
