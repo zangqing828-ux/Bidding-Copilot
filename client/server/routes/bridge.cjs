@@ -1,6 +1,6 @@
 // POST /api/bridge：统一业务 API 入口。
-// Sprint 04-07：config/tasks/technicalPlan/knowledgeBase/duplicateCheck/rejectionCheck/templates 已实现。
-// ai/agent/export 的 Electron 依赖方法返回 501，待 Linux Runtime/渲染/导出适配后实现。
+// 仅 manifest 标记 implemented 且有可执行 dispatcher 的能力才执行后端实现。
+// pending / removed 能力统一返回明确错误码，不执行真实业务。
 const express = require('express');
 const { getWorkspaceContext } = require('../workspace/workspaceRegistry.cjs');
 const { methods: bridgeMethods = {} } = require('../../shared/bridgeContract.cjs');
@@ -48,6 +48,14 @@ function createErrorPayload(code, message) {
     code,
     message,
   };
+}
+
+function isDesktopOnlySource(source) {
+  return source === 'desktop-only';
+}
+
+function isDeletedProductSource(source) {
+  return source === 'deleted-product';
 }
 
 function createDirectBinding(handler, contractRef) {
@@ -242,7 +250,15 @@ router.post('/bridge', (req, res) => {
     return res.status(400).json(createErrorPayload('WEB_BRIDGE_UNKNOWN', '该接口未注册为 Web Bridge 能力'));
   }
   if (contract.status === 'removed') {
-    return res.status(410).json(createErrorPayload('WEB_BRIDGE_REMOVED', '该能力已下线'));
+    if (isDesktopOnlySource(contract.source)) {
+      return res.status(410).json(createErrorPayload('WEB_BRIDGE_DESKTOP_ONLY', '该能力为桌面端专属能力，当前环境不支持'));
+    }
+
+    if (isDeletedProductSource(contract.source)) {
+      return res.status(410).json(createErrorPayload('WEB_BRIDGE_REMOVED', '该功能已下线'));
+    }
+
+    return res.status(410).json(createErrorPayload('WEB_BRIDGE_REMOVED', '该能力暂不可用，已暂时下线'));
   }
   if (contract.status === 'pending') {
     return res.status(501).json(createErrorPayload('WEB_CAPABILITY_PENDING', '该能力在 Web 端尚未提供'));

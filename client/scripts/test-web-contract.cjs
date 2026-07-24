@@ -29,6 +29,7 @@ const DELETED_FEATURE_LEAVES = new Set([
   'tenderOpportunities.list',
   'plugins.list',
 ]);
+const DELETED_PRODUCT_COUNT = DELETED_FEATURE_LEAVES.size;
 const KB_PENDING_METHODS = [
   'deleteFolder',
   'deleteDocument',
@@ -51,6 +52,24 @@ const DESKTOP_ONLY_CAPABILITIES = [
   'events.onUpdateProgress',
   'events.onUpdateDownloaded',
   'events.onUpdateError',
+];
+
+const UPDATER_GUARD_CAPABILITIES = [
+  'events.onUpdateProgress',
+  'events.onUpdateDownloaded',
+  'events.onUpdateError',
+  'app.getGpuHardwareAccelerationStatus',
+  'app.saveGpuHardwareAccelerationPreference',
+  'app.startGpuHardwareAccelerationTrial',
+  'app.relaunchWithGpuHardwareAccelerationDisabled',
+  'app.getLatestVersion',
+  'app.getUpdateDownloadUrl',
+  'app.checkUpdate',
+  'app.startUpdate',
+  'app.quitAndInstall',
+  'config.openConfigFolder',
+  'developerTokenStats.openWindow',
+  'export.openFile',
 ];
 
 const REQUIRED_WEB_BRIDGE_META_KEYS = [
@@ -523,6 +542,8 @@ async function assertContractFieldPresence(entry, manifestKey) {
 }
 
 function assertRemovedProductWhitelist(removedProductEntries) {
+  assert(removedProductEntries.size === DELETED_PRODUCT_COUNT, `deleted-product 条目数量为 ${DELETED_PRODUCT_COUNT}（当前 ${removedProductEntries.size}）`);
+
   const deletedProductLeaves = new Set();
   for (const [entryKey, spec] of removedProductEntries.entries()) {
     assert(spec.status === 'removed', `${entryKey} removed 状态正确`);
@@ -530,8 +551,7 @@ function assertRemovedProductWhitelist(removedProductEntries) {
     assert(typeof spec.contractRef === 'string', `${entryKey} contractRef 存在`);
     deletedProductLeaves.add(spec.contractRef);
   }
-  assert(deletedProductLeaves.size >= 3, `deleted-product 可比较项不少于 3 项（当前 ${deletedProductLeaves.size}）`);
-  assert(deletedProductLeaves.size === DELETED_FEATURE_LEAVES.size, `deleted-product 可比较项数量为 3（当前 ${deletedProductLeaves.size}）`);
+  assert(deletedProductLeaves.size === DELETED_PRODUCT_COUNT, `deleted-product 可比较项数量为 3（当前 ${deletedProductLeaves.size}）`);
   assertSetEqual(deletedProductLeaves, DELETED_FEATURE_LEAVES, 'deleted-product leaves 白名单');
 }
 
@@ -539,6 +559,7 @@ async function runBridgeBehavior(inject, context) {
   const {
     contractEntries,
     removedProductEntries,
+    bridgeContractMethods,
     bridgeBindingMetadata,
     routeDispatchers,
     getWorkspaceContext,
@@ -596,9 +617,19 @@ async function runBridgeBehavior(inject, context) {
       assert(entry.transport === 'event', `${manifestKey} 事件 transport 应为 event`);
       if (entry.status === 'pending') {
         assert(Array.isArray(entry.errors) && entry.errors.includes('WEB_CAPABILITY_PENDING'), `${manifestKey} pending errors 应包含 WEB_CAPABILITY_PENDING`);
+        continue;
       }
+
       if (entry.status === 'removed') {
-        assert(Array.isArray(entry.errors) && entry.errors.includes('WEB_BRIDGE_DESKTOP_ONLY'), `${manifestKey} removed errors 应包含 WEB_BRIDGE_DESKTOP_ONLY`);
+        if (entry.source === 'desktop-only') {
+          assert(Array.isArray(entry.errors) && entry.errors.includes('WEB_BRIDGE_DESKTOP_ONLY'), `${manifestKey} desktop-only errors 应包含 WEB_BRIDGE_DESKTOP_ONLY`);
+          continue;
+        }
+        if (entry.source === 'deleted-product') {
+          assert(Array.isArray(entry.errors) && entry.errors.includes('WEB_BRIDGE_REMOVED'), `${manifestKey} deleted-product errors 应包含 WEB_BRIDGE_REMOVED`);
+          continue;
+        }
+        assert(Array.isArray(entry.errors) && entry.errors.includes('WEB_BRIDGE_REMOVED'), `${manifestKey} unknown removed source errors 应包含 WEB_BRIDGE_REMOVED`);
       }
     }
 
@@ -609,6 +640,19 @@ async function runBridgeBehavior(inject, context) {
       assert(entry.workPackage === 'WP-A', `${manifestKey} workPackage 为 WP-A`);
       assert(Array.isArray(entry.errors) && entry.errors.length === 1 && entry.errors[0] === 'WEB_BRIDGE_DESKTOP_ONLY', `${manifestKey} errors 包含 WEB_BRIDGE_DESKTOP_ONLY`);
     }
+  }
+
+  for (const updaterCapability of UPDATER_GUARD_CAPABILITIES) {
+    const entry = contractMap.get(updaterCapability);
+    assert(Boolean(entry), `${updaterCapability} 必须在 manifest 声明`);
+    if (!entry) {
+      continue;
+    }
+
+    assert(entry.status === 'removed', `${updaterCapability} 为 removed 能力`);
+    assert(entry.source === 'desktop-only', `${updaterCapability} 来源为 desktop-only`);
+    assert(entry.owner === 'desktop', `${updaterCapability} owner 为 desktop`);
+    assert(entry.workPackage === 'WP-A', `${updaterCapability} workPackage 为 WP-A`);
   }
 
   assertRemovedProductWhitelist(removedProductEntries);
@@ -737,7 +781,7 @@ async function runBridgeBehavior(inject, context) {
       actualCode = extractErrorCode(error);
     }
 
-    const expectedCode = entry.status === 'removed' ? 'WEB_BRIDGE_DESKTOP_ONLY' : 'WEB_CAPABILITY_PENDING';
+    const expectedCode = entry.status === 'removed' ? (entry.source === 'deleted-product' ? 'WEB_BRIDGE_REMOVED' : 'WEB_BRIDGE_DESKTOP_ONLY') : 'WEB_CAPABILITY_PENDING';
     assert(threw, `${manifestKey} ${entry.status} 运行时应抛错`);
     assert(actualCode === expectedCode, `${manifestKey} ${entry.status} 应抛出 ${expectedCode}`);
   }
@@ -764,7 +808,8 @@ async function runBridgeBehavior(inject, context) {
     const [namespace, method] = entryName.split('.');
     const removedRes = await statusPayload({ namespace, method, args: [] });
     assert(removedRes.response.statusCode === 410, `${entryName} 返回 410`);
-    assert(removedRes.payload.code === 'WEB_BRIDGE_REMOVED', `${entryName} 返回 WEB_BRIDGE_REMOVED`);
+    assert(removedRes.payload.code === 'WEB_BRIDGE_DESKTOP_ONLY', `${entryName} 返回 WEB_BRIDGE_DESKTOP_ONLY`);
+    assert(/桌面端专属/.test(String(removedRes.payload.message || '')), `${entryName} 使用桌面专属提示文案`);
   }
 
   for (const removedEntry of removedProductEntries.values()) {
@@ -772,6 +817,35 @@ async function runBridgeBehavior(inject, context) {
     const removedRes = await statusPayload({ namespace, method, args: [] });
     assert(removedRes.response.statusCode === 410, `${removedEntry.contractRef} 返回 410`);
     assert(removedRes.payload.code === 'WEB_BRIDGE_REMOVED', `${removedEntry.contractRef} 返回 WEB_BRIDGE_REMOVED`);
+    assert(/下线/.test(String(removedRes.payload.message || '')), `${removedEntry.contractRef} 返显下线文案`);
+  }
+
+  if (bridgeContractMethods && bridgeContractMethods.tasks && typeof bridgeContractMethods.tasks === 'object') {
+    const unknownRemovedMethod = '__testUnknownRemovedSource';
+    const originalUnknownRemoved = bridgeContractMethods.tasks[unknownRemovedMethod];
+    bridgeContractMethods.tasks[unknownRemovedMethod] = {
+      status: 'removed',
+      owner: 'web-runtime',
+      workPackage: 'WP-A',
+      source: 'legacy-or-unknown-source',
+      transport: 'bridge',
+      contractRef: `tasks.${unknownRemovedMethod}`,
+      input: [],
+      output: null,
+      errors: ['WEB_BRIDGE_REMOVED'],
+    };
+    try {
+      const unknownRemovedRes = await statusPayload({ namespace: 'tasks', method: unknownRemovedMethod, args: [] });
+      assert(unknownRemovedRes.response.statusCode === 410, '未知 removed source 返回 410');
+      assert(unknownRemovedRes.payload.code === 'WEB_BRIDGE_REMOVED', '未知 removed source 使用 WEB_BRIDGE_REMOVED');
+      assert(Boolean(String(unknownRemovedRes.payload.message || '')), '未知 removed source 有明确错误文案');
+    } finally {
+      if (originalUnknownRemoved === undefined) {
+        delete bridgeContractMethods.tasks[unknownRemovedMethod];
+      } else {
+        bridgeContractMethods.tasks[unknownRemovedMethod] = originalUnknownRemoved;
+      }
+    }
   }
 
   for (const badName of FORBIDDEN_PROTOTYPE_IDENTIFIERS) {
@@ -861,6 +935,7 @@ async function runBridgeBehavior(inject, context) {
   return {
     failedCount: failed.length,
     isStrictPendingOnlyFailure,
+    strictCleanupFailure: false,
   };
 }
 
@@ -899,7 +974,11 @@ async function closeServer() {
   let tmpDataDir;
   let closeWorkspace;
   let contractVersion = 'unknown';
-  let result = { failedCount: 0, isStrictPendingOnlyFailure: false };
+  let result = {
+    failedCount: 0,
+    isStrictPendingOnlyFailure: false,
+    strictCleanupFailure: false,
+  };
 
   try {
     tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-contract-test-'));
@@ -929,6 +1008,7 @@ async function closeServer() {
     result = await runBridgeBehavior(inject, {
       contractEntries,
       removedProductEntries,
+      bridgeContractMethods: contractModule.methods,
       bridgeBindingMetadata,
       routeDispatchers,
       getWorkspaceContext,
@@ -947,6 +1027,7 @@ async function closeServer() {
       console.error('关闭服务器失败:', error instanceof Error ? error.message : error);
       result.failedCount = (result.failedCount || 0) + 1;
       failed.push('服务器关闭失败');
+      result.strictCleanupFailure = true;
     }
 
     try {
@@ -957,6 +1038,7 @@ async function closeServer() {
       console.error('清理 workspace 失败:', error instanceof Error ? error.message : error);
       result.failedCount = (result.failedCount || 0) + 1;
       failed.push('cleanup workspace 失败');
+      result.strictCleanupFailure = true;
     }
 
     try {
@@ -967,11 +1049,12 @@ async function closeServer() {
       console.error('清理临时目录失败:', error instanceof Error ? error.message : error);
       result.failedCount = (result.failedCount || 0) + 1;
       failed.push('cleanup tmpDir 失败');
+      result.strictCleanupFailure = true;
     }
   }
 
   if (result.failedCount > 0) {
-    if (result.isStrictPendingOnlyFailure) {
+    if (result.isStrictPendingOnlyFailure && !result.strictCleanupFailure) {
       console.log('CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE');
     }
     process.exitCode = 1;

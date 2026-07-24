@@ -561,18 +561,20 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
   const [agentSelfCheckResult, setAgentSelfCheckResult] = useState<AgentSelfCheckResult | null>(null);
   const [exportingAgentSelfCheckReport, setExportingAgentSelfCheckReport] = useState(false);
   const { showToast } = useToast();
+  const isWebPlatform = window.yibiao?.platform === 'web';
 
   useEffect(() => {
     void loadTextConfig();
     void window.yibiao?.agent.listRuntimes()
       .then((runtimes) => setAgentRuntimes(runtimes || []))
       .catch(() => setAgentRuntimes([]));
-    void window.yibiao?.getVersion().then(setAppVersion);
+    if (!isWebPlatform) {
+      void window.yibiao?.getVersion().then(setAppVersion);
+    }
     void window.yibiao?.license?.getStatus().then(setLicenseStatus).catch(() => setLicenseStatus(null));
 
     const unsubs: Array<() => void> = [];
-    const isWeb = window.yibiao?.platform === 'web';
-    if (!isWeb) {
+    if (!isWebPlatform) {
       unsubs.push(
         window.yibiao?.onUpdateProgress(({ percent }) => {
           setUpdateStatus('downloading');
@@ -690,6 +692,11 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
       return;
     }
 
+    if (isWebPlatform) {
+      setUpdateStatus('disabled');
+      return;
+    }
+
     try {
       setUpdateStatus('checking');
       setUpdatePercent(0);
@@ -732,6 +739,10 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
   };
 
   const installDownloadedUpdate = async () => {
+    if (isWebPlatform) {
+      return;
+    }
+
     try {
       const result = await window.yibiao?.quitAndInstall();
       if (result && !result.success) {
@@ -2132,27 +2143,29 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
             <strong>关于</strong>
           </div>
           <div className="about-overview">
-            <article className="about-update-card">
-              <div className="about-card-head">
-                <span>自动更新</span>
-                <strong>当前版本 {appVersion || '...'}</strong>
-              </div>
-              <p>{updateStatusText}</p>
-              <button
-                type="button"
-                className="update-button"
-                disabled={updateBusy}
-                onClick={() => {
-                  if (updateStatus === 'downloaded') {
-                    void installDownloadedUpdate();
-                    return;
-                  }
-                  void checkForUpdates();
-                }}
-              >
-                {updateStatus === 'downloaded' ? '安装并重启' : updateBusy ? '检查中...' : '检查更新'}
-              </button>
-            </article>
+            {!isWebPlatform ? (
+              <article className="about-update-card">
+                <div className="about-card-head">
+                  <span>自动更新</span>
+                  <strong>当前版本 {appVersion || '...'}</strong>
+                </div>
+                <p>{updateStatusText}</p>
+                <button
+                  type="button"
+                  className="update-button"
+                  disabled={updateBusy}
+                  onClick={() => {
+                    if (updateStatus === 'downloaded') {
+                      void installDownloadedUpdate();
+                      return;
+                    }
+                    void checkForUpdates();
+                  }}
+                >
+                  {updateStatus === 'downloaded' ? '安装并重启' : updateBusy ? '检查中...' : '检查更新'}
+                </button>
+              </article>
+            ) : null}
             <article className="about-info-card about-links-card">
               <span>信息与授权</span>
               <ul className="about-links-list">

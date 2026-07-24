@@ -93,6 +93,13 @@ function runSelfCheck() {
       error: null,
       expected: false,
     },
+    {
+      status: 1,
+      stdout: 'CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE\n失败: 2\n  - strict 模式不允许 pending（当前 45）\n  - cleanup workspace 失败',
+      stderr: '',
+      error: null,
+      expected: false,
+    },
   ];
 
   testCases.forEach((item) => {

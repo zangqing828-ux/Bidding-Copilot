@@ -12,6 +12,18 @@ export class WebCapabilityPendingError extends Error {
   }
 }
 
+class WebCapabilityError extends Error {
+  readonly code: string;
+  readonly status: number;
+
+  constructor(code: string, message: string, status: number) {
+    super(message);
+    this.name = 'WebCapabilityError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
 export interface BridgeResponse<T = unknown> {
   code?: string;
   message?: string;
@@ -42,7 +54,8 @@ async function invoke<T = unknown>(namespace: string, method: string, args: unkn
   }
 
   if (!response.ok) {
-    throw new Error(payload.message || `Web 请求错误（HTTP ${response.status}）`);
+    const errorCode = typeof payload.code === 'string' ? payload.code : `HTTP_${response.status}`;
+    throw new WebCapabilityError(errorCode, payload.message || `Web 请求错误（HTTP ${response.status}）`, response.status);
   }
 
   return (payload.data ?? payload) as T;
