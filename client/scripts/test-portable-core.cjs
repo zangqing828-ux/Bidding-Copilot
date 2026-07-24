@@ -617,6 +617,121 @@ function runPortableStoreChecks(tmpDir) {
   }
 }
 
+async function runExplicitWorkspaceRootAdapterChecks(tmpDir) {
+  const fakeUserDataDir = path.join(tmpDir, 'adapter-fake-userdata');
+  const fakeWorkspaceRoot = path.join(fakeUserDataDir, 'workspace');
+  const explicitWorkspaceRoot = path.join(tmpDir, 'adapter-explicit-workspace');
+  const explicitPaths = coreWorkspacePaths.resolveWorkspacePaths(explicitWorkspaceRoot);
+  const fakeAppCalls = [];
+  const fakeApp = {
+    getPath(name) {
+      fakeAppCalls.push(name);
+      return name === 'userData' ? fakeUserDataDir : '';
+    },
+  };
+  const fileServiceCalls = [];
+  const fakeFileService = {
+    importDocument(options) {
+      fileServiceCalls.push({ method: 'importDocument', receiver: this, options });
+      return {
+        success: true,
+        file_content: '# 显式路径招标文件',
+        file_name: 'explicit-tender.docx',
+        parser_label: 'fake-parser',
+        message: 'fake tender imported',
+      };
+    },
+    importTechnicalPlanDocument(label) {
+      fileServiceCalls.push({ method: 'importTechnicalPlanDocument', receiver: this, label });
+      return {
+        success: true,
+        file_content: '# 显式路径原方案',
+        file_name: 'explicit-plan.docx',
+        parser_label: 'fake-parser',
+        message: 'fake original plan imported',
+      };
+    },
+    importRejectionCheckDocument(role) {
+      fileServiceCalls.push({ method: 'importRejectionCheckDocument', receiver: this, role });
+      return {
+        success: true,
+        message: 'fake rejection document imported',
+        documents: [{
+          file_content: '# 显式路径投标文件',
+          file_name: 'explicit-bid.docx',
+          parser_label: 'fake-parser',
+        }],
+      };
+    },
+  };
+
+  let database;
+  try {
+    database = trackDb(coreSqlite.createSqliteDatabase({ workspaceRoot: explicitWorkspaceRoot }));
+    const technicalPlanStore = electronTechnicalPlanStore.createTechnicalPlanStore({
+      app: fakeApp,
+      workspaceRoot: explicitWorkspaceRoot,
+      db: database.db,
+      fileService: fakeFileService,
+    });
+    const knowledgeBaseStore = electronKnowledgeBaseStore.createKnowledgeBaseStore({
+      app: fakeApp,
+      workspaceRoot: explicitWorkspaceRoot,
+      db: database.db,
+    });
+    const duplicateCheckStore = electronDuplicateCheckStore.createDuplicateCheckStore({
+      app: fakeApp,
+      workspaceRoot: explicitWorkspaceRoot,
+      db: database.db,
+    });
+    const rejectionCheckStore = electronRejectionCheckStore.createRejectionCheckStore({
+      app: fakeApp,
+      workspaceRoot: explicitWorkspaceRoot,
+      db: database.db,
+      fileService: fakeFileService,
+      technicalPlanStore,
+    });
+
+    const tenderResult = await technicalPlanStore.importTenderDocument();
+    const originalPlanResult = await technicalPlanStore.importOriginalPlanDocument();
+    const rejectionResult = await rejectionCheckStore.importDocument('bid');
+    const folder = knowledgeBaseStore.createFolder('explicit-folder');
+    duplicateCheckStore.saveUiState({ step: 'analysis', activeAnalysisTab: 'content' });
+
+    assert(database.path === explicitPaths.databasePath, 'Store adapter 显式 root: SQLite 落显式 workspaceRoot');
+    assert(fakeAppCalls.length === 0, 'Store adapter 显式 root: 四个 wrapper 均不读取 fake app userData');
+    assert(!fs.existsSync(fakeWorkspaceRoot), 'Store adapter 显式 root: fake app userData/workspace 未被使用');
+
+    assert(tenderResult.success && tenderResult.markdown === '# 显式路径招标文件', 'Store adapter fileService: technical tender 返回可控结果');
+    assert(technicalPlanStore.readTenderMarkdown().trim() === '# 显式路径招标文件', 'Store adapter fileService: technical tender 写入显式路径');
+    assert(fs.existsSync(explicitPaths.technicalPlanTenderMarkdownPath), 'Store adapter 显式 root: tender 文件落显式 workspaceRoot');
+
+    assert(originalPlanResult.success && originalPlanResult.markdown === '# 显式路径原方案', 'Store adapter fileService: original plan 返回可控结果');
+    assert(technicalPlanStore.readOriginalPlanMarkdown().trim() === '# 显式路径原方案', 'Store adapter fileService: original plan 写入显式路径');
+    assert(fs.existsSync(explicitPaths.technicalPlanOriginalPlanMarkdownPath), 'Store adapter 显式 root: original plan 文件落显式 workspaceRoot');
+
+    assert(rejectionResult.success, 'Store adapter fileService: rejection import 返回成功');
+    assert(rejectionCheckStore.readDocumentMarkdown('bid').trim() === '# 显式路径投标文件', 'Store adapter fileService: rejection document 写入显式路径');
+    assert(fs.readdirSync(explicitPaths.rejectionCheckBidsDir).some((name) => name.endsWith('.md')), 'Store adapter 显式 root: rejection 文件落显式 workspaceRoot');
+
+    assert(knowledgeBaseStore.list().folders.some((item) => item.id === folder.id), 'Store adapter 显式 root: knowledge base 使用显式 DB/schema');
+    assert(duplicateCheckStore.loadDuplicateCheck().activeAnalysisTab === 'content', 'Store adapter 显式 root: duplicate check 使用显式 DB/schema');
+    assert(fs.existsSync(explicitPaths.knowledgeBaseDir), 'Store adapter 显式 root: knowledge 目录落显式 workspaceRoot');
+    assert(fs.existsSync(explicitPaths.duplicateCheckDir), 'Store adapter 显式 root: duplicate 目录落显式 workspaceRoot');
+    assert(fs.existsSync(explicitPaths.rejectionCheckDir), 'Store adapter 显式 root: rejection 目录落显式 workspaceRoot');
+
+    assert(fileServiceCalls.length === 3, 'Store adapter fileService: 三个公开 import 入口均调用 fake service');
+    assert(fileServiceCalls.every((call) => call.receiver === fakeFileService), 'Store adapter fileService: 三个入口透传同一个 service receiver');
+    assert(fileServiceCalls[0].method === 'importDocument' && fileServiceCalls[0].options?.multiple === true, 'Store adapter fileService: tender import 参数保持契约');
+    assert(fileServiceCalls[1].method === 'importTechnicalPlanDocument' && fileServiceCalls[1].label === '原方案', 'Store adapter fileService: original plan import 参数保持契约');
+    assert(fileServiceCalls[2].method === 'importRejectionCheckDocument' && fileServiceCalls[2].role === 'bid', 'Store adapter fileService: rejection import 参数保持契约');
+  } finally {
+    const db = database?.db;
+    closeTrackedDb(database);
+    assert(!db || !db.open, 'Store adapter 显式 root: SQLite 已关闭');
+  }
+}
+
 function withFreshModuleOverrides(modulePath, overrides, callback) {
   const resolvedModulePath = require.resolve(modulePath);
   const originalLoad = Module._load;
@@ -783,7 +898,7 @@ function runPackagingAssertions() {
   assert(dockerfileSource.includes('COPY client/core/ ./client/core/'), '打包: Dockerfile 运行时复制 client/core');
 }
 
-function run() {
+async function run() {
   const tmpDir = trackDir(fs.mkdtempSync(path.join(os.tmpdir(), 'bidding-portable-core-')));
 
   try {
@@ -938,6 +1053,7 @@ function run() {
     assertLegacyStoreWrappersAreThin();
     runWorkspaceCleanupChecks(tmpDir);
     runPortableStoreChecks(tmpDir);
+    await runExplicitWorkspaceRootAdapterChecks(tmpDir);
 
     // 5. 配置归一化
     const coreConfigPath = path.join(tmpDir, 'core-config.json');
@@ -1016,9 +1132,7 @@ function run() {
   console.log('全部通过 ✅');
 }
 
-try {
-  run();
-} catch (error) {
+run().catch((error) => {
   failed.push(`脚本异常: ${error.message}`);
   closeAllDatabases();
   removeTmpDirs();
@@ -1033,4 +1147,4 @@ try {
     console.log(`  - ${message}`);
   });
   process.exit(1);
-}
+});
