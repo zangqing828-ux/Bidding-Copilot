@@ -161,15 +161,15 @@ async function runTests() {
     assert(res.statusCode === 401, '未登录访问 SSE 返回 401');
   }
 
-  // 5. bridge tasks.startBidAnalysis → 500（Web 端任务启动未实现，需真实 AI 服务）
+  // 5. bridge tasks.startBidAnalysis → 501（待能力未实现）
   {
     const res = await httpRequest('POST', '/api/bridge', {
       'content-type': 'application/json',
       cookie: cookieStr,
     }, { namespace: 'tasks', method: 'startBidAnalysis', args: [{}] });
-    assert(res.statusCode === 500, 'tasks.startBidAnalysis 返回 500（未实现，需真实 AI 服务）');
+    assert(res.statusCode === 501, 'tasks.startBidAnalysis 返回 501（待能力未实现）');
     const body = JSON.parse(res.body);
-    assert(body.code === 'INTERNAL_ERROR', 'tasks.startBidAnalysis 返回 INTERNAL_ERROR');
+    assert(body.code === 'WEB_CAPABILITY_PENDING', 'tasks.startBidAnalysis 返回 WEB_CAPABILITY_PENDING');
   }
 
   // 5b. bridge technicalPlan.loadState → 200（Store 数据操作已实现）
