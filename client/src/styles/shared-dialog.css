@@ -4,7 +4,7 @@
   inset: 0;
   z-index: 100;
   background: rgba(15, 23, 42, 0.34);
-  backdrop-filter: blur(4px);
+  backdrop-filter: none;
 }
 
 /* [4145-4228] detail-help-link/modal/card/head/close/body/actions (DetailHelpLink.tsx) */
@@ -31,7 +31,7 @@
   inset: 0;
   z-index: 120;
   background: rgba(15, 23, 42, 0.32);
-  backdrop-filter: blur(4px);
+  backdrop-filter: none;
 }
 
 .detail-help-card {
@@ -49,7 +49,7 @@
   background: #ffffff;
   border: 1px solid rgba(228, 233, 240, 0.9);
   border-radius: 22px;
-  box-shadow: 0 28px 72px rgba(23, 32, 51, 0.16);
+  box-shadow: 0 28px 72px rgba(17, 24, 39, 0.16);
   transform: translate(-50%, -50%);
 }
 
@@ -124,7 +124,7 @@
   background: #ffffff;
   border: 1px solid rgba(228, 233, 240, 0.9);
   border-radius: 24px;
-  box-shadow: 0 28px 72px rgba(23, 32, 51, 0.16);
+  box-shadow: 0 28px 72px rgba(17, 24, 39, 0.16);
   transform: translate(-50%, -50%);
 }
 
@@ -163,8 +163,8 @@
 
 .content-regenerate-card textarea:focus {
   background: #ffffff;
-  border-color: rgba(33, 116, 253, 0.38);
-  box-shadow: 0 0 0 4px rgba(33, 116, 253, 0.08);
+  border-color: rgba(17, 24, 39, 0.38);
+  box-shadow: 0 0 0 4px rgba(17, 24, 39, 0.08);
 }
 
 .content-regenerate-actions {
@@ -203,7 +203,7 @@
   background: #dfe7f3;
   border: 1px solid rgba(180, 194, 214, 0.9);
   border-radius: 999px;
-  box-shadow: inset 0 1px 2px rgba(23, 32, 51, 0.05);
+  box-shadow: inset 0 1px 2px rgba(17, 24, 39, 0.05);
   transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
 
@@ -213,14 +213,14 @@
   height: 26px;
   background: #ffffff;
   border-radius: 999px;
-  box-shadow: 0 4px 12px rgba(23, 32, 51, 0.12);
+  box-shadow: 0 4px 12px rgba(17, 24, 39, 0.12);
   transition: transform 180ms ease;
 }
 
 .yb-switch-control input:checked + .yb-switch-track {
   background: linear-gradient(135deg, var(--yb-primary), var(--yb-violet));
-  border-color: rgba(33, 116, 253, 0.35);
-  box-shadow: 0 10px 24px rgba(33, 116, 253, 0.18);
+  border-color: rgba(17, 24, 39, 0.35);
+  box-shadow: 0 10px 24px rgba(17, 24, 39, 0.18);
 }
 
 .yb-switch-control input:checked + .yb-switch-track .yb-switch-thumb {
@@ -228,6 +228,6 @@
 }
 
 .yb-switch-control input:focus-visible + .yb-switch-track {
-  outline: 3px solid rgba(33, 116, 253, 0.18);
+  outline: 3px solid rgba(17, 24, 39, 0.18);
   outline-offset: 3px;
 }

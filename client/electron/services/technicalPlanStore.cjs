@@ -8,6 +8,7 @@ const {
   getTechnicalPlanOriginalPlanMarkdownPath,
   getTechnicalPlanTenderMarkdownPath,
 } = require('../utils/paths.cjs');
+const { resolveWorkspacePaths } = require('../../shared/workspacePaths.cjs');
 const { deleteImportedImageBatches } = require('../utils/importedImages.cjs');
 const { clearMermaidCache } = require('../utils/mermaidCache.cjs');
 const { detectBidSections } = require('../utils/bidSectionDetector.cjs');
@@ -375,14 +376,15 @@ function mapOutlineItems(items, mapper) {
   });
 }
 
-function createTechnicalPlanStore({ app, db, fileService }) {
-  const tenderMarkdownPath = getTechnicalPlanTenderMarkdownPath(app);
-  const tenderOriginalMarkdownPath = path.join(path.dirname(tenderMarkdownPath), 'tender-original.md');
-  const tenderSourceFilesDir = path.join(path.dirname(tenderMarkdownPath), 'tender-files');
-  const originalPlanMarkdownPath = getTechnicalPlanOriginalPlanMarkdownPath(app);
-  const originalOutlineRuntimePath = path.join(path.dirname(originalPlanMarkdownPath), originalOutlineRuntimeFileName);
-  const illustrationsDir = getTechnicalPlanIllustrationsDir(app);
-  const generatedIllustrationsDir = getTechnicalPlanGeneratedIllustrationsDir(app);
+function createTechnicalPlanStore({ app, db, fileService, workspaceRoot }) {
+  const wp = workspaceRoot ? resolveWorkspacePaths(workspaceRoot) : null;
+  const tenderMarkdownPath = wp ? wp.technicalPlanTenderMarkdownPath : getTechnicalPlanTenderMarkdownPath(app);
+  const tenderOriginalMarkdownPath = wp ? wp.technicalPlanTenderOriginalMarkdownPath : path.join(path.dirname(tenderMarkdownPath), 'tender-original.md');
+  const tenderSourceFilesDir = wp ? wp.technicalPlanTenderSourceFilesDir : path.join(path.dirname(tenderMarkdownPath), 'tender-files');
+  const originalPlanMarkdownPath = wp ? wp.technicalPlanOriginalPlanMarkdownPath : getTechnicalPlanOriginalPlanMarkdownPath(app);
+  const originalOutlineRuntimePath = wp ? wp.technicalPlanOriginalOutlineRuntimePath : path.join(path.dirname(originalPlanMarkdownPath), originalOutlineRuntimeFileName);
+  const illustrationsDir = wp ? wp.technicalPlanIllustrationsDir : getTechnicalPlanIllustrationsDir(app);
+  const generatedIllustrationsDir = wp ? wp.technicalPlanGeneratedIllustrationsDir : getTechnicalPlanGeneratedIllustrationsDir(app);
 
   function normalizeIllustrationFilePart(value) {
     return String(value || '').replace(/[^a-zA-Z0-9_-]/g, '_') || 'illustration';

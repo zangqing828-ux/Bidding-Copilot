@@ -79,10 +79,71 @@ jobs:
         run: npm ci
 
       - name: Check CommonJS syntax
-        run: find electron scripts -name '*.cjs' -print0 | xargs -0 -n1 node --check
+        run: find electron scripts server -name '*.cjs' -print0 | xargs -0 -n1 node --check
 
       - name: Build renderer
         run: npm run build
+
+      - name: Run Web Auth tests
+        run: |
+          npm rebuild better-sqlite3 --runtime=node
+          npm run test:web-auth
+
+      - name: Run Web Workspace tests
+        run: |
+          npm rebuild better-sqlite3 --runtime=node
+          npm run test:web-workspace
+        env:
+          CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
+
+      - name: Run Web Tasks tests
+        run: npm run test:web-tasks
+        env:
+          CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
+
+      - name: Run Web Files tests
+        run: npm run test:web-files
+        env:
+          CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
+
+      - name: Run Web Export tests
+        run: npm run test:web-export
+        env:
+          CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
+
+      - name: Docker build
+        working-directory: .
+        run: docker build -t bidding-copilot-web:ci .
+
+      - name: Docker run health check
+        working-directory: .
+        run: |
+          docker run -d --name web-test -p 3000:3000 \
+            -e NODE_ENV=development \
+            -e OAUTH_MODE=mock \
+            -e SESSION_SECRET=ci-test-secret \
+            -e CONFIG_ENCRYPTION_KEY=ci-test-key \
+            -e YIBIAO_DATA_DIR=/data \
+            bidding-copilot-web:ci
+          # 等待服务启动，最多 30 秒
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
+              echo "Health check passed after ${i}s"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "Health check failed after 30s"
+              docker logs web-test
+              docker stop web-test || true
+              docker rm web-test || true
+              exit 1
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:3000/api/health
+          curl -fsS http://127.0.0.1:3000/api/readiness
+          docker stop web-test
+          docker rm web-test
 
       - name: Block critical production vulnerabilities
         run: npm audit --omit=dev --audit-level=critical

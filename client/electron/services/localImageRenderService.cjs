@@ -2,7 +2,34 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { BrowserWindow, app: electronApp } = require('electron');
+
+// 延迟加载 Electron：Web 环境（Docker）不安装 electron，顶层 require 会崩溃。
+// 只在实际调用渲染功能时才尝试加载。
+let _electronBrowserWindow = null;
+let _electronApp = null;
+let _electronLoaded = false;
+
+function loadElectron() {
+  if (_electronLoaded) return;
+  _electronLoaded = true;
+  try {
+    const electron = require('electron');
+    _electronBrowserWindow = electron.BrowserWindow;
+    _electronApp = electron.app;
+  } catch {
+    // Web 环境无 electron，渲染功能不可用
+  }
+}
+
+function getBrowserWindow() {
+  loadElectron();
+  return _electronBrowserWindow;
+}
+
+function getElectronApp() {
+  loadElectron();
+  return _electronApp;
+}
 
 const DEFAULT_COMPONENT_CONCURRENCY = 5;
 const MIN_COMPONENT_CONCURRENCY = 1;
@@ -39,7 +66,7 @@ function resolveMermaidBrowserScript() {
     return require.resolve('mermaid/dist/mermaid.min.js');
   } catch {
     const candidates = [
-      path.join(electronApp.getAppPath(), 'node_modules', 'mermaid', 'dist', 'mermaid.min.js'),
+      path.join(getElectronApp()?.getAppPath() || '', 'node_modules', 'mermaid', 'dist', 'mermaid.min.js'),
       path.join(__dirname, '..', '..', 'node_modules', 'mermaid', 'dist', 'mermaid.min.js'),
     ];
     for (const candidate of candidates) {
@@ -84,7 +111,11 @@ function delay(ms) {
 
 // 创建隐藏渲染窗口。
 function createRenderWindow(width, height) {
-  const win = new BrowserWindow({
+  const BW = getBrowserWindow();
+  if (!BW) {
+    throw new Error('渲染功能需要 Electron 环境，当前环境不可用');
+  }
+  const win = new BW({
     width: Math.max(1, Math.round(width)),
     height: Math.max(1, Math.round(height)),
     show: false,

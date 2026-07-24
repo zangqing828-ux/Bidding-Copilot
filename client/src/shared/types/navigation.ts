@@ -6,7 +6,6 @@ export type SectionId =
   | 'knowledge-base'
   | 'document-knowledge-base'
   | 'image-knowledge-base'
-  | 'resources'
   | 'bid-check'
   | 'duplicate-check'
   | 'rejection-check'
@@ -15,7 +14,6 @@ export type SectionId =
   | 'my-templates'
   | 'new-template'
   | 'export-format'
-  | 'bid-opportunity'
   | 'developer-test'
   | 'developer-json-test'
   | 'developer-prompt-lab'
@@ -23,8 +21,7 @@ export type SectionId =
   | 'developer-export-preview'
   | 'developer-expansion-replace-test'
   | 'developer-agent-test'
-  | 'settings'
-  | 'plugin-manager';
+  | 'settings';
 
 export interface AppMenuNotice {
   message: string;
