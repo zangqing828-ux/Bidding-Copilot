@@ -120,8 +120,8 @@
 
 .duplicate-empty-upload {
   min-height: 48px;
-  background: linear-gradient(90deg, rgba(33, 116, 253, 0.055), rgba(33, 116, 253, 0.012));
-  border: 1px solid rgba(33, 116, 253, 0.13);
+  background: linear-gradient(90deg, rgba(17, 24, 39, 0.055), rgba(17, 24, 39, 0.012));
+  border: 1px solid rgba(17, 24, 39, 0.13);
   border-radius: 16px;
 }
 
@@ -154,12 +154,12 @@
 
 .duplicate-document-tab.is-active {
   background: #eef4ff;
-  border-color: rgba(33, 116, 253, 0.38);
-  box-shadow: 0 0 0 3px rgba(33, 116, 253, 0.08);
+  border-color: rgba(17, 24, 39, 0.38);
+  box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.08);
 }
 
 .duplicate-document-tab:hover:not(.is-active) {
-  border-color: rgba(33, 116, 253, 0.2);
+  border-color: rgba(17, 24, 39, 0.2);
   box-shadow: var(--yb-shadow-sm);
 }
 
@@ -347,11 +347,11 @@
 }
 
 .duplicate-analysis-tab.is-active {
-  background: linear-gradient(180deg, rgba(33, 116, 253, 0.1), rgba(255, 255, 255, 0.95));
+  background: linear-gradient(180deg, rgba(17, 24, 39, 0.1), rgba(255, 255, 255, 0.95));
 }
 
 .duplicate-analysis-tab:hover:not(.is-active) {
-  background: rgba(33, 116, 253, 0.04);
+  background: rgba(17, 24, 39, 0.04);
 }
 
 .duplicate-analysis-tab-main {
@@ -376,7 +376,7 @@
 
 .duplicate-analysis-tab.is-running em {
   color: var(--yb-primary);
-  background: rgba(33, 116, 253, 0.1);
+  background: rgba(17, 24, 39, 0.1);
 }
 
 .duplicate-analysis-tab.is-success em {
@@ -398,7 +398,7 @@
   display: block;
   overflow: hidden;
   height: 8px;
-  background: rgba(33, 116, 253, 0.1);
+  background: rgba(17, 24, 39, 0.1);
   border-radius: 999px;
 }
 
@@ -633,8 +633,8 @@
 }
 
 .duplicate-outline-files button.is-active {
-  background: rgba(33, 116, 253, 0.1);
-  border-color: rgba(33, 116, 253, 0.24);
+  background: rgba(17, 24, 39, 0.1);
+  border-color: rgba(17, 24, 39, 0.24);
 }
 
 .duplicate-outline-files span {
