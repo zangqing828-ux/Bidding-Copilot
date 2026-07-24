@@ -1,23 +1,98 @@
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
+const EXPECTED_MACHINE_MARKER = 'CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE';
+
+function isExpectedPendingFailureGuardResult(result) {
+  if (!result || result.status !== 1 || result.error) {
+    return false;
+  }
+
+  const output = `${result.stdout || ''}\n${result.stderr || ''}`;
+  if (!output.includes(EXPECTED_MACHINE_MARKER)) {
+    return false;
+  }
+
+  if (!/\n失败:\s*1(\s|$)/.test(output)) {
+    return false;
+  }
+
+  const failLines = output.split('\n').filter((line) => line.startsWith('  - '));
+  if (failLines.length !== 1) {
+    return false;
+  }
+
+  if (/uncaught\s+exception|UnhandledPromiseRejection|^\s+at\s/m.test(output)) {
+    return false;
+  }
+
+  return true;
+}
+
+function runSelfCheck() {
+  const testCases = [
+    {
+      status: 1,
+      stdout: 'CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE\n失败: 1\n  - strict 模式不允许 pending（当前 45）',
+      stderr: '',
+      error: null,
+      expected: true,
+    },
+    {
+      status: 1,
+      stdout: 'strict 模式不允许 pending（当前 1）\n失败: 1\n  - strict 模式不允许 pending',
+      stderr: '',
+      error: null,
+      expected: false,
+    },
+    {
+      status: 1,
+      stdout: `CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE\n失败: 1\n  - strict 模式不允许 pending（当前 1）\n  at Object.someFunction (/tmp/test.js:1:1)`,
+      stderr: '',
+      error: null,
+      expected: false,
+    },
+    {
+      status: 1,
+      stdout: `CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE\n失败: 1\n  - strict 模式不允许 pending（当前 1）\n  - 额外失败`,
+      stderr: '',
+      error: null,
+      expected: false,
+    },
+    {
+      status: 0,
+      stdout: 'CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE\n失败: 1\n  - strict 模式不允许 pending（当前 1）',
+      stderr: '',
+      error: null,
+      expected: false,
+    },
+  ];
+
+  testCases.forEach((item) => {
+    const actual = isExpectedPendingFailureGuardResult(item);
+    if (actual !== item.expected) {
+      console.error('strict-guard 自检失败，判定逻辑与预期不一致');
+      process.exit(1);
+    }
+  });
+}
+
+runSelfCheck();
+
 const result = spawnSync(process.execPath, [path.join(__dirname, 'test-web-contract.cjs'), '--strict'], {
-  stdio: 'inherit',
+  encoding: 'utf8',
+  stdio: 'pipe',
   env: {
     ...process.env,
   },
   cwd: path.join(__dirname, '..'),
 });
 
-if (result.status === 0) {
-  console.error('strict-guard 失败：当前合同存在 pending 也不应返回失败');
+const passed = isExpectedPendingFailureGuardResult(result);
+if (!passed) {
+  console.error('strict-guard 失败：未观察到仅 pending 相关的严格失败模式');
   process.exit(1);
 }
 
-if (result.error) {
-  console.error('strict-guard 执行异常:', result.error.message);
-  process.exit(1);
-}
-
-console.log('strict-guard 通过：--strict 因 pending 返回非零');
+console.log('strict-guard 通过：strict 仅报告 pending 失败并包含预期机器标记');
 process.exit(0);

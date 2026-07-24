@@ -24,7 +24,7 @@ const DELETED_FEATURE_PATHS = [
   'electron/ipc/pluginIpc.cjs',
   'electron/preload-plugin-config.cjs',
 ];
-const DESKTOP_ONLY_METHODS = [
+const DESKTOP_ONLY_CAPABILITIES = [
   'app.getGpuHardwareAccelerationStatus',
   'app.saveGpuHardwareAccelerationPreference',
   'app.startGpuHardwareAccelerationTrial',
@@ -37,6 +37,9 @@ const DESKTOP_ONLY_METHODS = [
   'config.openConfigFolder',
   'developerTokenStats.openWindow',
   'export.openFile',
+  'events.onUpdateProgress',
+  'events.onUpdateDownloaded',
+  'events.onUpdateError',
 ];
 
 const REQUIRED_WEB_BRIDGE_META_KEYS = [
@@ -484,11 +487,12 @@ async function runBridgeBehavior(inject) {
       assert(entry.status === 'pending', 'events.database.onStatus 按待实现待定返回');
     }
 
-    if (DESKTOP_ONLY_METHODS.includes(manifestKey.replace('members.', '').replace('locals.', '').replace('events.', ''))) {
+    if (DESKTOP_ONLY_CAPABILITIES.includes(manifestKey)) {
+      assert(entry.status === 'removed', `${manifestKey} 标记为 removed`);
       assert(entry.source === 'desktop-only', `${manifestKey} 标记 desktop-only`);
       assert(entry.owner === 'desktop', `${manifestKey} owner 为 desktop`);
-      assert(entry.workPackage === 'WP-F', `${manifestKey} workPackage 使用 WP-F`);
-      assert(entry.status === 'pending', `${manifestKey} 挂起态以免被误判为可用`);
+      assert(entry.workPackage === 'WP-A', `${manifestKey} workPackage 为 WP-A`);
+      assert(Array.isArray(entry.errors) && entry.errors.length === 1 && entry.errors[0] === 'WEB_BRIDGE_DESKTOP_ONLY', `${manifestKey} errors 包含 WEB_BRIDGE_DESKTOP_ONLY`);
     }
   }
 
@@ -540,8 +544,10 @@ async function runBridgeBehavior(inject) {
     assert(entry.status === 'implemented', `${dispatcherKey} dispatcher 仅对应 implemented manifest`);
   }
 
+  let strictPendingGateMessage = null;
   if (strictMode) {
-    assert(pendingEntries.length === 0, `strict 模式不允许 pending（当前 ${pendingEntries.length}）`);
+    strictPendingGateMessage = `strict 模式不允许 pending（当前 ${pendingEntries.length}）`;
+    assert(pendingEntries.length === 0, strictPendingGateMessage);
   }
 
   const session = await createSessionCookie(inject);
@@ -574,6 +580,16 @@ async function runBridgeBehavior(inject) {
   assert(pendingRes.response.statusCode === 501, 'pending 方法返回 501');
   assert(pendingRes.payload.code === 'WEB_CAPABILITY_PENDING', 'pending 方法返回 WEB_CAPABILITY_PENDING');
 
+  for (const entryName of DESKTOP_ONLY_CAPABILITIES) {
+    if (entryName.startsWith('events.')) {
+      continue;
+    }
+    const [namespace, method] = entryName.split('.');
+    const removedRes = await statusPayload({ namespace, method, args: [] });
+    assert(removedRes.response.statusCode === 410, `${entryName} 返回 410`);
+    assert(removedRes.payload.code === 'WEB_BRIDGE_REMOVED', `${entryName} 返回 WEB_BRIDGE_REMOVED`);
+  }
+
   for (const removedEntry of removedProductEntries.values()) {
     const [namespace, method] = removedEntry.contractRef.split('.');
     const removedRes = await statusPayload({ namespace, method, args: [] });
@@ -604,6 +620,16 @@ async function runBridgeBehavior(inject) {
     const wsPendingRes = await statusPayload({ namespace: 'tasks', method: 'startBidSectionExtraction', args: [] });
     assert(wsPendingRes.response.statusCode === 501, 'pending 能力返回 501，且不触发 workspace');
     assert(workspaceResolved === 0, 'pending 能力未初始化 workspace');
+
+    for (const entryName of DESKTOP_ONLY_CAPABILITIES) {
+      if (entryName.startsWith('events.')) {
+        continue;
+      }
+      const [namespace, method] = entryName.split('.');
+      const wsRemovedRes = await statusPayload({ namespace, method, args: [] });
+      assert(wsRemovedRes.response.statusCode === 410, `${entryName} 返回 410，且不触发 workspace`);
+      assert(workspaceResolved === 0, `${entryName} 不初始化 workspace`);
+    }
 
     const wsRemovedRes = await statusPayload({ namespace: 'resources', method: 'list', args: [] });
     assert(wsRemovedRes.response.statusCode === 410, 'removed 能力返回 410，且不触发 workspace');
@@ -641,14 +667,21 @@ async function runBridgeBehavior(inject) {
   console.log(`manifest pending：${pendingEntries.length}`);
   console.log(`通过: ${passed.length}`);
   console.log(`失败: ${failed.length}`);
-  if (failed.length > 0) {
-    failed.forEach((item) => {
-      console.error(`  - ${item}`);
-    });
-    process.exit(1);
-  }
+  failed.forEach((item) => {
+    console.error(`  - ${item}`);
+  });
 
-  console.log('全部通过 ✅');
+  const isStrictPendingOnlyFailure = Boolean(
+    strictMode
+    && strictPendingGateMessage
+    && failed.length === 1
+    && failed.includes(strictPendingGateMessage)
+  );
+
+  return {
+    failedCount: failed.length,
+    isStrictPendingOnlyFailure,
+  };
 }
 
 async function startServer() {
@@ -659,15 +692,29 @@ async function startServer() {
   port = server.address().port;
 }
 
+async function closeServer() {
+  if (!server.listening) {
+    return;
+  }
+  await new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 (async () => {
   const inject = createRequest();
+  let result = { failedCount: 0, isStrictPendingOnlyFailure: false };
   await startServer();
   try {
-    await runBridgeBehavior(inject);
+    result = await runBridgeBehavior(inject);
   } finally {
-    if (server.listening) {
-      server.close();
-    }
+    await closeServer();
     try {
       closeAll();
     } catch {}
@@ -675,4 +722,14 @@ async function startServer() {
       fs.rmSync(tmpDataDir, { recursive: true, force: true });
     } catch {}
   }
+
+  if (result.failedCount > 0) {
+    if (result.isStrictPendingOnlyFailure) {
+      console.log('CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE');
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log('全部通过 ✅');
 })();
