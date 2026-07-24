@@ -26,7 +26,8 @@
     "prestart:web": "npm rebuild better-sqlite3 --runtime=node",
     "start:web": "node server/index.cjs",
     "test:web-auth": "node scripts/test-web-auth.cjs",
-    "test:web-workspace": "node scripts/test-web-workspace.cjs"
+    "test:web-workspace": "node scripts/test-web-workspace.cjs",
+    "test:web-tasks": "node scripts/test-web-tasks.cjs"
   },
   "build": {
     "appId": "com.yibiao.openbidkit",

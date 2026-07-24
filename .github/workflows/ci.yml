@@ -96,6 +96,11 @@ jobs:
         env:
           CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
 
+      - name: Run Web Tasks tests
+        run: npm run test:web-tasks
+        env:
+          CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
+
       - name: Block critical production vulnerabilities
         run: npm audit --omit=dev --audit-level=critical
 

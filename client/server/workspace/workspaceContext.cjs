@@ -8,8 +8,15 @@ const { createKnowledgeBaseStore } = require('../../electron/services/knowledgeB
 const { createDuplicateCheckStore } = require('../../electron/services/duplicateCheckStore.cjs');
 const { createRejectionCheckStore } = require('../../electron/services/rejectionCheckStore.cjs');
 const { createTemplateStore } = require('../../electron/services/templateStore.cjs');
+const { createTaskService } = require('../../electron/services/taskService.cjs');
 const { resolveWorkspacePaths } = require('../../shared/workspacePaths.cjs');
 const { createEncryptedConfigStore } = require('../config/encryptedConfigStore.cjs');
+const {
+  createWebAiServiceStub,
+  createWebAgentServiceStub,
+  createWebKnowledgeBaseServiceStub,
+  createWebDuplicateCheckServiceStub,
+} = require('./webServices.cjs');
 
 function createWorkspaceContext({ workspaceId, dataDir }) {
   const workspaceRoot = path.join(dataDir, 'users', workspaceId, 'workspace');
@@ -35,6 +42,23 @@ function createWorkspaceContext({ workspaceId, dataDir }) {
   const rejectionCheckStore = createRejectionCheckStore({ db: sqliteDatabase.db, workspaceRoot, technicalPlanStore });
   const templateStore = createTemplateStore({ db: sqliteDatabase.db });
 
+  // 初始化 Web 端占位服务（真实 AI/Agent 留到后续 Sprint）
+  const aiService = createWebAiServiceStub();
+  const agentService = createWebAgentServiceStub();
+  const knowledgeBaseService = createWebKnowledgeBaseServiceStub({ knowledgeBaseStore });
+  const duplicateCheckService = createWebDuplicateCheckServiceStub({ duplicateCheckStore });
+
+  // 初始化 taskService（复用 Electron 逻辑，per-workspace 独立实例）
+  const taskService = createTaskService({
+    aiService,
+    agentService,
+    technicalPlanStore,
+    rejectionCheckStore,
+    duplicateCheckStore,
+    knowledgeBaseService,
+    duplicateCheckService,
+  });
+
   return {
     workspaceId,
     workspaceRoot,
@@ -42,6 +66,7 @@ function createWorkspaceContext({ workspaceId, dataDir }) {
     db: sqliteDatabase.db,
     sqliteDatabase,
     configStore,
+    taskService,
     stores: {
       technicalPlanStore,
       knowledgeBaseStore,
@@ -50,6 +75,7 @@ function createWorkspaceContext({ workspaceId, dataDir }) {
       templateStore,
     },
     close() {
+      agentService.close?.();
       sqliteDatabase.close();
     },
   };
