@@ -1,61 +1,80 @@
 # AGENTS.md
 
-## 范围
-- 当前有效产品代码在 `client/`；
-- `analytics/` 是独立 Cloudflare Workers 埋点服务，用于统计、分析、查看`client/`中提交的埋点信息。
+## 必读与权威顺序
 
-## Client
-- 开发Client前，必须先阅读`client/开发说明.md`，保持框架风格一致性。
-- 没有 root `package.json`；客户端命令都先 `cd client`。
-- 安装/验证：`npm ci` 后 `npm run build`。`npm run build` 等价 `tsc --noEmit && vite build`，仓库未配置 lint/test 脚本。
-- 开发启动：`npm run dev`，固定 Vite `127.0.0.1:5173 --strictPort` 后再启动 Electron。
-- 打包：`npm run dist:win` / `npm run dist:mac`，配置在 `client/package.json` 的 `build` 字段，产物在 `client/release/`。
-- Electron Main 和 preload 是 CommonJS：`client/electron/**/*.cjs`；Renderer 是 ESM TypeScript：`client/src/**/*.ts(x)`。
-- Renderer 不直接访问 Node、`fs`、`path`、`ipcRenderer`，只通过 `window.yibiao`；改 preload API 时同步 `client/src/shared/types/ipc.ts`。
-- `electron/ipc/*.cjs` 只注册/转发 IPC，业务逻辑放 `electron/services/*.cjs`。
-- Main 侧文件读写显式使用 UTF-8，并把 Windows 中文路径当默认场景处理。
-- `client/开发说明.md`很重要，初次对话时一定要读取
+- 初次进入仓库，依次阅读 `project.md`、本文件、`client/开发说明.md`。
+- 涉及 Web 架构收敛时，必须阅读 `.planning/web-architecture-convergence/architecture-convergence.spec.md`。
+- 涉及品牌、命名、外链、发布元数据或兼容标识时，必须阅读 `.planning/yibiao-brand-cleanup/brand-cleanup.spec.md`。
+- 冲突时采用以下权威顺序：老板最新明确决策 > `project.md` 的锁定决策 > 两份当前 Spec > 本文件 > 旧 Sprint 文档、历史计划和代码注释。
+- `.planning/web-mainquest-v1/` 和 `.planning/yibiao-brand-cleanup/plan.md` 是历史输入，不再作为当前实施范围或“已完成”证明。
 
-## Client 架构
-- Renderer 入口：`client/src/main.tsx` -> `AppProviders` -> `App` -> `src/app/AppRouter.tsx`。
-- 新增主菜单页面要同时改 `src/shared/types/navigation.ts`、`src/app/menuConfig.ts`、`src/app/AppRouter.tsx`；需要全局工具条再改 `src/app/toolbarConfig.tsx`。
-- 功能代码放 `src/features/<feature>/`；跨功能代码放 `src/shared/`，且 `shared/` 不引用 feature。
-- Prompt 统一在 `src/shared/prompts/`；不要在组件内硬编码大段 prompt。
-- UI 使用全局 CSS + Radix 基础组件，不使用 Tailwind；用户可见文案用中文。
-- 成功、失败、警告提示走 `shared/ui/ToastProvider`，不要用 `alert`。
-- 页面根容器保持 `height: 100%`/`min-height: 0`，长内容在页面内部滚动；不要依赖 `body` 全局滚动或为 `FloatingToolbar` 额外留大空白。
+## 不可偏移的项目决策
+
+- 产品交付目标是可通过浏览器使用、可由 Docker 部署的 Web 应用；Web 不是 Electron 页面预览模式。
+- MainQuest OAuth 是 Web 正式账号入口；每个 MainQuest 账号拥有独立配置、SQLite、文件、任务和导出空间。
+- PR #3（基线提交 `e71e87c633de`）只完成 Web 运行骨架、认证/工作区基础设施和部分 Store bridge，不代表 Web 主业务链路完成。
+- 实施顺序固定为：先完成 Web 架构收敛和真实业务闭环并通过验收，再执行品牌清理。不得用改名、换文案或删除旧标识掩盖架构缺口。
+- 产品展示品牌统一为 `BidMaster`，仓库地址统一为 `https://github.com/zangqing828-ux/Bidding-Copilot`；旧品牌、旧域名、推广链接和 Star 诱导按品牌 Spec 清理。
+- 品牌清理分开处理用户可见品牌与兼容性标识。禁止对持久化协议、数据库、环境变量、OAuth/CI 配置、云资源名做无迁移方案的全局替换。
+- v1 前端保留现有组件、页面结构、布局和交互，只使用 MainQuest MQDS 浅色配色；不做深色模式、组件重做或信息架构重排。
+- 资源下载、投标机会、插件管理及其产品侧菜单、路由、页面和运行入口保持删除，后续不得重新引入。
+- Electron 仅作为迁移期兼容与回归基线；不新增 Electron-only 产品能力。是否最终删除桌面交付需由老板另行决策。
+- 任何返回 `501`、stub、mock、占位成功、只验证错误码或尚未接入真实业务的能力，都不得标记为完成。
+
+## 仓库范围
+
+- `client/src/`：React Renderer，Web 与 Electron 共用界面。
+- `client/server/`：Web 服务端、MainQuest OAuth、会话、账号隔离、上传/下载、SSE 和 Web 运行时装配。
+- `client/electron/`：现有桌面适配器与待抽离的业务服务；不能继续把 Electron API 带入可复用 core。
+- `client/shared/`：跨 Web/Electron 的运行环境无关契约与路径规则。
+- `analytics/`：独立 Cloudflare Worker 与 Dashboard，不属于 Web 主运行时。产品侧删除插件管理不授权顺手删除 Analytics；如需调整，必须在对应 Spec 中明确。
+- 根目录没有 `package.json`；客户端命令从 `client/` 执行。
+
+## 架构约束
+
+- 目标分层是 `Renderer -> runtime bridge -> portable core -> environment adapters`。
+- Renderer 不直接访问 Node、`fs`、`path`、`ipcRenderer`；浏览器走 Web Bridge，Electron 走 preload bridge。
+- 业务规则、Store、AI 队列、任务状态机和导出编排应逐步移到运行环境无关的 core；Electron dialog、BrowserWindow、app paths 和 shell 只能存在于 Electron adapter。
+- Web 请求是安全边界。旧文档中的“本地客户端内部可信、无需校验”不适用于 `client/server/`。所有 Web API 必须做认证、授权、账号隔离、输入大小/类型校验和路径边界校验。
+- 浏览器不得提交或读取任意服务器绝对路径。上传文件使用服务端生成的 file ID，并在当前账号工作区内解析。
+- API Key、OAuth secret、session、用户文档正文和完整模型响应不得出现在浏览器 bundle、普通访问日志或错误响应中。
+- 多账号上下文不得共享可变配置、任务队列、事件流、临时文件或导出结果；缓存必须以 workspace ID 为边界并可正确释放。
+- Prompt 统一放在 `src/shared/prompts/` 或 portable core 的对应模块；不要在组件内硬编码大段 prompt。
+- 新增或修改 bridge API 时，同步维护运行环境无关的接口类型、Web dispatcher、Electron preload/IPC 适配和契约测试。
+
+## UI 约束
+
+- UI 使用全局 CSS + Radix 基础组件，不使用 Tailwind。
+- v1 只允许按 MQDS 浅色 token 改配色；不得改变组件、DOM 结构、布局几何、交互路径或信息架构。
+- 用户可见文案使用中文；产品名保持 `BidMaster`。
+- 成功、失败、警告和普通消息统一使用 `shared/ui/ToastProvider`，不要新增 `alert`。
+- 页面根容器保持 `height: 100%` / `min-height: 0`，长内容在页面内部滚动。
 
 ## 数据与流程
-- 配置存到 Electron `userData/user_config.json`；工作区存到 `userData/workspace/`；技术方案权威缓存是 `userData/workspace/technical_plan.json`。
-- Renderer 只用 `localStorage` 存轻量 UI 偏好；大文本、草稿、API Key、流程状态都走 Main 侧存储/IPC。
-- 技术方案 Step01 只导入/展示 Markdown；Step02/Step03/Step04 的耗时任务都在 Electron Main 后台任务中跑，并持续写入 `workspaceStore`。
-- 正文展示和导出以 `outlineData.outline[*].content` 为权威来源；目录重新生成、编辑、添加或删除后必须清空旧正文内容和生成缓存。
-- Mermaid 图以 Markdown `mermaid` 代码块保存；Renderer 本地渲染预览，Word 导出由 Main 本地转图片（不依赖外网）并通过 `window.yibiao.export.onWordExportProgress()` 报进度。
-- AI 生成 Markdown 默认不启用 `rehypeRaw`；只有明确需要渲染可信 HTML 时才局部开启并说明原因。
 
-## 聚焦验证
-- 改 Renderer/TypeScript：`cd client; npm run build`。
-- 改 Electron Main/preload：先在 `client/` 下运行 `node --check electron\preload.cjs` 或对应 `.cjs` 文件，再跑 `npm run build`；涉及窗口/IPC 还要 `npm run dev` 手动打开验证。
-- 改依赖：`cd client; npm audit`。
-- `npm run build` 可能只有既有 chunk 体积警告；不要把它当失败，除非命令退出非 0。
+- Web 数据根目录由配置注入；账号映射到服务端生成的稳定 workspace ID，实际数据位于该账号独立目录。
+- Web 端用户配置必须服务端加密保存；浏览器 `localStorage` 只允许保存轻量 UI 偏好。
+- 结构化业务状态进入账号独立 SQLite；大文本、上传文件、图片和导出物进入该账号目录。
+- 技术方案正文展示和导出以 `outlineData.outline[*].content` 为权威来源。
+- 长任务必须服务端执行并持续落盘；页面刷新后从 Store 恢复，再通过当前账号 SSE 回放 active task。
+- 目录重新生成、编辑、添加或删除后，必须清空旧正文内容、生成缓存和失效的图片计划。
+- Mermaid 以 Markdown `mermaid` 代码块保存；Web 导出使用 Linux headless 渲染 adapter，不依赖 Electron `BrowserWindow`。
 
-## 发布
-- `.github/workflows/release.yml` 只在推送 `v*` tag 或手动输入 `tag_name` 时发布客户端。
-- Release CI 使用 Node 22，在 `client/` 下 `npm ci`，从 tag 同步 `package.json` 版本，再用 `electron-builder --publish never` 构建并由 `gh release upload` 上传产物。
-- 当前未接入代码签名；Windows/macOS 未签名提示是已知发布约束，不要在普通功能改动里临时绕过。
+## 开发与验证
 
-## Analytics
-- Worker：`cd analytics\worker; npm install; npm run dev` 或 `npm run deploy`。
-- Dashboard：`cd analytics\dashboard; npm install; npm run dev` 或 `npm run deploy`。
-- `analytics/scripts/deploy-if-changed.mjs` 在 Cloudflare Workers CI 下只部署对应目录变化；强制部署用 `FORCE_DEPLOY=1 npm run deploy`。
-- 不把 `ACCOUNT_ID`、`ADMIN_TOKEN`、`ANALYTICS_API_TOKEN` 等密钥写入仓库；Worker 配置保留 `keep_vars: true`，不要在 `wrangler.jsonc` 增加 `secrets.required`。
-- 禁止删除、绕过或弱化任何埋点、统计、Analytics Dashboard 展示和 Worker 聚合逻辑；如确需调整，必须等价保留统计能力并说明影响。
+- 安装：`cd client && npm ci`。
+- TypeScript/Renderer：`npm run build`。
+- Web 聚焦测试：`npm run test:web`。占位错误测试不能替代真实业务成功路径和失败路径测试。
+- CommonJS：`find electron scripts server -name '*.cjs' -print0 | xargs -0 -n1 node --check`。
+- Docker：从仓库根执行 `docker build -t bidding-copilot-web:local .`，并实际启动容器检查 `/api/health`、`/api/readiness` 和关键业务 smoke。
+- 改 Web native 依赖后，验证 Node ABI；保留 Electron 兼容时还要恢复 Electron ABI 并运行 `npm run smoke:electron-native`。
+- 改依赖后运行 `npm audit --omit=dev --audit-level=critical`；不能把已知关键漏洞当作普通警告。
+- 完成标准必须包含真实成功链路、边界/失败链路、账号隔离和持久化验证。测试如果只证明 `500/501` 可解释，只能说明占位受控。
 
-## 必须遵守的要求
-- 尽量保持整体编码风格的统一。
-- 前端组件和样式尽量封装和复用，保持样式风格统一。
-- 当用户提出功能异常时，不要猜原因，而是真实的去排查代码，增加调试日志，精准定位问题再去想办法解决。
-- 任何好的想法，应该在设计阶段，即Plan模式下提出，如果进入到build阶段，只按照原定方案执行，禁止增加任何多余内容，如需增加需要向用户确认。
-- 这是一个开源客户端项目，前端后端等所有数据传输层都在用户本地客户端上，所以所有数据传输直接都是相互信任的，不要加多余的数据校验，如果需要任何校验，只在用户输入层进行校验，进入软件传输之后，任何层级间不用校验。
-- 这是一个开源客户端项目，前端后端等所有数据传输层都在用户本地客户端上，我们默认客户不会自己攻击自己，不会恶意使用程序，所以不需要加过多安全性兜底
-- 严格遵守用户命令，你有任何好的想法都应该在plan阶段跟用户确认，而不是在build阶段自行添加
+## SDD 与变更纪律
+
+- 架构收敛跨 Web、认证、数据、任务、Linux Runtime 和导出，默认按 SDD Heavy 执行；品牌清理按其 Spec 的独立工作包执行。
+- 每个并行 worker 使用独立分支/worktree和不重叠的写入范围；完成后提交并返回 commit SHA 与验证证据。
+- 主线程负责范围、集成、审查裁决和最终验收；子代理结论不是自动批准。
+- 保留用户已有改动，禁止顺手重构、扩大范围或修改未授权的云资源与仓库 Secrets。
+- 设计阶段提出新增范围；进入实施后只执行已批准 Spec。发现必须扩展时停在 gate，记录证据并请求决策。
