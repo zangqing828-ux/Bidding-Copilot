@@ -656,7 +656,7 @@ async function runBridgeBehavior(inject, context) {
   );
   assertSourceContains(
     settingsPageSource,
-    /void window\.yibiao\?\.getVersion\(\)\.then\(setAppVersion\)/,
+    /if \(!isWebPlatform\)\s*{[\s\S]*?void window\.yibiao\?\.getVersion\(\)\.then\(setAppVersion\)/,
     'web 平台不会调用 getVersion',
   );
   assertSourceContains(
@@ -671,7 +671,7 @@ async function runBridgeBehavior(inject, context) {
   );
   assertSourceContains(
     settingsPageSource,
-    /{!isWebPlatform \? \(/,
+    /{\s*!isWebPlatform \? \(\s*<article className="about-update-card">[\s\S]*?<\/article>\s*\)\s*:\s*null}/,
     'SettingsPage web 平台不渲染自动更新卡片',
   );
 
