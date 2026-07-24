@@ -1347,7 +1347,6 @@ function createSqliteDatabase({
   workspaceRoot,
   databasePath: explicitDatabasePath,
   onStatus,
-  DatabaseClass = Database,
 } = {}) {
   const databasePath = explicitDatabasePath
     || (workspaceRoot
@@ -1359,7 +1358,7 @@ function createSqliteDatabase({
   }
 
   fs.mkdirSync(path.dirname(databasePath), { recursive: true });
-  const db = new DatabaseClass(databasePath);
+  const db = new Database(databasePath);
 
   try {
     db.pragma('journal_mode = WAL');

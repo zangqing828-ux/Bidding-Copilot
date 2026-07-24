@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const Module = require('node:module');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const coreWorkspacePaths = require('../core/workspacePaths.cjs');
 const coreSqlite = require('../core/sqliteDatabase.cjs');
@@ -22,6 +23,9 @@ const passed = [];
 const failed = [];
 const activeDatabases = new Set();
 const activeTmpDirs = [];
+const CLIENT_DIR = path.join(__dirname, '..');
+const CORE_DIR = path.join(CLIENT_DIR, 'core');
+const ELECTRON_DIR = path.join(CLIENT_DIR, 'electron');
 
 function assert(condition, message) {
   if (condition) {
@@ -102,11 +106,187 @@ function listCjsFilesRecursively(dir) {
     .sort();
 }
 
+function isPathUnderDirectory(targetPath, directory) {
+  const normalizedDirectory = `${path.resolve(directory)}${path.sep}`;
+  const normalizedTarget = path.resolve(targetPath);
+  return normalizedTarget.startsWith(normalizedDirectory);
+}
+
+function normalizeLiteralString(literal) {
+  return literal
+    .replace(/\\\\/g, '\\')
+    .replace(/\\'/g, "'")
+    .replace(/\\"/g, '"')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\t/g, '\t')
+    .replace(/\\b/g, '\b')
+    .replace(/\\f/g, '\f')
+    .replace(/\\v/g, '\v');
+}
+
+function parseRequireLiteralArgument(rawArg) {
+  const trimmed = rawArg.trim();
+  const singleQuoted = trimmed.match(/^'((?:\\.|[^'\\])*)'$/);
+  if (singleQuoted) {
+    return normalizeLiteralString(singleQuoted[1]);
+  }
+  const doubleQuoted = trimmed.match(/^"((?:\\.|[^"\\])*)"$/);
+  if (doubleQuoted) {
+    return normalizeLiteralString(doubleQuoted[1]);
+  }
+  return null;
+}
+
+function stripSourceForRequireScan(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/.*(?=[\r\n]|$)/g, ' ')
+    .replace(/'[^'\\\r\n]*(?:\\.[^'\\\r\n]*)*'/g, '')
+    .replace(/"[^"\\\r\n]*(?:\\.[^"\\\r\n]*)*"/g, '')
+    .replace(/`[^`\\]*(?:\\.[^`\\]*)*`/g, '');
+}
+
+function scanRequireCalls(filePath, source) {
+  const sanitized = stripSourceForRequireScan(source);
+  const requireCallPattern = /\brequire\s*\(\s*([^)]+?)\s*\)/g;
+  const matches = [];
+  let match;
+  while ((match = requireCallPattern.exec(sanitized)) !== null) {
+    matches.push({
+      file: filePath,
+      expression: match[1],
+      raw: match[0],
+    });
+  }
+  return matches;
+}
+
+function resolveLocalDependency(currentFilePath, request) {
+  const resolved = require.resolve(request, { paths: [path.dirname(currentFilePath)] });
+  return resolved;
+}
+
+function collectReachableCoreDeps(seedFiles, reasonPrefix = '依赖图扫描') {
+  const todo = [...new Set(seedFiles.map((entry) => path.resolve(entry)))];
+  const visited = new Set();
+  const seedSet = new Set(todo);
+  while (todo.length > 0) {
+    const filePath = todo.pop();
+    if (visited.has(filePath)) {
+      continue;
+    }
+    visited.add(filePath);
+
+    assert(
+      !filePath || path.extname(filePath) === '.cjs' || path.extname(filePath) === '.js',
+      `${reasonPrefix}: 忽略非 CJS/JS 文件 ${path.relative(CLIENT_DIR, filePath)}`,
+    );
+
+    assert(
+      seedSet.has(filePath) || isPathUnderDirectory(filePath, CLIENT_DIR),
+      `${reasonPrefix}: 扫描路径必须在 client 下，当前 ${path.relative(CLIENT_DIR, filePath)}`,
+    );
+
+    assert(
+      !isPathUnderDirectory(filePath, ELECTRON_DIR),
+      `${reasonPrefix}: 禁止依赖进入 client/electron，命中 ${path.relative(CLIENT_DIR, filePath)}`,
+    );
+
+    const source = fs.readFileSync(filePath, 'utf-8');
+    const calls = scanRequireCalls(filePath, source);
+    calls.forEach((call) => {
+      const literalArg = parseRequireLiteralArgument(call.expression);
+      if (literalArg === null) {
+        throw new Error(`${reasonPrefix}: 非字面量 require 调用 ${call.raw} 在 ${path.relative(CLIENT_DIR, call.file)}`);
+      }
+
+      if (literalArg === 'electron' || literalArg === 'node:electron' || literalArg.startsWith('electron/')) {
+        throw new Error(`${reasonPrefix}: 禁止直接 require(${literalArg}) 在 ${path.relative(CLIENT_DIR, filePath)}`);
+      }
+
+      if (literalArg.startsWith('./') || literalArg.startsWith('../') || path.isAbsolute(literalArg)) {
+        let resolved;
+        try {
+          resolved = resolveLocalDependency(filePath, literalArg);
+        } catch (error) {
+          throw new Error(`${reasonPrefix}: require(${literalArg}) 无法解析 (${path.relative(CLIENT_DIR, filePath)})`);
+        }
+
+        if (isPathUnderDirectory(resolved, ELECTRON_DIR)) {
+          throw new Error(`依赖图扫描: local 依赖进入 electron 目录 ${path.relative(CLIENT_DIR, filePath)} -> ${path.relative(CLIENT_DIR, resolved)}`);
+        }
+
+        if (isPathUnderDirectory(resolved, CLIENT_DIR) && (path.extname(resolved) === '.cjs' || path.extname(resolved) === '.js')) {
+          if (!visited.has(resolved)) {
+            todo.push(resolved);
+          }
+        }
+      }
+    });
+  }
+  return [...visited];
+}
+
+function runChildProcessCoreIsolationCheck(coreFiles) {
+  const script = `
+    const path = require('node:path');
+    const Module = require('node:module');
+
+    const clientDir = path.join(process.cwd(), 'client');
+    const electronDir = path.join(clientDir, 'electron');
+    const entries = JSON.parse(process.env.PORTABLE_CORE_FILES || '[]');
+    const originalLoad = Module._load;
+
+    function fail(message) {
+      console.error(message);
+      process.exit(2);
+    }
+
+    Module._load = function rejectElectronInChild(request, parent, isMain) {
+      if (request === 'electron' || request === 'node:electron' || request.startsWith('electron/')) {
+        fail(\`子进程模块隔离: 禁止 require(\${request})\`);
+      }
+      const resolved = Module._resolveFilename(request, parent, isMain);
+      if (typeof resolved === 'string' && resolved.startsWith(\`\${electronDir}\${path.sep}\`)) {
+        fail(\`子进程模块隔离: 禁止加载 electron 目录模块 \${resolved}\`);
+      }
+      return originalLoad.apply(this, [request, parent, isMain]);
+    };
+
+    try {
+      for (const entryPath of entries) {
+        require(entryPath);
+      }
+      process.exit(0);
+    } catch (error) {
+      fail(\`子进程模块隔离: \${error && error.message ? error.message : String(error)}\`);
+    } finally {
+      Module._load = originalLoad;
+    }
+  `;
+
+  const child = spawnSync(process.execPath, ['-e', script], {
+    cwd: path.join(CLIENT_DIR, '..'),
+    env: {
+      ...process.env,
+      PORTABLE_CORE_FILES: JSON.stringify(coreFiles.map((item) => path.resolve(item))),
+    },
+    encoding: 'utf8',
+    timeout: 120000,
+  });
+
+  if (child.status !== 0) {
+    const details = [child.stdout, child.stderr].filter(Boolean).join('\n');
+    assert(
+      false,
+      `子进程模块隔离: core 入口加载失败 -> ${details || `exitCode=${child.status}`}`,
+    );
+  }
+}
+
 function assertCoreHasNoElectronDependencies() {
-  const clientDir = path.join(__dirname, '..');
-  const coreDir = path.join(clientDir, 'core');
-  const electronDir = path.join(clientDir, 'electron');
-  const coreFiles = listCjsFilesRecursively(coreDir);
+  const coreFiles = listCjsFilesRecursively(CORE_DIR);
 
   const forbiddenPatterns = [
     /\brequire\(\s*['"]electron/,
@@ -118,64 +298,55 @@ function assertCoreHasNoElectronDependencies() {
   ];
 
   coreFiles.forEach((filePath) => {
-    const relativePath = path.relative(clientDir, filePath);
+    const relativePath = path.relative(CLIENT_DIR, filePath);
     const source = fs.readFileSync(filePath, 'utf-8');
     const hit = forbiddenPatterns.find((pattern) => pattern.test(source));
     assert(!hit, `${relativePath} 不包含静态 Electron/主进程运行时依赖`);
   });
 
-  const originalLoad = Module._load;
-  Module._load = function rejectElectronFromCore(request, parent, isMain) {
-    if (request === 'electron' || request === 'node:electron' || request.startsWith('electron/')) {
-      const error = new Error(`core 禁止加载 Electron 模块：${request}`);
-      error.code = 'PORTABLE_CORE_ELECTRON_DEPENDENCY';
-      throw error;
-    }
+  collectReachableCoreDeps(coreFiles, '依赖图扫描');
+  runChildProcessCoreIsolationCheck(coreFiles);
 
-    const resolved = Module._resolveFilename(request, parent, isMain);
-    if (typeof resolved === 'string' && resolved.startsWith(`${electronDir}${path.sep}`)) {
-      const error = new Error(`core 禁止加载 Electron 目录：${resolved}`);
-      error.code = 'PORTABLE_CORE_ELECTRON_DEPENDENCY';
-      throw error;
-    }
-    return originalLoad.apply(this, arguments);
-  };
-
+  const fixtureDir = trackDir(fs.mkdtempSync(path.join(os.tmpdir(), 'portable-core-fixture-')));
+  const fixturePath = path.join(fixtureDir, 'dynamic-require.cjs');
+  fs.writeFileSync(fixturePath, "require(['elec', 'tron'].join(''));\n");
+  let dynamicFailureMessage;
   try {
-    let dynamicRequireBlocked = false;
-    try {
-      require(['elec', 'tron'].join(''));
-    } catch (error) {
-      dynamicRequireBlocked = error.code === 'PORTABLE_CORE_ELECTRON_DEPENDENCY';
-    }
-    assert(dynamicRequireBlocked, 'core 模块隔离: 动态拼接 require("electron") 被拒绝');
-
-    coreFiles.forEach((filePath) => {
-      delete require.cache[require.resolve(filePath)];
-      try {
-        require(filePath);
-        assert(true, `core 模块隔离: ${path.relative(clientDir, filePath)} 可在禁用 Electron 时加载`);
-      } catch (error) {
-        assert(false, `core 模块隔离: ${path.relative(clientDir, filePath)} 加载失败：${error.message || String(error)}`);
-      }
-    });
-  } finally {
-    Module._load = originalLoad;
+    collectReachableCoreDeps([fixturePath], '依赖图扫描');
+  } catch (error) {
+    dynamicFailureMessage = error && error.message ? error.message : String(error);
   }
-  assert(Module._load === originalLoad, 'core 模块隔离: Module._load hook 已恢复');
+  assert(
+    Boolean(dynamicFailureMessage),
+    "依赖图扫描: 计算型 require(['elec', 'tron'].join('')) 应被拒绝",
+  );
 }
 
 function withFreshModuleOverrides(modulePath, overrides, callback) {
   const resolvedModulePath = require.resolve(modulePath);
   const originalLoad = Module._load;
+  const overrideByRequest = new Map();
+  const overrideByResolved = new Map();
+
+  for (const [key, value] of overrides.entries()) {
+    if (key.includes(path.sep) || key.includes('/')) {
+      overrideByResolved.set(path.resolve(key), value);
+    } else {
+      overrideByRequest.set(key, value);
+    }
+  }
   let freshModule;
 
   delete require.cache[resolvedModulePath];
   try {
     Module._load = function loadWithOverrides(request, parent, isMain) {
+      if (overrideByRequest.has(request)) {
+        return overrideByRequest.get(request);
+      }
       const resolvedRequest = Module._resolveFilename(request, parent, isMain);
-      if (overrides.has(resolvedRequest)) {
-        return overrides.get(resolvedRequest);
+      const normalizedResolvedRequest = path.resolve(resolvedRequest);
+      if (overrideByResolved.has(normalizedResolvedRequest)) {
+        return overrideByResolved.get(normalizedResolvedRequest);
       }
       return originalLoad.apply(this, arguments);
     };
@@ -389,12 +560,18 @@ function run() {
         this.open = false;
       }
     }
-    const pragmaError = expectThrow(
-      () => coreSqlite.createSqliteDatabase({
-        databasePath: path.join(tmpDir, 'failing-sqlite', 'yibiao.sqlite'),
-        DatabaseClass: FailingDatabase,
-      }),
-      'SQLite 初始化失败: pragma 异常向上抛出',
+    const pragmaError = withFreshModuleOverrides(
+      '../core/sqliteDatabase.cjs',
+      new Map([
+        ['better-sqlite3', FailingDatabase],
+      ]),
+      ({ createSqliteDatabase }) => expectThrow(
+        () => createSqliteDatabase({
+          databasePath: path.join(tmpDir, 'failing-sqlite', 'yibiao.sqlite'),
+          onStatus: () => {},
+        }),
+        'SQLite 初始化失败: pragma 异常向上抛出',
+      ),
     );
     assert(pragmaError === expectedPragmaError, 'SQLite 初始化失败: 原始异常对象保持不变');
     assert(failedDb && !failedDb.open, 'SQLite 初始化失败: 已打开连接被关闭');
