@@ -124,7 +124,21 @@ jobs:
             -e CONFIG_ENCRYPTION_KEY=ci-test-key \
             -e YIBIAO_DATA_DIR=/data \
             bidding-copilot-web:ci
-          sleep 5
+          # 等待服务启动，最多 30 秒
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
+              echo "Health check passed after ${i}s"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "Health check failed after 30s"
+              docker logs web-test
+              docker stop web-test || true
+              docker rm web-test || true
+              exit 1
+            fi
+            sleep 1
+          done
           curl -fsS http://127.0.0.1:3000/api/health
           curl -fsS http://127.0.0.1:3000/api/readiness
           docker stop web-test
