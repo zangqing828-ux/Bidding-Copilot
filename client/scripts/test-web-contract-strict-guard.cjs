@@ -128,5 +128,30 @@ if (!passed) {
   process.exit(1);
 }
 
+const warningResult = spawnSync(process.execPath, [path.join(__dirname, 'test-web-contract.cjs'), '--strict'], {
+  encoding: 'utf8',
+  stdio: 'pipe',
+  env: {
+    ...process.env,
+    WEB_CONTRACT_SIMULATE_CLOSE_WARNING: '1',
+  },
+  cwd: path.join(__dirname, '..'),
+});
+const warningOutput = `${warningResult.stdout || ''}\n${warningResult.stderr || ''}`;
+if (warningResult.status === 0) {
+  console.error('strict-guard 失败：cleanup warning 场景未导致失败退出');
+  process.exit(1);
+}
+
+if (!/cleanup workspace 失败/.test(warningOutput) && !/\[workspace\] 关闭 workspace 失败/.test(warningOutput)) {
+  console.error('strict-guard 失败：未观察到 cleanup 失败记录');
+  process.exit(1);
+}
+
+if (warningOutput.includes('CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE')) {
+  console.error('strict-guard 失败：cleanup warning 场景仍输出 EXPECTED_PENDING_FAILURE');
+  process.exit(1);
+}
+
 console.log('strict-guard 通过：strict 仅报告 pending 失败并包含预期机器标记');
 process.exit(0);

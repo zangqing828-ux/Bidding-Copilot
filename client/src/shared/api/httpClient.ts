@@ -49,7 +49,7 @@ async function invoke<T = unknown>(namespace: string, method: string, args: unkn
     throw new Error(`Web 响应解析失败（HTTP ${response.status}）`);
   }
 
-  if (response.status === 501 || payload.code === 'WEB_CAPABILITY_PENDING') {
+  if (payload.code === 'WEB_CAPABILITY_PENDING') {
     throw new WebCapabilityPendingError(payload.message || '该功能尚未在 Web 端提供');
   }
 

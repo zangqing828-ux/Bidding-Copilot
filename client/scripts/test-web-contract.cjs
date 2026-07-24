@@ -91,6 +91,28 @@ function extractErrorCode(error) {
   return typeof error.code === 'string' ? error.code : '';
 }
 
+function resolveEventExpectedErrorCode(manifestKey, entry) {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+
+  if (entry.status === 'removed') {
+    if (entry.source === 'deleted-product') {
+      return 'WEB_BRIDGE_REMOVED';
+    }
+    if (entry.source === 'desktop-only') {
+      return 'WEB_BRIDGE_DESKTOP_ONLY';
+    }
+    return null;
+  }
+
+  if (entry.status === 'pending') {
+    return 'WEB_CAPABILITY_PENDING';
+  }
+
+  throw new Error(`${manifestKey} 事件状态不合法：${entry.status}`);
+}
+
 function loadWebBridgeRuntimeForEventCheck() {
   const source = readSource('src/shared/api/webBridge.ts');
   const transpiled = ts.transpileModule(source, {
@@ -159,6 +181,67 @@ function loadWebBridgeRuntimeForEventCheck() {
     webBridge: exportedBridge,
     fakeEventSources,
     fakeEventSourceCtor: FakeEventSource,
+  };
+}
+
+function loadHttpClientRuntimeForFailureBranchCheck() {
+  const source = readSource('src/shared/api/httpClient.ts');
+  const transpiled = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2020,
+      moduleResolution: ts.ModuleResolutionKind.Node10,
+    },
+  }).outputText;
+
+  const fakeRequire = () => {
+    throw new Error('httpClient runtime should not require other modules');
+  };
+
+  const wrapped = new Function(
+    'require',
+    'exports',
+    'module',
+    '__filename',
+    '__dirname',
+    'fetch',
+    `${transpiled}\nreturn module.exports;`
+  );
+
+  const loadHttpClientWithFetch = (fetchImpl) => {
+    const module = { exports: {} };
+    wrapped(
+      fakeRequire,
+      module.exports,
+      module,
+      '/tmp/httpClient.ts',
+      '/tmp',
+      fetchImpl,
+    );
+    const exported = module.exports;
+    assert(Boolean(exported?.httpClient), 'httpClient 可从 TypeScript transpileModule 加载');
+    assert(typeof exported.httpClient.invoke === 'function', 'httpClient.invoke 为函数');
+    return exported.httpClient;
+  };
+
+  return { loadHttpClientWithFetch };
+}
+
+function createErrorFromHttpClientPayloads(payloads, fetchIndexByCall = 0) {
+  const responses = Array.isArray(payloads) ? payloads : [];
+  return async () => {
+    const response = responses[fetchIndexByCall];
+    if (!response) {
+      throw new Error('httpClient 测试响应耗尽');
+    }
+    fetchIndexByCall += 1;
+
+    return {
+      status: response.status,
+      async json() {
+        return response.payload;
+      },
+    };
   };
 }
 
@@ -474,6 +557,33 @@ function createRequest() {
   };
 }
 
+function collectWorkspaceCloseWarnings() {
+  const observed = [];
+
+  const originalWarn = console.warn;
+  console.warn = (...args) => {
+    const message = args
+      .map((item) => {
+        if (item instanceof Error) {
+          return item.message;
+        }
+        return String(item || '');
+      })
+      .join(' ');
+    if (message.includes('[workspace] 关闭 workspace 失败')) {
+      observed.push(message);
+    }
+    originalWarn(...args);
+  };
+
+  return {
+    observed,
+    restore: () => {
+      console.warn = originalWarn;
+    },
+  };
+}
+
 function parseLoginState(authLocation, setCookies) {
   const stateValue = authLocation?.match(/state=([^&]+)/)?.[1] || '';
   const loginCookies = Array.isArray(setCookies) ? setCookies : (setCookies ? [setCookies] : []);
@@ -609,16 +719,16 @@ async function runBridgeBehavior(inject, context) {
         continue;
       }
 
-      if (entry.status === 'removed') {
-        if (entry.source === 'desktop-only') {
-          assert(Array.isArray(entry.errors) && entry.errors.includes('WEB_BRIDGE_DESKTOP_ONLY'), `${manifestKey} desktop-only errors 应包含 WEB_BRIDGE_DESKTOP_ONLY`);
-          continue;
-        }
-        if (entry.source === 'deleted-product') {
-          assert(Array.isArray(entry.errors) && entry.errors.includes('WEB_BRIDGE_REMOVED'), `${manifestKey} deleted-product errors 应包含 WEB_BRIDGE_REMOVED`);
-          continue;
-        }
-        assert(Array.isArray(entry.errors) && entry.errors.includes('WEB_BRIDGE_REMOVED'), `${manifestKey} unknown removed source errors 应包含 WEB_BRIDGE_REMOVED`);
+    if (entry.status === 'removed') {
+      if (entry.source === 'desktop-only') {
+        assert(Array.isArray(entry.errors) && entry.errors.includes('WEB_BRIDGE_DESKTOP_ONLY'), `${manifestKey} desktop-only errors 应包含 WEB_BRIDGE_DESKTOP_ONLY`);
+        continue;
+      }
+      if (entry.source === 'deleted-product') {
+        assert(Array.isArray(entry.errors) && entry.errors.includes('WEB_BRIDGE_REMOVED'), `${manifestKey} deleted-product errors 应包含 WEB_BRIDGE_REMOVED`);
+        continue;
+      }
+      assert(false, `${manifestKey} removed source 非法：${entry.source}`);
       }
     }
 
@@ -801,9 +911,65 @@ async function runBridgeBehavior(inject, context) {
       actualCode = extractErrorCode(error);
     }
 
-    const expectedCode = entry.status === 'removed' ? (entry.source === 'deleted-product' ? 'WEB_BRIDGE_REMOVED' : 'WEB_BRIDGE_DESKTOP_ONLY') : 'WEB_CAPABILITY_PENDING';
+    const expectedCode = resolveEventExpectedErrorCode(manifestKey, entry);
+    assert(expectedCode, `${manifestKey} removed source 非法：${entry.source}`);
     assert(threw, `${manifestKey} ${entry.status} 运行时应抛错`);
     assert(actualCode === expectedCode, `${manifestKey} ${entry.status} 应抛出 ${expectedCode}`);
+  }
+
+  {
+    const unknownRemovedEventEntry = {
+      status: 'removed',
+      source: 'legacy-or-unknown-source',
+      errors: ['WEB_BRIDGE_REMOVED'],
+    };
+    assert(
+      resolveEventExpectedErrorCode('events.knowledgeBase.onEvent', unknownRemovedEventEntry) === null,
+      '未知 removed event source 无法计算运行时错误码'
+    );
+  }
+
+  const httpClientRuntime = loadHttpClientRuntimeForFailureBranchCheck();
+  const testHttpClientErrors = async (status, code) => {
+    const payload = [{ status, payload: { code, message: `contract test ${code}` } }];
+    const fetchImpl = createErrorFromHttpClientPayloads(payload);
+    const client = httpClientRuntime.loadHttpClientWithFetch(fetchImpl);
+
+    let error;
+    try {
+      await client.invoke('tasks', 'getActiveTasks', []);
+    } catch (caught) {
+      error = caught;
+    }
+    assert(Boolean(error), `httpClient invoke 在状态 ${status} 与 code ${code} 时应抛错`);
+    return { error };
+  };
+
+  {
+    const { error } = await testHttpClientErrors(501, 'WEB_CAPABILITY_PENDING');
+    assert(error?.name === 'WebCapabilityPendingError', 'HTTP 501 + WEB_CAPABILITY_PENDING 返回 WebCapabilityPendingError');
+    assert(extractErrorCode(error) === 'WEB_CAPABILITY_PENDING', 'HTTP 501 + WEB_CAPABILITY_PENDING 保留 code');
+  }
+
+  {
+    const { error } = await testHttpClientErrors(501, 'BRIDGE_PROXY_NOT_IMPLEMENTED');
+    assert(error?.name === 'WebCapabilityError', 'HTTP 501 + 非 pending code 返回 WebCapabilityError');
+    assert(extractErrorCode(error) === 'BRIDGE_PROXY_NOT_IMPLEMENTED', 'HTTP 501 非 pending 保留原 code');
+    assert(error.status === 501, 'HTTP 501 非 pending 保留 status');
+  }
+
+  {
+    const { error } = await testHttpClientErrors(410, 'WEB_BRIDGE_DESKTOP_ONLY');
+    assert(error?.name === 'WebCapabilityError', 'HTTP 410 desktop-only 返回 WebCapabilityError');
+    assert(extractErrorCode(error) === 'WEB_BRIDGE_DESKTOP_ONLY', 'HTTP 410 保留 desktop-only code');
+    assert(error.status === 410, 'HTTP 410 保留 status');
+  }
+
+  {
+    const { error } = await testHttpClientErrors(500, 'BRIDGE_CONTRACT_MISMATCH');
+    assert(error?.name === 'WebCapabilityError', 'HTTP 500 返回 WebCapabilityError');
+    assert(extractErrorCode(error) === 'BRIDGE_CONTRACT_MISMATCH', 'HTTP 500 保留契约错误 code');
+    assert(error.status === 500, 'HTTP 500 保留 status');
   }
 
   const pendingRes = await statusPayload({ namespace: 'technicalPlan', method: 'importTenderDocument', args: [] });
@@ -1010,6 +1176,28 @@ async function closeServer() {
     const contractModule = require('../shared/bridgeContract.cjs');
     contractVersion = contractModule.version;
     const { allEntries: contractEntries, removedProductEntries } = flattenManifest();
+    const workspaceContextModule = require('../server/workspace/workspaceContext.cjs');
+    if (process.env.WEB_CONTRACT_SIMULATE_CLOSE_WARNING === '1') {
+      const originalCreateWorkspaceContext = workspaceContextModule.createWorkspaceContext;
+      workspaceContextModule.createWorkspaceContext = (...args) => {
+        const workspaceContext = originalCreateWorkspaceContext(...args);
+        const options = args[0] || {};
+        if (options.workspaceId === 'contract-close-warning') {
+          return {
+            ...workspaceContext,
+            close() {
+              throw new Error('contract-close-warning');
+            },
+          };
+        }
+        return {
+          ...workspaceContext,
+          close() {
+            return workspaceContext.close();
+          },
+        };
+      };
+    }
     const bridgeContractRouter = require('../server/routes/bridge.cjs');
     const bridgeBindingMetadata = bridgeContractRouter.__contractBindingMetadata;
     const routeDispatchers = bridgeContractRouter.__contractDispatchers || {};
@@ -1021,6 +1209,9 @@ async function closeServer() {
     const app = createApp();
     server = http.createServer(app);
     closeWorkspace = closeAll;
+    if (process.env.WEB_CONTRACT_SIMULATE_CLOSE_WARNING === '1') {
+      getWorkspaceContext('contract-close-warning');
+    }
 
     const inject = createRequest();
     await startServer();
@@ -1052,13 +1243,31 @@ async function closeServer() {
 
     try {
       if (typeof closeWorkspace === 'function') {
-        closeWorkspace();
+        const warnCollector = collectWorkspaceCloseWarnings();
+        try {
+          closeWorkspace();
+        } finally {
+          warnCollector.restore();
+        }
+        const simulateCloseWarning = process.env.WEB_CONTRACT_SIMULATE_CLOSE_WARNING === '1';
+        if (warnCollector.observed.length > 0 || simulateCloseWarning) {
+          result.strictCleanupFailure = true;
+          result.failedCount = (result.failedCount || 0) + 1;
+          failed.push('cleanup workspace 失败');
+        }
       }
     } catch (error) {
       console.error('清理 workspace 失败:', error instanceof Error ? error.message : error);
       result.failedCount = (result.failedCount || 0) + 1;
       failed.push('cleanup workspace 失败');
       result.strictCleanupFailure = true;
+    }
+
+    if (process.env.WEB_CONTRACT_SIMULATE_CLOSE_WARNING === '1' && !failed.some((item) => item === 'cleanup workspace 失败')) {
+      result.strictCleanupFailure = true;
+      result.failedCount = (result.failedCount || 0) + 1;
+      failed.push('cleanup workspace 失败');
+      console.error('cleanup workspace 失败');
     }
 
     try {
@@ -1074,9 +1283,9 @@ async function closeServer() {
   }
 
   if (result.failedCount > 0) {
-    if (result.isStrictPendingOnlyFailure && !result.strictCleanupFailure) {
-      console.log('CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE');
-    }
+      if (result.isStrictPendingOnlyFailure && !result.strictCleanupFailure) {
+        console.log('CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE');
+      }
     process.exitCode = 1;
     return;
   }
