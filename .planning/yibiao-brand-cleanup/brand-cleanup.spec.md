@@ -4,7 +4,7 @@
 > 基线：`main@e71e87c`（PR #3 已合并）
 > 生成日期：2026-07-24
 > 适用仓库：`zangqing828-ux/Bidding-Copilot`
-> 前置：Web 架构收敛 Spec 已验收；本 Spec 不以 PR #3 的“Web 骨架”状态作为业务完成依据。
+> 前置：Web 架构收敛 Spec 未验收时，只可进入 WP-0 及不触及运行协议的 WP-1/WP-2；本 Spec 不以 PR #3 的“Web 骨架”状态作为业务完成依据。
 
 ## 1. 决策与问题陈述
 
@@ -58,7 +58,7 @@ Spec 的功能收敛之前合入。品牌工作可以准备清单和纯文案/�
 | `易标` | 80 | 登录页、包元数据、README、历史资料 | 展示/档案 |
 | `openbidkit`（不区分大小写） | 93 | release、Analytics、文档 | 元数据/基础设施 |
 | `window.yibiao` | 192 | Renderer、preload 类型、Electron bridge | ABI 契约 |
-| `YIBIAO_` | 61 | Web 配置、Docker、release、工具运行器 | 运维/兼容 |
+| `YIBIAO_` | 97 | Web 配置、Docker、release、工具运行器 | 运维/兼容 |
 | `yibiao_session` | 19 | auth 与 Web tests | 浏览器会话协议 |
 | `yibiao_oauth_state` | 16 | auth 与 Web tests | OAuth state 协议 |
 | `FB208/OpenBidKit_Yibiao` | 25 | package publish、README、Analytics | 外链/发布 |
@@ -79,9 +79,9 @@ Spec 的功能收敛之前合入。品牌工作可以准备清单和纯文案/�
 
 ### 2.3 已删除功能与不要误删的基础能力
 
-当前应用端菜单中没有“投标机会”；PR #3 后的 Web 客户端也没有资源市场、资源下载或
-插件管理入口。此状态必须保持，并以路由、菜单、bridge namespace 和打包产物共同
-验收。
+当前终端应用已删除三项产品能力：资源下载/资源市场、投标机会、插件管理；应用端菜单
+中没有“投标机会”，PR #3 后 Web 客户端也没有这三项能力的入口。此状态必须保持，并以
+路由、菜单、bridge namespace 和打包产物共同验收。
 
 `client/server/routes/downloads.cjs` 与 `/api/downloads` 不是“资源下载”产品功能，
 而是已登录用户下载自己工作区内导出/生成文件的受限传输能力；`httpClient.ts` 用它
@@ -170,7 +170,8 @@ WP-7 档案处置、回归、灰度和回滚演练
 
 ### 5.1 架构 Spec 的硬前置关系
 
-品牌 PR 合入前，架构 Spec 至少必须给出并通过以下证据：
+进入会改变运行协议、功能可达面或正式发布的品牌 PR 前，架构 Spec 至少必须给出并通过
+以下证据。纯展示文字和不触及运行配置的公开链接可按第 185 行的边界先行：
 
 1. **功能真值表**：每个 Web 菜单项/bridge namespace 标明“已实现、暂不暴露、明确
    未支持”。任何已暴露但仍然稳定返回 501/stub 的业务项，要先由架构 Spec 实现或
@@ -222,8 +223,9 @@ WP-4/5/6 及最终发布必须等待上述 gate。
 
 **行为边界：**
 
-- 仅替换用户可见字符串/品牌素材引用和 MQDS 浅色 token；禁止修改 React 组件层级、
-  CSS 布局、菜单行为和深色模式逻辑。
+- 仅替换用户可见字符串/品牌素材引用和 `client/src/styles/tokens.css` 中已声明的 MQDS
+  浅色 token；禁止重命名现有 `--yb-*` 内部 token，禁止修改 React 组件层级、CSS 布局、
+  菜单行为和任何深色模式/深色语义样式。
 - 登录页在 MainQuest 登录前后的标题均为 BidMaster；不会改变 `/api/auth/login`、
   callback 或退出行为。
 - 不在技术调试日志、内部 provider id 或历史记录中做无差别替换。
@@ -263,8 +265,8 @@ bridge namespace/路由注册、打包入口及针对这些面向终端用户的
 
 **行为边界：**
 
-- 不新增或恢复“资源下载”“投标机会”“插件管理”菜单、深链接、路由、API namespace、
-  feature import 或安装包入口。
+- 不新增或恢复“资源下载/资源市场”“投标机会”“插件管理”任一产品能力的菜单、深链接、
+  路由、API namespace、feature import 或安装包入口。
 - 保留 `POST/GET /api/downloads`，因为它只为账号工作区内的导出文件传输服务；其路径
   边界、认证和所有权测试不得删除。
 - Analytics Dashboard plugins 页面不在本包修改范围；该后台是否退役须走 WP-6 的
@@ -295,9 +297,11 @@ Web tests、CI Docker run 配置。
 - 运行用户、volume 名、container 名仅在运维 Gate 批准后变更，并验证 named volume
   仍挂载同一数据目录；不要把 Docker 重命名误当作数据已迁移。
 
-**验收：** mock 与 MainQuest staging OAuth 均能登录、退出、回调 state 校验；同一
-已存在 data volume 升级前后读取到相同账号/workspace；两账号上传、下载、SSE、
-配置和 store 隔离；Docker health/readiness 通过。
+**验收：** CI/local 的 mock OAuth 覆盖登录、退出、state 校验和既有 workspace 回归；
+G2 批准的受保护 staging 环境必须另行完成 MainQuest 实际登录、退出、回调 state 校验。
+同一已存在 data volume 升级前后读取到相同账号/workspace；两账号上传、下载、SSE、
+配置和 store 隔离；Docker health/readiness 通过。mock 成功不能替代 MainQuest staging
+验收。
 
 ### WP-5：桌面端 ABI 与持久化协议迁移（仅批准后）
 
@@ -340,12 +344,15 @@ release 脚本、`wrangler*.jsonc`、部署文档和基础设施变量清单。
 - release 程序可以先支持 `BIDMASTER_LICENSE_*` 与 `YIBIAO_LICENSE_*` 双变量；只有
   在仓库 Secret/Variable 已配置新值、官方构建验证成功后才移除旧读取。Secret 值永不
   进入仓库、日志或 Spec。
-- CI 必须继续运行 renderer build、Web auth/workspace/tasks/files/export tests、Docker
-  build 与启动健康检查；品牌改动不能降低原有门禁。
+- CI 必须继续运行 renderer build、`test:web-auth`（当前为 mock OAuth）、Web
+  workspace/tasks/files/export tests、Docker build 与 mock 启动健康检查；品牌改动不能
+  降低原有门禁。MainQuest staging OAuth 属于 G2 的受保护发布前 Gate，不得伪称为当前
+  CI 已覆盖的能力。
 
-**验收：** CI 的所有 jobs 与 quality gate 成功；Analytics Worker/Dashboard dry-run
-通过；官方 release staging 读取新/旧兼容配置的预期路径明确，旧 Cloudflare 数据
-连续可查。
+**验收：** CI 的 `client`、`analytics_worker`、`analytics_dashboard` 与 `quality_gate`
+成功；Analytics Worker/Dashboard 的 `wrangler deploy --dry-run` 通过且不改动 Cloudflare
+实体；官方 release staging 读取新/旧兼容配置的预期路径明确，旧 Cloudflare 数据连续
+可查。
 
 ### WP-7：档案处置、发布与回归
 
@@ -472,18 +479,23 @@ Electron smoke 都必须同一 PR 验收。
 仓库根目录执行，除非另有说明。
 
 ```bash
-# 1. 在目标基线重新盘点（不要把本 Spec 的文字算成产品残留）
-git grep -I -i -n -- 'yibiao' -- ':!.planning/yibiao-brand-cleanup/brand-cleanup.spec.md'
-git grep -I -i -n -- '易标' -- ':!.planning/yibiao-brand-cleanup/brand-cleanup.spec.md'
-git grep -I -i -n -- 'openbidkit' -- ':!.planning/yibiao-brand-cleanup/brand-cleanup.spec.md'
-git grep -I -n -- 'window.yibiao' -- ':!.planning/yibiao-brand-cleanup/brand-cleanup.spec.md'
-git grep -I -n -- 'YIBIAO_' -- ':!.planning/yibiao-brand-cleanup/brand-cleanup.spec.md'
-git grep -I -n -E '(FB208/OpenBidKit_Yibiao|yibiaoai/yibiao-simple|yibiao\.pro|agnet\.top|trendshift\.io|deepwiki\.com|star-history\.com)' -- ':!.planning/yibiao-brand-cleanup/brand-cleanup.spec.md'
+# 1. 固定在目标基线重新盘点（不要把本 Spec 的文字算成产品残留）
+git grep -I -i -n -e 'yibiao' e71e87c -- ':!.planning/yibiao-brand-cleanup/brand-cleanup.spec.md'
+git grep -I -i -n -e '易标' e71e87c -- ':!.planning/yibiao-brand-cleanup/brand-cleanup.spec.md'
+git grep -I -i -n -e 'openbidkit' e71e87c -- ':!.planning/yibiao-brand-cleanup/brand-cleanup.spec.md'
+git grep -I -n -e 'window.yibiao' e71e87c -- ':!.planning/yibiao-brand-cleanup/brand-cleanup.spec.md'
+git grep -I -n -e 'YIBIAO_' e71e87c -- ':!.planning/yibiao-brand-cleanup/brand-cleanup.spec.md'
+git grep -I -n -E -e '(FB208/OpenBidKit_Yibiao|yibiaoai/yibiao-simple|yibiao\.pro|agnet\.top|trendshift\.io|deepwiki\.com|star-history\.com)' e71e87c -- ':!.planning/yibiao-brand-cleanup/brand-cleanup.spec.md'
 
-# 2. 终端应用入口护栏；/api/downloads 为内部传输能力，不在此禁用
-rg -n -i '(资源下载|投标机会|插件管理)' client/src client/server \
-  --glob '!**/*.spec.*'
-rg -n "githubStarNotice|OpenBidKit_Yibiao|yibiaoai/yibiao-simple" client/src
+# 2. 三项已删除产品能力的终端入口护栏；/api/downloads 为内部传输能力，不在此禁用
+if rg -n -i '(资源下载|资源市场|投标机会|插件管理)' client/src client/server; then
+  echo '发现已删除产品能力的终端入口或实现痕迹' >&2
+  exit 1
+fi
+if rg -n 'githubStarNotice|OpenBidKit_Yibiao|yibiaoai/yibiao-simple' client/src; then
+  echo '发现 Star 引导或旧仓库入口' >&2
+  exit 1
+fi
 
 # 3. 代码与 Web 回归
 cd client
@@ -491,20 +503,44 @@ find electron scripts server -name '*.cjs' -print0 | xargs -0 -n1 node --check
 npm run build:web
 npm run test:web
 
-# 4. Docker 与部署前检查（mock 仅用于 CI/local，不可代替 MainQuest staging）
+# 4. Docker 与部署前检查（mock 仅用于 CI/local，不可代替 G2 MainQuest staging）
 cd ..
+check_container='bidding-copilot-brand-check'
+docker rm -f "$check_container" >/dev/null 2>&1 || true
+trap 'docker rm -f "$check_container" >/dev/null 2>&1 || true' EXIT
 docker build -t bidding-copilot-web:brand-check .
-docker run -d --rm --name bidding-copilot-brand-check -p 3000:3000 \
+docker run -d --name "$check_container" -p 3000:3000 \
   -e NODE_ENV=development -e OAUTH_MODE=mock \
   -e SESSION_SECRET=brand-check-secret -e CONFIG_ENCRYPTION_KEY=brand-check-key \
+  -e YIBIAO_DATA_DIR=/data \
   bidding-copilot-web:brand-check
-curl --fail --silent --show-error http://127.0.0.1:3000/api/health
+for attempt in $(seq 1 30); do
+  if curl --fail --silent --show-error http://127.0.0.1:3000/api/health; then
+    break
+  fi
+  if [ "$attempt" = 30 ]; then
+    docker logs "$check_container"
+    exit 1
+  fi
+  sleep 1
+done
 curl --fail --silent --show-error http://127.0.0.1:3000/api/readiness
-docker stop bidding-copilot-brand-check
 
-# 5. Analytics / CI（改到相应目录时）
-cd analytics/worker && npm ci && npx --no-install wrangler deploy --dry-run --outdir /tmp/analytics-worker
-cd ../dashboard && npm ci && npx --no-install wrangler deploy --dry-run --outdir /tmp/analytics-dashboard
+# 5. Analytics / CI（改到相应目录时；与现有 CI 一致，dry-run 不部署）
+analytics_check_dir="$(mktemp -d)"
+trap 'rm -rf "$analytics_check_dir"; docker rm -f "$check_container" >/dev/null 2>&1 || true' EXIT
+(
+  cd analytics/worker
+  npm ci
+  WRANGLER_SEND_METRICS=false npx --no-install wrangler deploy --dry-run \
+    --outdir "$analytics_check_dir/worker"
+)
+(
+  cd analytics/dashboard
+  npm ci
+  WRANGLER_SEND_METRICS=false npx --no-install wrangler deploy --dry-run \
+    --outdir "$analytics_check_dir/dashboard"
+)
 
 # 6. 每个提交最后执行
 git diff --check
@@ -519,7 +555,8 @@ mock OAuth 的成功替代 MainQuest staging 验收。
 ### 11.1 最终产品验收
 
 - Web 与 Docker 是可部署交付；production 仅允许 MainQuest OAuth，账号数据按
-  `mq_subject -> workspace` 隔离，且所有 Web CI 与 Docker health gate 通过。
+  `mq_subject -> workspace` 隔离，且所有 Web CI、Docker health gate 与 G2 MainQuest
+  staging 验收通过。
 - 当前用户可见页面、安装包/发布元数据、活跃 README/docs 中的产品名为 BidMaster；
   浅色 MQDS 配色没有组件、布局、交互或深色模式改动。
 - 当前应用/README/release/CI 没有旧仓库、旧域名、推广中转、Trendshift/DeepWiki/
@@ -535,8 +572,9 @@ mock OAuth 的成功替代 MainQuest staging 验收。
   新写入遵循批准的新名；对敏感值无日志泄漏。
 - 任一数据库/路径/appId 变更都有 staging snapshot、幂等迁移 marker、integrity
   检查、双账号验证及可执行的 RPO=0 回滚演练。
-- CI 没有因品牌工作被降级：Web 测试、Docker run health、Analytics checks、release
-  quality gate 均继续存在并通过。
+- CI 没有因品牌工作被降级：mock OAuth Web 测试、Docker run health、Analytics checks、
+  release quality gate 均继续存在并通过；G2 MainQuest staging OAuth 记录与 CI 结果分开
+  保存。
 
 ## 12. 阻断 Gate（必须由老板/对应 owner 明确确认）
 
