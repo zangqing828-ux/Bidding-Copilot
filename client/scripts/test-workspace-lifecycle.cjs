@@ -171,6 +171,23 @@ run('ports: 七类端口契约完整且缺失提示清晰', () => {
 });
 
 run('taskEvents: 多订阅/单独取消/close 聚合/幂等/异常路径', () => {
+  const incompleteService = {
+    subscribeCount: 0,
+    subscribeCallback() {
+      this.subscribeCount += 1;
+      return () => {};
+    },
+  };
+  const incompleteServiceError = expectThrow(
+    () => createTaskEventPort(incompleteService),
+    '缺少 unsubscribeCallback 时构造应直接失败',
+  );
+  assert(
+    /unsubscribeCallback/.test(incompleteServiceError.message),
+    '缺少 unsubscribeCallback 的错误应明确指出方法名',
+  );
+  assert(incompleteService.subscribeCount === 0, '构造失败前不得注册任何订阅');
+
   const callbacks = new Set();
   const taskService = {
     subscribeCallback(callback) {
@@ -274,6 +291,7 @@ run('taskEvents: 多订阅/单独取消/close 聚合/幂等/异常路径', () =>
         throw new Error('explicit unsubscribe fail');
       };
     },
+    unsubscribeCallback() {},
   };
   const explicitPort = createTaskEventPort(explicitUnsubscribeService);
   const explicitUnsubscribe = explicitPort.subscribe(() => {});
@@ -384,8 +402,11 @@ run('workspaceContext: 默认创建和注入 factory 的关闭校验', () => {
       },
     },
     close() {
+      if (this !== fakeRuntime) {
+        throw new Error('runtime close this lost');
+      }
       closeOrder.push('runtime');
-      fakeRuntime.db.open = false;
+      this.db.open = false;
     },
   };
   let closeCalled = false;
@@ -416,85 +437,97 @@ run('workspaceContext: 默认创建和注入 factory 的关闭校验', () => {
   assert(closeCalled, 'runtimeFactory 注入生效');
 
   withTempDir('wc-ctx-invalid-close', (baseDir) => {
-    const fallbackOrder = [];
-    const fallbackRuntime = {
-      db: { open: true },
-      sqliteDatabase: {
+    function createFallbackRuntime(prefix, closeGetter) {
+      const closeOrder = [];
+      const sharedClosePrototype = {
         close() {
-          fallbackOrder.push('sqliteDatabase');
-          fallbackRuntime.db.open = false;
+          if (!this || !this.label) {
+            throw new Error(`${prefix}: shared close this lost`);
+          }
+          this.closed = true;
+          closeOrder.push(this.label);
         },
-      },
-      taskService: {
+      };
+      const taskService = Object.assign(Object.create(sharedClosePrototype), {
+        label: `${prefix}-taskService`,
+        closed: false,
+      });
+      const agent = Object.assign(Object.create(sharedClosePrototype), {
+        label: `${prefix}-agent`,
+        closed: false,
+      });
+      const taskEvents = {
+        label: `${prefix}-taskEvents`,
+        closed: false,
         close() {
-          fallbackOrder.push('taskService');
+          if (this !== taskEvents) {
+            throw new Error(`${prefix}: taskEvents close this lost`);
+          }
+          this.closed = true;
+          closeOrder.push(this.label);
         },
-      },
-      taskEvents: {
+      };
+      const sqliteDatabase = {
+        label: `${prefix}-sqliteDatabase`,
+        closed: false,
         close() {
-          fallbackOrder.push('taskEvents');
+          if (this !== sqliteDatabase) {
+            throw new Error(`${prefix}: sqlite close this lost`);
+          }
+          this.closed = true;
+          closeOrder.push(this.label);
         },
-      },
-      ports: {
-        agent: {
-          close() {
-            fallbackOrder.push('agent');
-          },
-        },
-      },
-    };
+      };
+      const runtime = {
+        taskService,
+        taskEvents,
+        ports: { agent },
+        sqliteDatabase,
+      };
+
+      if (closeGetter) {
+        Object.defineProperty(runtime, 'close', {
+          get: closeGetter,
+        });
+      }
+
+      return {
+        runtime,
+        resources: [taskEvents, taskService, agent, sqliteDatabase],
+        closeOrder,
+      };
+    }
+
+    const missingClose = createFallbackRuntime('missing');
 
     const missingCloseError = expectThrow(() => createWorkspaceContext({
       workspaceId: 'invalid-close',
       dataDir: baseDir,
-      runtimeFactory: () => fallbackRuntime,
+      runtimeFactory: () => missingClose.runtime,
     }), 'runtime 缺少 close 时应抛错并兜底清理');
-    assert(fallbackOrder.join(',') === 'taskEvents,taskService,agent,sqliteDatabase', '缺少 runtime.close 时应按约定顺序兜底关闭');
+    assert(
+      missingClose.closeOrder.join(',') === 'missing-taskEvents,missing-taskService,missing-agent,missing-sqliteDatabase',
+      '缺少 runtime.close 时应按约定顺序兜底关闭四个资源',
+    );
+    assert(missingClose.resources.every((resource) => resource.closed), '缺少 runtime.close 时 close 应保留 this 且关闭全部资源');
     assert(/runtime 缺少 close 方法|runtime.close/.test(missingCloseError.message), '缺 close 的异常应可见');
 
-    const getterOrder = [];
-    const getterErrorRuntime = {
-      db: { open: true },
-      taskService: {
-        close() {
-          getterOrder.push('getter-taskService');
-        },
-      },
-      taskEvents: {
-        close() {
-          getterOrder.push('getter-taskEvents');
-        },
-      },
-      ports: {
-        agent: {
-          close() {
-            getterOrder.push('getter-agent');
-          },
-        },
-      },
-      sqliteDatabase: {
-        close() {
-          getterOrder.push('getter-sqlite');
-        },
-      },
-    };
-    Object.defineProperty(getterErrorRuntime, 'close', {
-      get() {
-        throw new Error('runtime close getter throw');
-      },
+    const getterClose = createFallbackRuntime('getter', () => {
+      throw new Error('runtime close getter throw');
     });
 
     const getterError = expectThrow(() => createWorkspaceContext({
       workspaceId: 'getter-close',
       dataDir: baseDir,
-      runtimeFactory: () => getterErrorRuntime,
+      runtimeFactory: () => getterClose.runtime,
     }), 'runtime close getter 抛错应抛主错误');
     assert(getterError instanceof Error, 'getter 抛错应为异常');
     assert(/runtime close getter throw/.test(getterError.message), 'getter 错误消息应可见');
-    assert(getterOrder.includes('getter-taskEvents'), 'getter close 失败后应兜底关闭 taskEvents');
-    assert(getterOrder.includes('getter-taskService'), 'getter close 失败后应兜底关闭 taskService');
-    assert(getterOrder.includes('getter-agent'), 'getter close 失败后应兜底关闭 agent');
-    assert(getterOrder.includes('getter-sqlite'), 'getter close 失败后应兜底关闭 sqlite');
+    assert(
+      getterClose.closeOrder.join(',') === 'getter-taskEvents,getter-taskService,getter-agent,getter-sqliteDatabase',
+      'getter close 失败后应按约定顺序兜底关闭四个资源',
+    );
+    assert(getterClose.resources.every((resource) => resource.closed), 'getter close 失败时 close 应保留 this 且关闭全部资源');
   });
 });
 

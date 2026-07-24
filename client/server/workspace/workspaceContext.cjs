@@ -5,17 +5,36 @@ const { createWorkspaceRuntimeFactory } = require('./workspaceRuntimeFactory.cjs
 
 function getCloseCandidate(target, label) {
   if (!target || typeof target !== 'object') {
-    return { label, closeFn: null, cause: null };
+    return { label, owner: null, resource: null, closeFn: null, cause: null };
   }
 
   try {
-    if (typeof target.close !== 'function') {
-      return { label, closeFn: null, cause: new Error(`${label} 缺少 close 方法`) };
+    const closeFn = target.close;
+    if (typeof closeFn !== 'function') {
+      return {
+        label,
+        owner: target,
+        resource: target,
+        closeFn: null,
+        cause: new Error(`${label} 缺少 close 方法`),
+      };
     }
 
-    return { label, closeFn: target.close };
+    return {
+      label,
+      owner: target,
+      resource: target,
+      closeFn,
+      cause: null,
+    };
   } catch (error) {
-    return { label, closeFn: null, cause: error };
+    return {
+      label,
+      owner: target,
+      resource: target,
+      closeFn: null,
+      cause: error,
+    };
   }
 }
 
@@ -33,9 +52,11 @@ function runCloseCandidates(targets) {
   const seen = new Set();
 
   for (const target of targets) {
-    if (!target) {
+    if (!target || !target.resource || seen.has(target.resource)) {
       continue;
     }
+
+    seen.add(target.resource);
 
     if (target.cause) {
       errors.push(target.cause);
@@ -43,13 +64,12 @@ function runCloseCandidates(targets) {
     }
 
     const closeFn = target.closeFn;
-    if (typeof closeFn !== 'function' || seen.has(closeFn)) {
+    if (typeof closeFn !== 'function') {
       continue;
     }
 
-    seen.add(closeFn);
     try {
-      closeFn();
+      closeFn.call(target.owner);
     } catch (error) {
       errors.push(error);
     }
@@ -118,7 +138,7 @@ function createWorkspaceContext({
       return;
     }
 
-    runtimeCloseCandidate.closeFn.call(runtime);
+    runtimeCloseCandidate.closeFn.call(runtimeCloseCandidate.owner);
     closed = true;
   };
 

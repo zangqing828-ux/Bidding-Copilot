@@ -4,6 +4,9 @@ function createTaskEventPort(taskService) {
   if (!taskService || typeof taskService.subscribeCallback !== 'function') {
     throw new Error('taskEvents 需要 taskService.subscribeCallback');
   }
+  if (typeof taskService.unsubscribeCallback !== 'function') {
+    throw new Error('taskEvents 需要 taskService.unsubscribeCallback');
+  }
 
   const records = new Set();
   let closed = false;
@@ -41,14 +44,12 @@ function createTaskEventPort(taskService) {
       } catch (error) {
         errors.push(error);
       }
-    } else if (typeof taskService.unsubscribeCallback === 'function') {
+    } else {
       try {
         taskService.unsubscribeCallback(record.callback);
       } catch (error) {
         errors.push(error);
       }
-    } else {
-      errors.push(new Error('taskEvents 清理失败：taskService 缺少取消订阅接口'));
     }
 
     if (!errors.length) {
