@@ -1,11 +1,12 @@
 const {
+  AGENT_RUNTIME_ID,
   AGENT_RUNTIME_IDS,
   getDefaultAgentRuntimeId,
   normalizeAgentRuntimeId,
 } = require('../../../core/agentRuntimeIds.cjs');
 
 const runtimeById = new Map([
-  ['opencode', {
+  [AGENT_RUNTIME_ID.OPENCODE, {
     displayName: 'OpenCode Agent',
     description: '使用现有常驻 OpenCode Server 智能体链路。',
     createRuntime(options) {
@@ -13,7 +14,7 @@ const runtimeById = new Map([
       return createOpenCodeRuntimeService(options);
     },
   }],
-  ['pi', {
+  [AGENT_RUNTIME_ID.PI, {
     displayName: 'Pi Agent',
     description: '使用内嵌 Pi SDK 智能体链路。',
     createRuntime(options) {
@@ -53,16 +54,17 @@ function getAgentRuntimeDefinition(runtimeId) {
     id: normalizedId,
     displayName: definition.displayName,
     description: definition.description,
+    isDefault: normalizedId === defaultRuntimeId,
+    createRuntime: definition.createRuntime,
   };
 }
 
 function createAgentRuntime(runtimeId, options) {
-  const normalizedId = normalizeAgentRuntimeId(runtimeId);
-  const definition = runtimeById.get(normalizedId);
+  const definition = getAgentRuntimeDefinition(runtimeId);
   return definition.createRuntime({
     ...options,
     runtime: {
-      id: normalizedId,
+      id: definition.id,
       displayName: definition.displayName,
       description: definition.description,
     },

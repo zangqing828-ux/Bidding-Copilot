@@ -98,24 +98,39 @@ function assertCoreHasNoElectronDependencies() {
 }
 
 function runRuntimeIdConsistencyChecks() {
+  const coreIdEnum = coreAgentRuntimeIds.AGENT_RUNTIME_ID;
   const coreIds = coreAgentRuntimeIds.AGENT_RUNTIME_IDS;
   const coreDefault = coreAgentRuntimeIds.getDefaultAgentRuntimeId();
   const registryDefault = electronAgentRuntimeRegistry.getDefaultAgentRuntimeId();
   const descriptors = electronAgentRuntimeRegistry.listAgentRuntimeDescriptors();
+  assert(Object.isFrozen(coreIdEnum), 'runtimeId: core AGENT_RUNTIME_ID 枚举对象不可变');
+  assert(coreIdEnum.OPENCODE === 'opencode', 'runtimeId: core 枚举定义 OPENCODE');
+  assert(coreIdEnum.PI === 'pi', 'runtimeId: core 枚举定义 PI');
   assert(Array.isArray(coreIds), 'runtimeId: core 公开 AGENT_RUNTIME_IDS');
+  assert(Object.isFrozen(coreIds), 'runtimeId: core AGENT_RUNTIME_IDS 数组不可变');
+  expectThrow(() => coreIds.push('other-runtime'), 'runtimeId: core AGENT_RUNTIME_IDS 禁止追加值');
+  assert(
+    coreIds.length === 2 && coreIds[0] === coreIdEnum.OPENCODE && coreIds[1] === coreIdEnum.PI,
+    'runtimeId: core AGENT_RUNTIME_IDS 来自枚举对象值',
+  );
   assert(Array.isArray(descriptors), 'runtimeId: registry 可返回运行时描述列表');
   assert(coreIds.length === descriptors.length, 'runtimeId: core 允许值与 registry 描述数量一致');
   assert(coreDefault === registryDefault, 'runtimeId: core 默认值与 registry 默认值一致');
-  assert(coreDefault === coreAgentRuntimeIds.AGENT_RUNTIME_ID, 'runtimeId: core 默认值与 AGENT_RUNTIME_ID 一致');
+  assert(coreDefault === coreIdEnum.OPENCODE, 'runtimeId: core 默认值为 AGENT_RUNTIME_ID.OPENCODE');
+  assert(coreAgentRuntimeIds.DEFAULT_AGENT_RUNTIME_ID === coreIdEnum.OPENCODE, 'runtimeId: core 默认常量为 AGENT_RUNTIME_ID.OPENCODE');
   assert(coreIds.includes(coreDefault), 'runtimeId: core 默认值在允许值列表内');
 
   for (const id of coreIds) {
     const coreNormalized = coreAgentRuntimeIds.normalizeAgentRuntimeId(id);
     const registryNormalized = electronAgentRuntimeRegistry.normalizeAgentRuntimeId(id);
-    const descriptor = electronAgentRuntimeRegistry.getAgentRuntimeDefinition(id);
+    const definition = electronAgentRuntimeRegistry.getAgentRuntimeDefinition(id);
     assert(coreNormalized === id, `runtimeId: core normalize(${id}) 透传已允许值`);
     assert(registryNormalized === id, `runtimeId: registry normalize(${id}) 透传已允许值`);
-    assert(descriptor?.id === id, `runtimeId: registry getAgentRuntimeDefinition(${id}) 返回匹配定义`);
+    assert(definition?.id === id, `runtimeId: registry getAgentRuntimeDefinition(${id}) 返回匹配定义`);
+    assert(typeof definition?.displayName === 'string' && definition.displayName.length > 0, `runtimeId: registry 定义 ${id} 包含 displayName`);
+    assert(typeof definition?.description === 'string' && definition.description.length > 0, `runtimeId: registry 定义 ${id} 包含 description`);
+    assert(definition?.isDefault === (id === coreDefault), `runtimeId: registry 定义 ${id} 的 isDefault 正确`);
+    assert(typeof definition?.createRuntime === 'function', `runtimeId: registry 定义 ${id} 包含 createRuntime 函数`);
   }
 
   assert(coreIds.includes(descriptors.find((item) => item.is_default)?.id), 'runtimeId: registry 默认描述存在且在允许值内');

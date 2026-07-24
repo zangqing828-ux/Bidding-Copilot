@@ -1,6 +1,9 @@
-const AGENT_RUNTIME_IDS = ['opencode', 'pi'];
-const AGENT_RUNTIME_ID = 'opencode';
-const DEFAULT_AGENT_RUNTIME_ID = AGENT_RUNTIME_ID;
+const AGENT_RUNTIME_ID = Object.freeze({
+  OPENCODE: 'opencode',
+  PI: 'pi',
+});
+const AGENT_RUNTIME_IDS = Object.freeze(Object.values(AGENT_RUNTIME_ID));
+const DEFAULT_AGENT_RUNTIME_ID = AGENT_RUNTIME_ID.OPENCODE;
 
 function getDefaultAgentRuntimeId() {
   return DEFAULT_AGENT_RUNTIME_ID;
