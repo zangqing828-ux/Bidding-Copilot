@@ -40,9 +40,11 @@ router.post('/downloads', (req, res) => {
   }
 
   const ctx = getWorkspaceContext(req.workspaceId);
-  // 安全校验：文件必须在 workspace 内
+  // 安全校验：文件必须在 workspace 内，用 path.relative 避免 startsWith 前缀混淆。
   const resolved = path.resolve(filePath);
-  if (!resolved.startsWith(path.resolve(ctx.workspaceRoot))) {
+  const workspaceRoot = path.resolve(ctx.workspaceRoot);
+  const relative = path.relative(workspaceRoot, resolved);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
     return res.status(403).json({ code: 'DOWNLOAD_ERROR', message: '文件路径越界' });
   }
 

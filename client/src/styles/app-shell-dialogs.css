@@ -8,7 +8,7 @@
   color: var(--yb-text);
   background:
     radial-gradient(circle at 72% 18%, rgba(17, 24, 39, 0.16), transparent 28%),
-    radial-gradient(circle at 24% 22%, rgba(91, 84, 211, 0.12), transparent 30%),
+    radial-gradient(circle at 24% 22%, rgba(17, 24, 39, 0.12), transparent 30%),
     linear-gradient(180deg, #ffffff 0%, var(--yb-bg) 52%, #f1f6ff 100%);
 }
 

@@ -450,7 +450,7 @@
   left: 14px;
   height: 3px;
   content: '';
-  background: linear-gradient(90deg, var(--yb-primary), #7c3aed);
+  background: linear-gradient(90deg, var(--yb-primary), #111827);
   border-radius: 999px;
   box-shadow: 0 0 0 4px rgba(17, 24, 39, 0.12);
 }

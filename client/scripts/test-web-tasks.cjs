@@ -161,13 +161,38 @@ async function runTests() {
     assert(res.statusCode === 401, '未登录访问 SSE 返回 401');
   }
 
-  // 5. bridge tasks.startBidAnalysis → 500（占位服务抛错）
+  // 5. bridge tasks.startBidAnalysis → 500（Web 端任务启动未实现，需真实 AI 服务）
   {
     const res = await httpRequest('POST', '/api/bridge', {
       'content-type': 'application/json',
       cookie: cookieStr,
     }, { namespace: 'tasks', method: 'startBidAnalysis', args: [{}] });
-    assert(res.statusCode === 500, 'tasks.startBidAnalysis 占位服务返回 500（未实现）');
+    assert(res.statusCode === 500, 'tasks.startBidAnalysis 返回 500（未实现，需真实 AI 服务）');
+    const body = JSON.parse(res.body);
+    assert(body.code === 'INTERNAL_ERROR', 'tasks.startBidAnalysis 返回 INTERNAL_ERROR');
+  }
+
+  // 5b. bridge technicalPlan.loadState → 200（Store 数据操作已实现）
+  {
+    const res = await httpRequest('POST', '/api/bridge', {
+      'content-type': 'application/json',
+      cookie: cookieStr,
+    }, { namespace: 'technicalPlan', method: 'loadState', args: [] });
+    assert(res.statusCode === 200, 'technicalPlan.loadState 返回 200（已实现）');
+    const body = JSON.parse(res.body);
+    assert(body.code === 'OK', 'technicalPlan.loadState 返回 OK');
+  }
+
+  // 5c. bridge templates.list → 200（Store 数据操作已实现）
+  {
+    const res = await httpRequest('POST', '/api/bridge', {
+      'content-type': 'application/json',
+      cookie: cookieStr,
+    }, { namespace: 'templates', method: 'list', args: [] });
+    assert(res.statusCode === 200, 'templates.list 返回 200（已实现）');
+    const body = JSON.parse(res.body);
+    assert(body.code === 'OK', 'templates.list 返回 OK');
+    assert(Array.isArray(body.data), 'templates.list 返回数组');
   }
 
   // 6. 两个 workspace 的 SSE 隔离

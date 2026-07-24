@@ -999,7 +999,7 @@
 }
 
 .parser-help-table thead .parser-help-col-accent {
-  background: linear-gradient(180deg, rgba(91, 84, 211, 0.1) 0%, rgba(248, 250, 253, 0.95) 100%);
+  background: linear-gradient(180deg, rgba(17, 24, 39, 0.1) 0%, rgba(248, 250, 253, 0.95) 100%);
 }
 
 .parser-help-table thead .parser-help-col-muted {
