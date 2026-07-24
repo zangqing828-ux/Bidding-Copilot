@@ -164,6 +164,7 @@ async function runTests() {
     try {
       await closeServer();
     } catch (error) {
+      console.error('关闭服务异常:', error instanceof Error ? error.message : error);
       failed.push(`关闭服务异常: ${error instanceof Error ? error.message : String(error)}`);
     }
 
@@ -171,13 +172,19 @@ async function runTests() {
       if (typeof closeWorkspace === 'function') {
         closeWorkspace();
       }
-    } catch {}
+    } catch (error) {
+      console.error('清理 workspace 失败:', error instanceof Error ? error.message : error);
+      failed.push(`清理 workspace 失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     try {
       if (tmpDir) {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
-    } catch {}
+    } catch (error) {
+      console.error('清理临时目录失败:', error instanceof Error ? error.message : error);
+      failed.push(`清理临时目录失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   if (!testPassed || failed.length > 0) {

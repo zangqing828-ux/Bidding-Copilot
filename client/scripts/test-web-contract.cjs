@@ -29,6 +29,12 @@ const DELETED_FEATURE_LEAVES = new Set([
   'tenderOpportunities.list',
   'plugins.list',
 ]);
+const KB_PENDING_METHODS = [
+  'deleteFolder',
+  'deleteDocument',
+  'moveDocument',
+  'retryDocument',
+];
 const DESKTOP_ONLY_CAPABILITIES = [
   'app.getGpuHardwareAccelerationStatus',
   'app.saveGpuHardwareAccelerationPreference',
@@ -65,6 +71,69 @@ const REQUIRED_WEB_BRIDGE_META_KEYS = [
 ];
 
 const requiredMetaFields = ['status', 'owner', 'workPackage', 'transport', 'contractRef', 'input', 'output', 'errors'];
+
+function resolvePropertyPath(target, pathParts) {
+  return pathParts.reduce((current, part) => (current && typeof current === 'object' ? current[part] : undefined), target);
+}
+
+function extractErrorCode(error) {
+  if (!error || typeof error !== 'object') {
+    return '';
+  }
+  return typeof error.code === 'string' ? error.code : '';
+}
+
+function loadWebBridgeRuntimeForEventCheck() {
+  const source = readSource('src/shared/api/webBridge.ts');
+  const transpiled = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2020,
+      moduleResolution: ts.ModuleResolutionKind.Node10,
+    },
+  }).outputText;
+
+  const fakeEventSources = [];
+
+  class FakeEventSource {
+    constructor(url) {
+      this.url = url;
+      this.closed = false;
+      fakeEventSources.push(this);
+      this.close = () => {
+        this.closed = true;
+      };
+    }
+  }
+
+  const fakeRequire = (request) => {
+    if (request === './httpClient') {
+      return {
+        httpClient: {
+          invoke: async () => ({ code: 'OK', message: 'stub' }),
+        },
+      };
+    }
+    throw new Error(`Unexpected require in webBridge runtime load: ${request}`);
+  };
+
+  const wrapped = new Function('require', 'exports', 'module', '__filename', '__dirname', `${transpiled}\nreturn module.exports;`);
+  global.window = { open: () => {} };
+  global.EventSource = FakeEventSource;
+
+  const module = { exports: {} };
+  const moduleExports = wrapped(fakeRequire, module.exports, module, '/tmp/webBridge.ts', '/tmp');
+  const exportedBridge = moduleExports.webBridge || module.exports.webBridge;
+
+  assert(Boolean(exportedBridge), 'webBridge 对象可从 TypeScript transpileModule 加载');
+  assert(typeof exportedBridge === 'object', 'webBridge 加载结果为对象');
+
+  return {
+    webBridge: exportedBridge,
+    fakeEventSources,
+    fakeEventSourceCtor: FakeEventSource,
+  };
+}
 
 function getLeafFromManifest(manifestKey) {
   const [, ...parts] = manifestKey.split('.');
@@ -464,7 +533,9 @@ async function runBridgeBehavior(inject, context) {
     getWorkspaceContext,
     setWorkspaceContextResolver,
     contractVersion,
+    webBridgeRuntime,
   } = context;
+  const { webBridge, fakeEventSources } = webBridgeRuntime || {};
 
   const pendingEntries = [];
   const contractMap = contractEntries;
@@ -500,11 +571,6 @@ async function runBridgeBehavior(inject, context) {
         continue;
       }
       assert(false, `manifest 中存在 webBridge 未定义叶子：${manifestKey}`);
-    }
-
-    if (manifestKey === 'events.tasks.onTaskEvent') {
-      assert(entry.status === 'implemented', 'events.tasks.onTaskEvent 为 implemented');
-      assert(entry.transport === 'event', 'events.tasks.onTaskEvent transport 为 event');
     }
 
     if (['members.appName', 'members.platform', 'locals.openExternal', 'locals.database.getStatus'].includes(manifestKey)) {
@@ -615,27 +681,73 @@ async function runBridgeBehavior(inject, context) {
   assert(implementedRes.payload.code === 'OK', 'implemented 方法返回 OK');
 
   for (const [manifestKey, entry] of Array.from(contractMap.entries()).filter(([key]) => key.startsWith('events.'))) {
-    const eventMethod = getLeafFromManifest(manifestKey);
-    if (!eventMethod || eventMethod.includes('.')) {
+    const eventPath = manifestKey.split('.');
+    let eventLeaf = resolvePropertyPath(webBridge, eventPath);
+    if (typeof eventLeaf !== 'function' && eventPath.length > 1) {
+      eventLeaf = resolvePropertyPath(webBridge, eventPath.slice(1));
+    }
+    assert(typeof eventLeaf === 'function', `${manifestKey} 在 webBridge 中可执行`);
+    if (typeof eventLeaf !== 'function') {
       continue;
     }
 
-    const response = await statusPayload({ namespace: 'events', method: eventMethod, args: [] });
-    if (entry.status === 'removed') {
-      assert(response.response.statusCode === 410, `${manifestKey} removed 返回 410`);
-      assert(response.payload.code === 'WEB_BRIDGE_REMOVED', `${manifestKey} removed 返回 WEB_BRIDGE_REMOVED`);
-    } else if (entry.status === 'pending') {
-      assert(response.response.statusCode === 501, `${manifestKey} pending 返回 501`);
-      assert(response.payload.code === 'WEB_CAPABILITY_PENDING', `${manifestKey} pending 返回 WEB_CAPABILITY_PENDING`);
-    } else if (entry.status === 'implemented') {
-      assert(response.response.statusCode === 200, `${manifestKey} implemented 返回 200`);
-      assert(response.payload.code === 'OK', `${manifestKey} implemented 返回 OK`);
+    if (entry.status === 'implemented') {
+      if (manifestKey === 'events.tasks.onTaskEvent') {
+        const before = fakeEventSources.length;
+        let unsubscribe;
+        try {
+          unsubscribe = eventLeaf(() => {});
+        } catch (error) {
+          assert(false, `${manifestKey} implemented 应可创建 EventSource`);
+        }
+
+        assert(typeof unsubscribe === 'function', `${manifestKey} 实现应返回 unsubscribe`);
+        assert(fakeEventSources.length === before + 1, `${manifestKey} 实现应创建 EventSource`);
+        const eventSource = fakeEventSources[fakeEventSources.length - 1];
+        assert(Boolean(eventSource), `${manifestKey} EventSource 实例存在`);
+        unsubscribe();
+        assert(eventSource.closed === true, `${manifestKey} unsubscribe 后应 close EventSource`);
+      } else {
+        try {
+          eventLeaf(() => {});
+        } catch {
+          assert(false, `${manifestKey} implemented 在 webBridge 中应可执行`);
+        }
+      }
+      continue;
     }
+
+    let threw = false;
+    let actualCode = '';
+    try {
+      eventLeaf();
+    } catch (error) {
+      threw = true;
+      actualCode = extractErrorCode(error);
+    }
+
+    const expectedCode = entry.status === 'removed' ? 'WEB_BRIDGE_DESKTOP_ONLY' : 'WEB_CAPABILITY_PENDING';
+    assert(threw, `${manifestKey} ${entry.status} 运行时应抛错`);
+    assert(actualCode === expectedCode, `${manifestKey} ${entry.status} 应抛出 ${expectedCode}`);
   }
 
   const pendingRes = await statusPayload({ namespace: 'technicalPlan', method: 'importTenderDocument', args: [] });
   assert(pendingRes.response.statusCode === 501, 'pending 方法返回 501');
   assert(pendingRes.payload.code === 'WEB_CAPABILITY_PENDING', 'pending 方法返回 WEB_CAPABILITY_PENDING');
+
+  for (const method of KB_PENDING_METHODS) {
+    const contractKey = `knowledgeBase.${method}`;
+    const pendingKnowledgeRes = await statusPayload({ namespace: 'knowledgeBase', method, args: [] });
+    assert(pendingKnowledgeRes.response.statusCode === 501, `${contractKey} 返回 501`);
+    assert(pendingKnowledgeRes.payload.code === 'WEB_CAPABILITY_PENDING', `${contractKey} code 为 WEB_CAPABILITY_PENDING`);
+
+    const bindingSpec = bindingMetadata.get(contractKey);
+    assert(!bindingSpec, `${contractKey} 无 binding spec`);
+    assert(
+      !routeDispatchers?.knowledgeBase || typeof routeDispatchers.knowledgeBase[method] !== 'function',
+      `${contractKey} 无 route dispatcher`
+    );
+  }
 
   for (const entryName of DESKTOP_ONLY_CAPABILITIES) {
     const [namespace, method] = entryName.split('.');
@@ -674,6 +786,12 @@ async function runBridgeBehavior(inject, context) {
     const wsPendingRes = await statusPayload({ namespace: 'tasks', method: 'startBidSectionExtraction', args: [] });
     assert(wsPendingRes.response.statusCode === 501, 'pending 能力返回 501，且不触发 workspace');
     assert(workspaceResolved === 0, 'pending 能力未初始化 workspace');
+
+    for (const method of KB_PENDING_METHODS) {
+      const wsKnowledgePendingRes = await statusPayload({ namespace: 'knowledgeBase', method, args: [] });
+      assert(wsKnowledgePendingRes.response.statusCode === 501, `knowledgeBase.${method} 返回 501 且不触发 workspace`);
+      assert(workspaceResolved === 0, `knowledgeBase.${method} 不初始化 workspace`);
+    }
 
     for (const entryName of DESKTOP_ONLY_CAPABILITIES) {
       const [namespace, method] = entryName.split('.');
@@ -788,6 +906,7 @@ async function closeServer() {
     const setWorkspaceContextResolver = bridgeContractRouter.__setWorkspaceContextResolver;
     const { getWorkspaceContext, closeAll } = require('../server/workspace/workspaceRegistry.cjs');
     const { createApp } = require('../server/app.cjs');
+    const webBridgeRuntime = loadWebBridgeRuntimeForEventCheck();
 
     const app = createApp();
     server = http.createServer(app);
@@ -804,6 +923,7 @@ async function closeServer() {
       getWorkspaceContext,
       setWorkspaceContextResolver,
       contractVersion,
+      webBridgeRuntime,
     });
   } catch (error) {
     result.failedCount += 1;
@@ -822,10 +942,21 @@ async function closeServer() {
       if (typeof closeWorkspace === 'function') {
         closeWorkspace();
       }
-    } catch {}
+    } catch (error) {
+      console.error('清理 workspace 失败:', error instanceof Error ? error.message : error);
+      result.failedCount = (result.failedCount || 0) + 1;
+      failed.push('cleanup workspace 失败');
+    }
+
     try {
-      fs.rmSync(tmpDataDir, { recursive: true, force: true });
-    } catch {}
+      if (tmpDataDir) {
+        fs.rmSync(tmpDataDir, { recursive: true, force: true });
+      }
+    } catch (error) {
+      console.error('清理临时目录失败:', error instanceof Error ? error.message : error);
+      result.failedCount = (result.failedCount || 0) + 1;
+      failed.push('cleanup tmpDir 失败');
+    }
   }
 
   if (result.failedCount > 0) {

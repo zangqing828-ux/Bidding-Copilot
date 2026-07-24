@@ -1,10 +1,8 @@
 // Web Bridge：在浏览器中实现与 Electron preload 等价的 YibiaoBridge 门面。
-// Sprint 02 阶段：除 openExternal 浏览器降级外，所有业务调用统一走 /api/bridge
-// 并由服务端返回 501 WEB_CAPABILITY_PENDING。订阅方法返回 no-op 取消函数，SSE 留到 Sprint 05。
+// 除 openExternal 浏览器降级外，其余能力走 /api/bridge；事件能力按已知状态直接报错或返回 SSE 退订句柄。
 import type { YibiaoBridge } from '../types/ipc';
 import { httpClient } from './httpClient';
 
-const noopUnsubscribe = () => {};
 type ErrorWithCode = Error & { code?: string };
 
 function createWebBridgeEventError(code: string, message: string): ErrorWithCode {
