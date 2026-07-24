@@ -153,7 +153,29 @@ export const webBridge = {
     startRejectionCheck: bridgeMethod('tasks', 'startRejectionCheck'),
     startDuplicateAnalysis: bridgeMethod('tasks', 'startDuplicateAnalysis'),
     getActiveTasks: bridgeMethod('tasks', 'getActiveTasks'),
-    onTaskEvent: () => noopUnsubscribe,
+    onTaskEvent: <TState = unknown, TRejectionCheckState = unknown, TDuplicateCheckState = unknown>(
+      callback: (event: { task: unknown; technicalPlanPatch?: Partial<TState>; rejectionCheck?: TRejectionCheckState; duplicateCheck?: TDuplicateCheckState; bidItem?: unknown; outlineData?: unknown; contentSection?: unknown; contentPlan?: unknown; contentRuntime?: unknown }) => void
+    ): (() => void) => {
+      // Web 环境：通过 SSE 订阅任务事件
+      const eventSource = new EventSource('/api/tasks/events');
+      eventSource.onmessage = (messageEvent) => {
+        try {
+          const event = JSON.parse(messageEvent.data);
+          callback(event);
+        } catch {
+          // 忽略解析错误
+        }
+      };
+      // EventSource error 时浏览器会自动重连（约 3s 间隔）。
+      // 重连后 sse.cjs 的 subscribeCallback 会重放 activeTasks 快照，恢复语义成立。
+      // 会话过期（401）时 EventSource 会持续重连，由调用方在卸载时 close() 终止。
+      eventSource.onerror = () => {
+        // 依赖浏览器自动重连，不做额外处理
+      };
+      return () => {
+        eventSource.close();
+      };
+    },
   },
   export: {
     exportWord: bridgeMethod('export', 'exportWord'),

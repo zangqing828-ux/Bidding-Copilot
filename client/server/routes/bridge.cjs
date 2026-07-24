@@ -22,6 +22,39 @@ const dispatchers = {
       throw new Error('config.openConfigFolder 尚未在 Web 端实现');
     },
   },
+  tasks: {
+    getActiveTasks: (ctx, _args) => {
+      return ctx.taskService.getActiveTasks();
+    },
+    // 任务启动方法依赖真实 aiService，留到后续 Sprint
+    startBidSectionExtraction: () => {
+      throw new Error('Web 端任务启动尚未实现');
+    },
+    startBidAnalysis: () => {
+      throw new Error('Web 端任务启动尚未实现');
+    },
+    startOutlineGeneration: () => {
+      throw new Error('Web 端任务启动尚未实现');
+    },
+    startGlobalFactsGeneration: () => {
+      throw new Error('Web 端任务启动尚未实现');
+    },
+    startContentGeneration: () => {
+      throw new Error('Web 端任务启动尚未实现');
+    },
+    pauseContentGeneration: () => {
+      throw new Error('Web 端任务暂停尚未实现');
+    },
+    startRejectionItemsExtraction: () => {
+      throw new Error('Web 端任务启动尚未实现');
+    },
+    startRejectionCheck: () => {
+      throw new Error('Web 端任务启动尚未实现');
+    },
+    startDuplicateAnalysis: () => {
+      throw new Error('Web 端任务启动尚未实现');
+    },
+  },
 };
 
 router.post('/bridge', (req, res) => {

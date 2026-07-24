@@ -11,6 +11,7 @@ const bridgeRouter = require('./routes/bridge.cjs');
 const authRouter = require('./routes/auth.cjs');
 const uploadsRouter = require('./routes/uploads.cjs');
 const downloadsRouter = require('./routes/downloads.cjs');
+const sseRouter = require('./routes/sse.cjs');
 const { requireAuth } = require('./middleware/requireAuth.cjs');
 
 // 公开路由前缀：不需要登录即可访问。
@@ -53,6 +54,7 @@ function createApp() {
   app.use('/api', bridgeRouter);
   app.use('/api', uploadsRouter);
   app.use('/api', downloadsRouter);
+  app.use('/api', sseRouter);
 
   // 静态文件托管
   const distDir = config.distDir;
