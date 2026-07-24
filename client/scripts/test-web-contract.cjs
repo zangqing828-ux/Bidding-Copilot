@@ -1,182 +1,387 @@
-// Web Bridge Contract 测试：校验 client/src/shared/api/webBridge.ts 与 manifest 的双向一致性，并验证失败码边界。
+// Web Bridge Contract 测试：通过 AST 双向比对 webBridge 与 manifest，并验证行为边界。
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const http = require('node:http');
+const ts = require('typescript');
 
 const passed = [];
 const failed = [];
+
 const strictMode = process.argv.includes('--strict') || process.env.CONTRACT_STRICT === '1';
 const ALLOWED_STATUSES = new Set(['implemented', 'pending', 'removed']);
-const FORBIDDEN_IDENTIFIERS = new Set(['__proto__', 'constructor', 'prototype', 'toString']);
-
-const contract = require('../shared/bridgeContract.cjs');
-const { methods: contractMethods } = contract;
-
-const bridgeRouter = require('../server/routes/bridge.cjs');
-const routeDispatchers = bridgeRouter && bridgeRouter.__contractDispatchers ? bridgeRouter.__contractDispatchers : {};
-const { createApp } = require('../server/app.cjs');
-const app = createApp();
-
-let injectImpl;
-let server = null;
-
-const EXPECTED_REMOVED_UI_ENTRIES = [
-  'resources',
-  'bid-opportunity',
-  'plugin-manager',
-];
-
-const EXPECTED_REMOVED_UI_SOURCE_FILES = [
-  'src/app/menuConfig.ts',
-  'src/app/AppRouter.tsx',
-  'src/shared/types/navigation.ts',
-  'src/components/Sidebar.tsx',
-];
-
-const EXPECTED_REMOVED_FEATURE_PAGE_PATHS = [
-  'src/features/resources/pages',
-  'src/features/bid-opportunity/pages',
-  'src/features/plugins/pages',
-];
-
-const EXPECTED_REMOVED_PLUGIN_RUNTIME_PATHS = [
-  'electron/ipc/pluginIpc.cjs',
-  'electron/services/pluginConfigWindow.cjs',
+const FORBIDDEN_PROTOTYPE_IDENTIFIERS = new Set(
+  Object.getOwnPropertyNames(Object.prototype).concat(['__proto__'])
+);
+const REMOVED_MENU_SECTIONS = ['resources', 'bid-opportunity', 'plugin-manager'];
+const DELETED_FEATURE_PATHS = [
+  'src/features/resources',
+  'src/features/bid-opportunity',
+  'src/features/plugins',
   'electron/services/pluginContext.cjs',
   'electron/services/pluginService.cjs',
+  'electron/services/pluginConfigWindow.cjs',
+  'electron/ipc/pluginIpc.cjs',
   'electron/preload-plugin-config.cjs',
 ];
+const DESKTOP_ONLY_METHODS = [
+  'app.getGpuHardwareAccelerationStatus',
+  'app.saveGpuHardwareAccelerationPreference',
+  'app.startGpuHardwareAccelerationTrial',
+  'app.relaunchWithGpuHardwareAccelerationDisabled',
+  'app.getLatestVersion',
+  'app.getUpdateDownloadUrl',
+  'app.checkUpdate',
+  'app.startUpdate',
+  'app.quitAndInstall',
+  'config.openConfigFolder',
+  'developerTokenStats.openWindow',
+  'export.openFile',
+];
+
+const REQUIRED_WEB_BRIDGE_META_KEYS = [
+  'members.appName',
+  'members.platform',
+  'locals.openExternal',
+  'locals.database.getStatus',
+  'events.onUpdateProgress',
+  'events.onUpdateDownloaded',
+  'events.onUpdateError',
+  'events.database.onStatus',
+  'events.ai.onHttpError',
+  'events.agent.onStatus',
+  'events.developerTokenStats.onChanged',
+  'events.knowledgeBase.onEvent',
+  'events.tasks.onTaskEvent',
+  'events.export.onWordExportProgress',
+];
+
+const requiredMetaFields = ['status', 'owner', 'workPackage', 'transport', 'contractRef', 'input', 'output', 'errors'];
+
+// 先创建独立工作区目录，避免影响本地真实数据。
+const tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-contract-test-'));
+process.env.YIBIAO_DATA_DIR = tmpDataDir;
+process.env.CONFIG_ENCRYPTION_KEY = 'test-key';
+process.env.OAUTH_MODE = 'mock';
+process.env.SESSION_SECRET = 'dev-secret';
 
 function assert(condition, message) {
   if (condition) {
     passed.push(message);
-  } else {
-    failed.push(message);
-    console.error(`  FAIL: ${message}`);
+    return;
   }
+
+  failed.push(message);
+  console.error(`  FAIL: ${message}`);
 }
 
 function hasOwnProperty(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function parseBridgeMethods() {
-  const bridgeSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'shared', 'api', 'webBridge.ts'), 'utf-8');
-  const callRegex = /bridgeMethod\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*\)/g;
-  const methods = new Map();
-  for (const match of bridgeSource.matchAll(callRegex)) {
-    const namespace = match[1];
-    const method = match[2];
-    const key = `${namespace}.${method}`;
-    methods.set(key, { namespace, method });
+function normalizeTextLiteral(node) {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+    return node.text;
   }
-  return methods;
+  if (ts.isNumericLiteral(node)) {
+    return node.text;
+  }
+  return null;
 }
 
-function normalizeErrorPayload(payloadText) {
+function readSource(relativePath) {
+  return fs.readFileSync(path.join(__dirname, '..', relativePath), 'utf-8');
+}
+
+function parseJson(payloadText) {
   try {
     return JSON.parse(payloadText);
   } catch {
-    return {};
+    return null;
   }
+}
+
+function collectStringLiterals(fileText) {
+  const sourceFile = ts.createSourceFile('file.tsx', fileText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const values = new Set();
+
+  const walk = (node) => {
+    if (!node) return;
+
+    if (ts.isStringLiteralLike(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      const text = normalizeTextLiteral(node);
+      if (text != null) {
+        values.add(text);
+      }
+    }
+
+    if (ts.isLiteralTypeNode(node) && ts.isStringLiteral(node.literal)) {
+      values.add(node.literal.text);
+    }
+
+    ts.forEachChild(node, walk);
+  };
+
+  walk(sourceFile);
+  return values;
+}
+
+function getPropertyName(node) {
+  if (ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isNumericLiteral(node)) {
+    return node.text;
+  }
+
+  if (ts.isComputedPropertyName(node) && ts.isStringLiteral(node.expression)) {
+    return node.expression.text;
+  }
+
+  return null;
+}
+
+function collectBridgeLeavesFromAst() {
+  const bridgeText = readSource('src/shared/api/webBridge.ts');
+  const sourceFile = ts.createSourceFile('webBridge.ts', bridgeText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let bridgeDeclaration;
+
+  const walk = (node) => {
+    if (bridgeDeclaration) return;
+
+    if (ts.isVariableDeclaration(node)) {
+      if (ts.isIdentifier(node.name) && node.name.text === 'webBridge' && node.initializer) {
+        let value = node.initializer;
+        while (ts.isAsExpression(value) || ts.isTypeAssertionExpression(value) || ts.isParenthesizedExpression(value)) {
+          value = value.expression;
+        }
+
+        if (ts.isObjectLiteralExpression(value)) {
+          bridgeDeclaration = value;
+        }
+        return;
+      }
+    }
+    ts.forEachChild(node, walk);
+  };
+
+  walk(sourceFile);
+  assert(Boolean(bridgeDeclaration), 'webBridge 对象存在');
+
+  const leaves = new Map();
+
+  const isBridgeMethodCall = (node) => {
+    if (!ts.isCallExpression(node)) {
+      return false;
+    }
+
+    const callee = node.expression;
+    if (!ts.isIdentifier(callee) || callee.text !== 'bridgeMethod') {
+      return false;
+    }
+
+    const [namespaceArg, methodArg] = node.arguments;
+    return {
+      match: ts.isStringLiteral(namespaceArg) && ts.isStringLiteral(methodArg),
+      namespace: namespaceArg?.text,
+      method: methodArg?.text,
+    };
+  };
+
+  const collect = (node, currentPath) => {
+    if (ts.isObjectLiteralExpression(node)) {
+      node.properties.forEach((property) => {
+        if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
+          return;
+        }
+
+        if (!ts.isPropertyAssignment(property)) {
+          return;
+        }
+
+        const propertyName = getPropertyName(property.name);
+        if (!propertyName) {
+          return;
+        }
+
+        const nextPath = currentPath ? `${currentPath}.${propertyName}` : propertyName;
+        collect(property.initializer, nextPath);
+      });
+      return;
+    }
+
+    const bridgeMethodCall = isBridgeMethodCall(node);
+    const leafBase = currentPath.split('.').pop();
+    const isEvent = leafBase && /^on/.test(leafBase);
+
+    if (bridgeMethodCall && bridgeMethodCall.match) {
+      leaves.set(currentPath, {
+        kind: 'rpc',
+        namespace: bridgeMethodCall.namespace,
+        method: bridgeMethodCall.method,
+      });
+      return;
+    }
+
+    if (currentPath === 'appName' || currentPath === 'platform') {
+      leaves.set(currentPath, { kind: 'member' });
+      return;
+    }
+
+    if (isEvent) {
+      leaves.set(currentPath, { kind: 'event' });
+      return;
+    }
+
+    leaves.set(currentPath, { kind: 'local' });
+  };
+
+  collect(bridgeDeclaration, '');
+  return leaves;
+}
+
+function flattenContractNamespace(namespace, defs, prefix = namespace) {
+  const map = new Map();
+  const walk = (values, currentPath) => {
+    for (const [name, value] of Object.entries(values)) {
+      const nextPath = currentPath ? `${currentPath}.${name}` : name;
+      if (value && typeof value === 'object' && !Array.isArray(value) && !hasOwnProperty(value, 'status')) {
+        walk(value, nextPath);
+        continue;
+      }
+      map.set(nextPath, value || {});
+    }
+  };
+
+  walk(defs, prefix);
+  return map;
 }
 
 function flattenManifest() {
-  const map = new Map();
-  const removedProducts = [];
-  for (const [namespace, methods] of Object.entries(contractMethods || {})) {
-    for (const [method, spec] of Object.entries(methods || {})) {
-      const key = `${namespace}.${method}`;
-      const status = spec?.status;
-      const owner = spec?.owner;
-      const workPackage = spec?.workPackage;
-      const source = spec?.source || 'webBridge';
-      map.set(key, {
-        namespace,
-        method,
-        status,
-        owner,
-        workPackage,
-        source,
-      });
-      if (source === 'deleted-product') {
-        removedProducts.push({ namespace, method, owner, workPackage, status });
+  const { methods: contractMethods = {} } = require('../shared/bridgeContract.cjs');
+  const allEntries = new Map();
+  const removedProductEntries = new Map();
+
+  for (const [namespace, defs] of Object.entries(contractMethods)) {
+    for (const [pathKey, entry] of flattenContractNamespace(namespace, defs, namespace)) {
+      allEntries.set(pathKey, entry);
+
+      const source = entry && entry.source;
+      if (entry?.status === 'removed' && source === 'deleted-product') {
+        removedProductEntries.set(pathKey, entry);
       }
     }
   }
-  return { map, removedProducts };
+
+  return { allEntries, removedProductEntries };
 }
 
-function createTestRequest() {
-  try {
-    const supertest = require('supertest');
-    const req = supertest(app);
-    return async ({ method, url, headers = {}, payload }) => {
-      let r = req[method.toLowerCase()](url);
-      for (const [key, value] of Object.entries(headers)) {
-        r = r.set(key, value);
+function flattenBindingMetadata(meta) {
+  const map = new Map();
+  for (const [namespace, members] of Object.entries(meta || {})) {
+    for (const [method, spec] of Object.entries(members || {})) {
+      if (!hasOwnProperty(members, method) || !spec || typeof spec !== 'object') {
+        continue;
       }
-      if (payload !== undefined) {
-        r = r.send(payload);
+      map.set(`${namespace}.${method}`, spec);
+    }
+  }
+  return map;
+}
+
+function collectBindingDispatcherKeys(dispatchers) {
+  const keys = [];
+  for (const [namespace, members] of Object.entries(dispatchers || {})) {
+    for (const [method, fn] of Object.entries(members)) {
+      if (typeof fn === 'function') {
+        keys.push(`${namespace}.${method}`);
       }
-      const res = await r;
-      return { statusCode: res.status, headers: res.headers, body: typeof res.text === 'string' ? res.text : JSON.stringify(res.body) };
+    }
+  }
+  return keys;
+}
+
+function toManifestKeyFromWebBridgePath(pathValue, leafInfo) {
+  if (leafInfo?.kind === 'rpc') {
+    return `${leafInfo.namespace}.${leafInfo.method}`;
+  }
+  if (leafInfo?.kind === 'member') {
+    return `members.${pathValue}`;
+  }
+  if (leafInfo?.kind === 'event') {
+    return `events.${pathValue}`;
+  }
+  return `locals.${pathValue}`;
+}
+
+const contractModule = require('../shared/bridgeContract.cjs');
+const contractVersion = contractModule.version;
+const { allEntries: contractEntries, removedProductEntries } = flattenManifest();
+
+const bridgeContractRouter = require('../server/routes/bridge.cjs');
+const bridgeBindingMetadata = bridgeContractRouter.__contractBindingMetadata;
+const routeDispatchers = bridgeContractRouter.__contractDispatchers || {};
+const setWorkspaceContextResolver = bridgeContractRouter.__setWorkspaceContextResolver;
+
+const { getWorkspaceContext, closeAll } = require('../server/workspace/workspaceRegistry.cjs');
+const { createApp } = require('../server/app.cjs');
+const app = createApp();
+const server = http.createServer(app);
+let port = 0;
+
+function createRequest() {
+  return async ({ method, url, headers = {}, payload }) => {
+    const requestBody = payload === undefined ? null : (typeof payload === 'string' ? payload : JSON.stringify(payload));
+    const reqHeaders = {
+      ...headers,
     };
-  } catch (err) {
-    if (!server) server = http.createServer(app);
-    return (reqOptions) => new Promise((resolve, reject) => {
-      if (!server.listening) {
-        return reject(new Error('HTTP server not started'));
-      }
-      const { method, url, headers = {}, payload } = reqOptions;
-      const payloadText = payload !== undefined
-        ? (typeof payload === 'string' ? payload : JSON.stringify(payload))
-        : null;
-      const requestHeaders = { ...headers };
-      if (payloadText && !requestHeaders['content-type']) requestHeaders['content-type'] = 'application/json';
-      if (payloadText) requestHeaders['content-length'] = Buffer.byteLength(payloadText);
+
+    if (requestBody && !reqHeaders['content-type']) {
+      reqHeaders['content-type'] = 'application/json';
+    }
+
+    if (requestBody) {
+      reqHeaders['content-length'] = Buffer.byteLength(requestBody);
+    }
+
+    return new Promise((resolve, reject) => {
       const req = http.request({
+        host: '127.0.0.1',
+        port,
         method,
         path: url,
-        host: '127.0.0.1',
-        port: server.address().port,
-        headers: requestHeaders,
+        headers: reqHeaders,
       }, (res) => {
-        let body = '';
+        let data = '';
         res.on('data', (chunk) => {
-          body += chunk;
+          data += chunk;
         });
         res.on('end', () => {
-          resolve({ statusCode: res.statusCode, headers: res.headers, body });
+          resolve({
+            statusCode: res.statusCode,
+            headers: res.headers,
+            body: parseJson(data) || data,
+          });
         });
       });
+
       req.on('error', reject);
-      if (payloadText) req.write(payloadText);
+      if (requestBody) req.write(requestBody);
       req.end();
     });
-  }
+  };
 }
 
-function getSessionCookieFromResponse(loginRes) {
-  const stateMatch = loginRes.headers.location?.match(/state=([^&]+)/);
-  const stateValue = stateMatch ? stateMatch[1] : '';
-  const setCookies = loginRes.headers['set-cookie'];
+function parseLoginState(authLocation, setCookies) {
+  const stateValue = authLocation?.match(/state=([^&]+)/)?.[1] || '';
   const loginCookies = Array.isArray(setCookies) ? setCookies : (setCookies ? [setCookies] : []);
-  const stateCookie = loginCookies.find((c) => c.startsWith('yibiao_oauth_state='));
-  const cookieValue = stateCookie?.match(/yibiao_oauth_state=([^;]+)/)?.[1];
-  return { stateValue, stateCookieValue: cookieValue };
+  const stateCookie = loginCookies.find((item) => item.startsWith('yibiao_oauth_state='));
+  const stateCookieValue = stateCookie?.match(/yibiao_oauth_state=([^;]+)/)?.[1] || '';
+  return { stateValue, stateCookieValue };
 }
 
-async function loginWithMock(inject) {
+async function createSessionCookie(inject) {
   const loginRes = await inject({ method: 'GET', url: '/api/auth/login' });
-  if (loginRes.statusCode !== 302) {
-    throw new Error('mock login 失败：未返回 302');
-  }
-  const { stateValue, stateCookieValue } = getSessionCookieFromResponse(loginRes);
+  assert(loginRes.statusCode === 302, 'auth/login 返回 302');
+
+  const { stateValue, stateCookieValue } = parseLoginState(loginRes.headers.location || '', loginRes.headers['set-cookie']);
   const callbackRes = await inject({
     method: 'POST',
     url: '/api/auth/mock-callback',
@@ -186,241 +391,288 @@ async function loginWithMock(inject) {
     },
     payload: `email=contract@test.com&name=ContractTester&state=${stateValue}`,
   });
-  if (callbackRes.statusCode !== 302) {
-    throw new Error('mock callback 失败');
-  }
-  const setCookies = callbackRes.headers['set-cookie'];
-  const loginCookies = Array.isArray(setCookies) ? setCookies : (setCookies ? [setCookies] : []);
-  const sessionCookie = loginCookies.find((c) => c.startsWith('yibiao_session='));
-  const sessionCookieValue = sessionCookie?.match(/yibiao_session=([^;]+)/)?.[1];
-  if (!sessionCookieValue) {
-    throw new Error('mock login 失败：未拿到 session cookie');
-  }
-  return `yibiao_session=${sessionCookieValue}`;
+  assert(callbackRes.statusCode === 302, 'mock-callback 返回 302');
+
+  const callbackCookies = Array.isArray(callbackRes.headers['set-cookie'])
+    ? callbackRes.headers['set-cookie']
+    : (callbackRes.headers['set-cookie'] ? [callbackRes.headers['set-cookie']] : []);
+  const sessionCookie = callbackCookies.find((item) => item.startsWith('yibiao_session='));
+  const sessionValue = sessionCookie?.match(/yibiao_session=([^;]+)/)?.[1] || '';
+  assert(Boolean(sessionValue), 'mock 登录返回 session cookie');
+
+  return `yibiao_session=${sessionValue}`;
 }
 
-function makeBridgePayload(namespace, method, args = []) {
-  return { namespace, method, args };
+async function assertContractFieldPresence(entry, manifestKey) {
+  for (const field of requiredMetaFields) {
+    if (field === 'input') {
+      assert(Array.isArray(entry?.input), `${manifestKey} 包含 input 数组`);
+      continue;
+    }
+
+    if (field === 'output') {
+      assert(hasOwnProperty(entry || {}, 'output'), `${manifestKey} 包含 output`);
+      continue;
+    }
+
+    if (field === 'errors') {
+      assert(Array.isArray(entry?.errors), `${manifestKey} 包含 errors 数组`);
+      continue;
+    }
+    assert(typeof entry?.[field] === 'string' && entry[field].length > 0, `${manifestKey} 包含 ${field}`);
+  }
+
+  assert(ALLOWED_STATUSES.has(entry.status), `${manifestKey} 状态合法`);
 }
 
-async function assertResponse(inject, status, code, message, namespace, method, args = []) {
-  const sessionCookie = await currentSessionCookiePromise;
-  const response = await inject({
-    method: 'POST',
-    url: '/api/bridge',
-    headers: {
-      'content-type': 'application/json',
-      cookie: sessionCookie,
-    },
-    payload: makeBridgePayload(namespace, method, args),
+function assertRemovedProductWhitelist() {
+  assert(removedProductEntries.size === 3, `deleted-product 移除项为 3 项（当前 ${removedProductEntries.size}）`);
+
+  for (const [entryKey, spec] of removedProductEntries.entries()) {
+    assert(spec.status === 'removed', `${entryKey} removed 状态正确`);
+    assert(spec.source === 'deleted-product', `${entryKey} source 为 deleted-product`);
+  }
+}
+
+async function runBridgeBehavior(inject) {
+  const pendingEntries = [];
+  const contractMap = contractEntries;
+  REQUIRED_WEB_BRIDGE_META_KEYS.forEach((key) => {
+    assert(contractMap.has(key), `manifest 包含关键 Web Leaf：${key}`);
   });
-  const body = normalizeErrorPayload(response.body);
-  assert(response.statusCode === status, `${message}（状态码 ${status}）`);
-  assert(!code || body.code === code, `${message}（响应码 ${code}）`);
-  return response;
-}
 
-function readSourceText(relativePath) {
-  return fs.readFileSync(path.join(__dirname, '..', relativePath), 'utf-8');
-}
-
-function assertMissingUiTokensInSource(relativePath, token, message) {
-  const sourceText = readSourceText(relativePath);
-  const quotedTokenPattern = new RegExp(`["']([^"']*)${escapeRegExp(token)}([^"']*)["']`, 'g');
-  assert(!quotedTokenPattern.test(sourceText), message);
-}
-
-function assertPathRemoved(relativePath) {
-  const resolvedPath = path.join(__dirname, '..', relativePath);
-  assert(!fs.existsSync(resolvedPath), `${relativePath} 已移除`);
-}
-
-function assertDispatcherBindingConsistency(manifestMap) {
-  const manifestImplemented = new Map();
-  for (const [key, entry] of manifestMap.entries()) {
-    if (entry.status === 'implemented') {
-      manifestImplemented.set(key, entry);
+  for (const [manifestKey, entry] of contractMap.entries()) {
+    assertContractFieldPresence(entry, manifestKey);
+    if (entry.status === 'pending') {
+      pendingEntries.push(manifestKey);
     }
   }
-  for (const [key, entry] of manifestImplemented.entries()) {
-    const [namespace, method] = key.split('.');
-    assert(hasOwnProperty(routeDispatchers, namespace), `implemented 入口有 dispatcher namespace：${key}`);
-    const nsDispatcher = routeDispatchers[namespace];
-    assert(Boolean(nsDispatcher), `implemented 入口 dispatcher namespace 值可用：${key}`);
-    assert(hasOwnProperty(nsDispatcher, method), `implemented 入口有 own-property dispatcher 函数：${key}`);
-    assert(typeof nsDispatcher[method] === 'function', `implemented 入口 dispatcher 为函数：${key}`);
+
+  const bridgeLeaves = collectBridgeLeavesFromAst();
+  const expectedContractKeys = new Set();
+
+  for (const [pathValue, info] of bridgeLeaves.entries()) {
+    if (!info) {
+      continue;
+    }
+
+    const manifestKey = toManifestKeyFromWebBridgePath(pathValue, info);
+    expectedContractKeys.add(manifestKey);
+
+    assert(contractMap.has(manifestKey), `manifest 覆盖 webBridge 叶子：${manifestKey}`);
   }
-  for (const [namespace, methods] of Object.entries(routeDispatchers)) {
-    for (const [method, dispatcher] of Object.entries(methods)) {
-      assert(typeof dispatcher === 'function', `dispatcher 本体为函数：${namespace}.${method}`);
-      const key = `${namespace}.${method}`;
-      const manifestEntry = manifestMap.get(key);
-      assert(Boolean(manifestEntry), `dispatcher 对应 manifest 声明：${key}`);
-      if (manifestEntry) {
-        assert(manifestEntry.status === 'implemented', `dispatcher 仅对应 implemented manifest：${key}`);
+
+  for (const [manifestKey, entry] of contractMap.entries()) {
+    const isExpected = expectedContractKeys.has(manifestKey);
+    if (!isExpected) {
+      if (entry.status === 'removed' && entry.source === 'deleted-product') {
+        continue;
       }
+      assert(false, `manifest 中存在 webBridge 未定义叶子：${manifestKey}`);
     }
-  }
-}
 
-function assertRemovedProductUiGuards() {
-  for (const entry of EXPECTED_REMOVED_UI_SOURCE_FILES) {
-    for (const token of EXPECTED_REMOVED_UI_ENTRIES) {
-      assertMissingUiTokensInSource(entry, token, `${entry} 不再声明入口 ${token}`);
+    if (manifestKey === 'events.tasks.onTaskEvent') {
+      assert(entry.status === 'implemented', 'events.tasks.onTaskEvent 为 implemented');
+      assert(entry.transport === 'event', 'events.tasks.onTaskEvent transport 为 event');
     }
-  }
 
-  for (const featurePagePath of EXPECTED_REMOVED_FEATURE_PAGE_PATHS) {
-    assertPathRemoved(featurePagePath);
-  }
-
-  for (const runtimePath of EXPECTED_REMOVED_PLUGIN_RUNTIME_PATHS) {
-    assertPathRemoved(runtimePath);
-  }
-}
-
-function assertNoWorkspaceDependencyBeforeNegativeResponse() {
-  const bridgeSource = readSourceText('server/routes/bridge.cjs');
-  const pendingPos = bridgeSource.indexOf("contract.status === 'pending'");
-  const removedPos = bridgeSource.indexOf("contract.status === 'removed'");
-  const workspacePos = bridgeSource.indexOf('getWorkspaceContext(workspaceId)');
-  assert(pendingPos !== -1, '路由中包含 pending 能力提前返回分支');
-  assert(removedPos !== -1, '路由中包含 removed 能力提前返回分支');
-  assert(workspacePos !== -1, '路由中包含工作区上下文解析');
-  assert(pendingPos < workspacePos, 'pending 能力返回早于工作区上下文解析');
-  assert(removedPos < workspacePos, 'removed 能力返回早于工作区上下文解析');
-}
-
-let currentSessionCookiePromise;
-
-async function runTests(inject) {
-  const { map: manifestMap, removedProducts } = flattenManifest();
-  const sourceMethods = parseBridgeMethods();
-  for (const [key, { namespace, method }] of sourceMethods) {
-    const manifest = manifestMap.get(key);
-    assert(Boolean(manifest), `manifest 覆盖 webBridge.ts 方法：${key}`);
-    assert(ALLOWED_STATUSES.has(manifest?.status), `manifest 状态合法：${key}`);
-    assert(typeof manifest?.owner === 'string' && manifest.owner.length > 0, `manifest owner 已设置：${key}`);
-    assert(typeof manifest?.workPackage === 'string' && manifest.workPackage.length > 0, `manifest workPackage 已设置：${key}`);
-  }
-  for (const [key, entry] of manifestMap.entries()) {
-    const fromSource = sourceMethods.has(key);
-    if (!fromSource) {
-      const isRemovedProduct = removedProducts.some((it) => `${it.namespace}.${it.method}` === key);
-      assert(isRemovedProduct, `manifest 非 webBridge 方法仅允许删除能力占位：${key}`);
-      if (isRemovedProduct) {
-        assert(entry.status === 'removed', `manifest 删除能力状态为 removed：${key}`);
-      }
+    if (['members.appName', 'members.platform', 'locals.openExternal', 'locals.database.getStatus'].includes(manifestKey)) {
+      assert(entry.status === 'implemented', `${manifestKey} 实际应为 implemented`);
     }
-    if (fromSource && entry.status === 'removed') {
-      assert(false, `webBridge 方法不得标记为 removed：${key}`);
+
+    if (manifestKey === 'events.database.onStatus') {
+      assert(entry.status === 'pending', 'events.database.onStatus 按待实现待定返回');
+    }
+
+    if (DESKTOP_ONLY_METHODS.includes(manifestKey.replace('members.', '').replace('locals.', '').replace('events.', ''))) {
+      assert(entry.source === 'desktop-only', `${manifestKey} 标记 desktop-only`);
+      assert(entry.owner === 'desktop', `${manifestKey} owner 为 desktop`);
+      assert(entry.workPackage === 'WP-F', `${manifestKey} workPackage 使用 WP-F`);
+      assert(entry.status === 'pending', `${manifestKey} 挂起态以免被误判为可用`);
     }
   }
 
-  assertDispatcherBindingConsistency(manifestMap);
-  assertNoWorkspaceDependencyBeforeNegativeResponse();
-  assertRemovedProductUiGuards();
+  assertRemovedProductWhitelist();
 
-  const pendingEntries = Array.from(manifestMap.values()).filter((entry) => entry.status === 'pending');
-  if (pendingEntries.length > 0) {
-    console.log(`\n发现 pending 能力（默认允许）：${pendingEntries.length} 条`);
-    pendingEntries.forEach((entry) => {
-      console.log(`  - ${entry.namespace}.${entry.method}`);
-    });
-  }
-  if (strictMode) {
-    assert(pendingEntries.length === 0, 'strict 模式不允许 pending');
-  } else {
-    assert(true, 'strict 模式未开启，允许 pending 存在');
-  }
+  const bindingMetadata = flattenBindingMetadata(bridgeBindingMetadata);
+  const bindingKeys = collectBindingDispatcherKeys(routeDispatchers);
+  const implementedContractEntries = Array.from(contractMap.entries()).filter(([, entry]) => entry.status === 'implemented');
 
-  currentSessionCookiePromise = loginWithMock(inject);
-
-  // unknown 能力：4xx 且不泄漏细节
-  const unknownRes = await assertResponse(
-    inject,
-    400,
-    'WEB_BRIDGE_UNKNOWN',
-    '未知 namespace/method 返回 400',
-    'ghost',
-    'not_exist',
-    []
-  );
-  const unknownPayload = normalizeErrorPayload(unknownRes.body);
-  assert(!/technical|not implemented|尚未/.test(String(unknownPayload.message || '')), '未知能力错误不泄漏实现细节');
-
-  // prototype 入口阻断
-  for (const bad of FORBIDDEN_IDENTIFIERS) {
-    const badRes = await inject({
-      method: 'POST',
-      url: '/api/bridge',
-      headers: { 'content-type': 'application/json', cookie: await currentSessionCookiePromise },
-      payload: makeBridgePayload('tasks', bad, []),
-    });
-    assert(badRes.statusCode === 400, `method 为 ${bad} 的请求被拒绝`);
-    const badPayload = normalizeErrorPayload(badRes.body);
-    assert(badPayload.code === 'INVALID_BRIDGE_IDENTIFIER', `method 为 ${bad} 的请求返回 INVALID_BRIDGE_IDENTIFIER`);
-  }
-  {
-    const badRes = await inject({
-      method: 'POST',
-      url: '/api/bridge',
-      headers: { 'content-type': 'application/json', cookie: await currentSessionCookiePromise },
-      payload: makeBridgePayload('__proto__', 'get', []),
-    });
-    assert(badRes.statusCode === 400, 'namespace __proto__ 被拒绝');
-    const badPayload = normalizeErrorPayload(badRes.body);
-    assert(badPayload.code === 'INVALID_BRIDGE_IDENTIFIER', 'namespace __proto__ 返回 INVALID_BRIDGE_IDENTIFIER');
-  }
-
-  // args 非数组被拒绝
-  const argsRes = await inject({
-    method: 'POST',
-    url: '/api/bridge',
-    headers: { 'content-type': 'application/json', cookie: await currentSessionCookiePromise },
-    payload: makeBridgePayload('tasks', 'getActiveTasks', { a: 1 }),
-  });
-  const argsPayload = normalizeErrorPayload(argsRes.body);
-  assert(argsRes.statusCode === 400, 'args 非数组返回 400');
-  assert(argsPayload.code === 'INVALID_BRIDGE_ARGUMENTS', 'args 非数组返回 INVALID_BRIDGE_ARGUMENTS');
-
-  // removed 入口静态守卫
-  for (const removed of removedProducts) {
-    const removedRes = await inject({
-      method: 'POST',
-      url: '/api/bridge',
-      headers: { 'content-type': 'application/json', cookie: await currentSessionCookiePromise },
-      payload: makeBridgePayload(removed.namespace, removed.method, []),
-    });
-    const removedPayload = normalizeErrorPayload(removedRes.body);
-    assert(removedRes.statusCode === 410, `删除能力 ${removed.namespace}.${removed.method} 返回 410`);
-    assert(removedPayload.code === 'WEB_BRIDGE_REMOVED', `删除能力 ${removed.namespace}.${removed.method} 返回 WEB_BRIDGE_REMOVED`);
-  }
-
-  // 典型已实现 + 待实现行为
-  await assertResponse(inject, 200, 'OK', 'implemented: tasks.getActiveTasks 返回 200', 'tasks', 'getActiveTasks', []);
-  await assertResponse(inject, 200, 'OK', 'implemented: technicalPlan.loadState 返回 200', 'technicalPlan', 'loadState', []);
-  await assertResponse(inject, 501, 'WEB_CAPABILITY_PENDING', 'pending: technicalPlan.importTenderDocument 返回 501', 'technicalPlan', 'importTenderDocument', []);
-}
-
-async function startServerAndRun() {
-  const inject = createTestRequest();
-  if (server) {
-    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  }
+  const context = getWorkspaceContext('contract-test-context');
   try {
-    await runTests(inject);
+    for (const [contractKey, contractEntry] of implementedContractEntries) {
+      const isMemberMeta = contractKey.startsWith('members.') || contractKey.startsWith('locals.') || contractKey.startsWith('events.');
+      if (isMemberMeta) {
+        continue;
+      }
+
+      assert(contractEntry && contractEntry.status === 'implemented', `${contractKey} 是 implemented RPC`);
+
+      const binding = bindingMetadata.get(contractKey);
+      assert(Boolean(binding), `${contractKey} 有绑定元数据`);
+      assert(['direct', 'store'].includes(binding.type), `${contractKey} binding.type 需为 direct 或 store`);
+
+      const dispatcher = routeDispatchers[contractKey.split('.')[0]]?.[contractKey.split('.')[1]];
+      assert(typeof dispatcher === 'function', `${contractKey} 有 dispatcher 函数`);
+
+      if (binding.type === 'store') {
+        assert(typeof binding.storeName === 'string' && binding.storeName.length > 0, `${contractKey} storeName 有值`);
+        assert(typeof binding.storeMethod === 'string' && binding.storeMethod.length > 0, `${contractKey} storeMethod 有值`);
+
+        const store = context.stores?.[binding.storeName];
+        assert(Boolean(store), `${contractKey} 对应 Store 在真实 context 中存在`);
+        assert(typeof store[binding.storeMethod] === 'function', `${contractKey} 对应 Store 方法存在`);
+      }
+
+      if (binding.type === 'direct') {
+        assert(typeof binding.handler === 'function', `${contractKey} direct handler 已声明为函数`);
+      }
+    }
   } finally {
-    if (server && server.listening) {
+    if (context && context.close) {
+      context.close();
+    }
+  }
+
+  for (const dispatcherKey of bindingKeys) {
+    assert(contractMap.has(dispatcherKey), `${dispatcherKey} dispatcher 有对应 manifest 声明`);
+    const entry = contractMap.get(dispatcherKey);
+    assert(entry.status === 'implemented', `${dispatcherKey} dispatcher 仅对应 implemented manifest`);
+  }
+
+  if (strictMode) {
+    assert(pendingEntries.length === 0, `strict 模式不允许 pending（当前 ${pendingEntries.length}）`);
+  }
+
+  const session = await createSessionCookie(inject);
+  const statusPayload = async (body) => {
+    const response = await inject({
+      method: 'POST',
+      url: '/api/bridge',
+      headers: {
+        'content-type': 'application/json',
+        cookie: session,
+      },
+      payload: body,
+    });
+
+    return {
+      response,
+      payload: response.body || {},
+    };
+  };
+
+  const unknownRes = await statusPayload({ namespace: 'ghost', method: 'nothing', args: [] });
+  assert(unknownRes.response.statusCode === 400, '未知能力返回 400');
+  assert(unknownRes.payload.code === 'WEB_BRIDGE_UNKNOWN', '未知能力错误码为 WEB_BRIDGE_UNKNOWN');
+
+  const implementedRes = await statusPayload({ namespace: 'tasks', method: 'getActiveTasks', args: [] });
+  assert(implementedRes.response.statusCode === 200, 'implemented 方法返回 200');
+  assert(implementedRes.payload.code === 'OK', 'implemented 方法返回 OK');
+
+  const pendingRes = await statusPayload({ namespace: 'technicalPlan', method: 'importTenderDocument', args: [] });
+  assert(pendingRes.response.statusCode === 501, 'pending 方法返回 501');
+  assert(pendingRes.payload.code === 'WEB_CAPABILITY_PENDING', 'pending 方法返回 WEB_CAPABILITY_PENDING');
+
+  for (const removedEntry of removedProductEntries.values()) {
+    const [namespace, method] = removedEntry.contractRef.split('.');
+    const removedRes = await statusPayload({ namespace, method, args: [] });
+    assert(removedRes.response.statusCode === 410, `${removedEntry.contractRef} 返回 410`);
+    assert(removedRes.payload.code === 'WEB_BRIDGE_REMOVED', `${removedEntry.contractRef} 返回 WEB_BRIDGE_REMOVED`);
+  }
+
+  for (const badName of FORBIDDEN_PROTOTYPE_IDENTIFIERS) {
+    const badResponse = await statusPayload({ namespace: 'tasks', method: badName, args: [] });
+    assert(badResponse.response.statusCode === 400, `method ${badName} 被 prototype 防御拦截`);
+    assert(badResponse.payload.code === 'INVALID_BRIDGE_IDENTIFIER', `method ${badName} 错误码为 INVALID_BRIDGE_IDENTIFIER`);
+
+    const badNamespace = await statusPayload({ namespace: badName, method: 'getActiveTasks', args: [] });
+    assert(badNamespace.response.statusCode === 400, `namespace ${badName} 被 prototype 防御拦截`);
+  }
+
+  let getArgsRes = await statusPayload({ namespace: 'tasks', method: 'getActiveTasks', args: { a: 1 } });
+  assert(getArgsRes.response.statusCode === 400, 'args 非数组会返回 400');
+  assert(getArgsRes.payload.code === 'INVALID_BRIDGE_ARGUMENTS', 'args 非数组错误码正确');
+
+  let workspaceResolved = 0;
+  const oldResolver = setWorkspaceContextResolver(() => {
+    workspaceResolved += 1;
+    throw new Error('workspace resolver should not be called for pending/removed paths');
+  });
+
+  try {
+    const wsPendingRes = await statusPayload({ namespace: 'tasks', method: 'startBidSectionExtraction', args: [] });
+    assert(wsPendingRes.response.statusCode === 501, 'pending 能力返回 501，且不触发 workspace');
+    assert(workspaceResolved === 0, 'pending 能力未初始化 workspace');
+
+    const wsRemovedRes = await statusPayload({ namespace: 'resources', method: 'list', args: [] });
+    assert(wsRemovedRes.response.statusCode === 410, 'removed 能力返回 410，且不触发 workspace');
+    assert(workspaceResolved === 0, 'removed 能力未初始化 workspace');
+  } finally {
+    if (typeof oldResolver === 'function') {
+      setWorkspaceContextResolver(oldResolver);
+    }
+  }
+
+  const implementedRequiresWorkspace = await statusPayload({ namespace: 'tasks', method: 'getActiveTasks', args: [] });
+  assert(implementedRequiresWorkspace.response.statusCode === 200, 'implemented 调用可正常返回');
+
+  const menuApiText = collectStringLiterals(readSource('src/app/menuConfig.ts'));
+  const routerText = collectStringLiterals(readSource('src/app/AppRouter.tsx'));
+  const navigationText = collectStringLiterals(readSource('src/shared/types/navigation.ts'));
+  const sidebarText = collectStringLiterals(readSource('src/components/Sidebar.tsx'));
+
+  for (const removedId of REMOVED_MENU_SECTIONS) {
+    assert(!menuApiText.has(removedId), `menuConfig 不再声明 ${removedId}`);
+    assert(!routerText.has(removedId), `AppRouter 不再声明 ${removedId}`);
+    assert(!navigationText.has(removedId), `navigation 不再声明 ${removedId}`);
+    assert(!sidebarText.has(removedId), `Sidebar 不再声明 ${removedId}`);
+  }
+
+  for (const targetPath of DELETED_FEATURE_PATHS) {
+    const absolutePath = path.join(__dirname, '..', targetPath);
+    assert(!fs.existsSync(absolutePath), `已删除路径不存在：${targetPath}`);
+  }
+
+  console.log(`\n=== Web Contract 测试摘要 ===`);
+  console.log(`Contract 版本：${contractVersion}`);
+  console.log(`Bridge 叶子（AST）数量：${bridgeLeaves.size}`);
+  console.log(`manifest 条目：${contractEntries.size}`);
+  console.log(`manifest pending：${pendingEntries.length}`);
+  console.log(`通过: ${passed.length}`);
+  console.log(`失败: ${failed.length}`);
+  if (failed.length > 0) {
+    failed.forEach((item) => {
+      console.error(`  - ${item}`);
+    });
+    process.exit(1);
+  }
+
+  console.log('全部通过 ✅');
+}
+
+async function startServer() {
+  await new Promise((resolve, reject) => {
+    server.listen(0, '127.0.0.1', () => resolve());
+    server.once('error', reject);
+  });
+  port = server.address().port;
+}
+
+(async () => {
+  const inject = createRequest();
+  await startServer();
+  try {
+    await runBridgeBehavior(inject);
+  } finally {
+    if (server.listening) {
       server.close();
     }
+    try {
+      closeAll();
+    } catch {}
+    try {
+      fs.rmSync(tmpDataDir, { recursive: true, force: true });
+    } catch {}
   }
-}
-
-startServerAndRun().catch((error) => {
-  console.error('测试执行失败:', error);
-  if (server && server.listening) {
-    server.close();
-  }
-  process.exit(1);
-});
+})();

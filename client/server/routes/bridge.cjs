@@ -6,7 +6,11 @@ const { getWorkspaceContext } = require('../workspace/workspaceRegistry.cjs');
 const { methods: bridgeMethods = {} } = require('../../shared/bridgeContract.cjs');
 
 const router = express.Router();
-const FORBIDDEN_IDENTIFIERS = new Set(['__proto__', 'constructor', 'prototype', 'toString']);
+const FORBIDDEN_IDENTIFIERS = new Set([
+  '__proto__',
+  'prototype',
+  ...Object.getOwnPropertyNames(Object.prototype),
+]);
 const ALLOWED_STATUSES = new Set(['implemented', 'pending', 'removed']);
 
 function hasOwnProperty(obj, key) {
@@ -17,17 +21,25 @@ function getContractEntry(namespace, method) {
   if (!hasOwnProperty(bridgeMethods, namespace)) {
     return null;
   }
+
   const ns = bridgeMethods[namespace];
-  if (!ns || typeof ns !== 'object') {
+  if (!ns || typeof ns !== 'object' || Array.isArray(ns)) {
     return null;
   }
+
+  if (!hasOwnProperty(ns, method)) {
+    return null;
+  }
+
   const entry = ns[method];
-  if (!entry || typeof entry !== 'object' || !hasOwnProperty(ns, method)) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
     return null;
   }
+
   if (!ALLOWED_STATUSES.has(entry.status)) {
     return null;
   }
+
   return entry;
 }
 
@@ -38,27 +50,135 @@ function createErrorPayload(code, message) {
   };
 }
 
-// 通用 dispatcher 构建器：映射接口方法名到 Store 实际方法名。
-function buildStoreDispatcher(storeName, methodMap) {
-  const dispatcher = {};
-  for (const [ifaceMethod, storeMethod] of Object.entries(methodMap)) {
-    dispatcher[ifaceMethod] = (ctx, args) => {
-      const store = ctx.stores[storeName];
-      if (!store || typeof store[storeMethod] !== 'function') {
-        throw new Error(`${storeName}.${storeMethod} 不可用`);
+function createDirectBinding(handler, contractRef) {
+  return Object.freeze({
+    type: 'direct',
+    transport: 'bridge',
+    handler,
+    contractRef,
+  });
+}
+
+function createStoreBinding(storeName, storeMethod, contractRef) {
+  return Object.freeze({
+    type: 'store',
+    transport: 'bridge',
+    storeName,
+    storeMethod,
+    contractRef,
+  });
+}
+
+const bridgeBindingMetadata = Object.freeze({
+  config: Object.freeze({
+    load: createDirectBinding((ctx) => ctx.configStore.load(), 'config.load'),
+    save: createDirectBinding((ctx, args) => ctx.configStore.save(args[0]), 'config.save'),
+  }),
+
+  technicalPlan: Object.freeze({
+    loadState: createStoreBinding('technicalPlanStore', 'loadTechnicalPlan', 'technicalPlan.loadState'),
+    readTenderMarkdown: createStoreBinding('technicalPlanStore', 'readTenderMarkdown', 'technicalPlan.readTenderMarkdown'),
+    readTenderSourceMarkdown: createStoreBinding('technicalPlanStore', 'readTenderSourceMarkdown', 'technicalPlan.readTenderSourceMarkdown'),
+    readOriginalPlanMarkdown: createStoreBinding('technicalPlanStore', 'readOriginalPlanMarkdown', 'technicalPlan.readOriginalPlanMarkdown'),
+    updateStep: createStoreBinding('technicalPlanStore', 'updateStep', 'technicalPlan.updateStep'),
+    setWorkflowKind: createStoreBinding('technicalPlanStore', 'setWorkflowKind', 'technicalPlan.setWorkflowKind'),
+    switchWorkflowKind: createStoreBinding('technicalPlanStore', 'switchWorkflowKind', 'technicalPlan.switchWorkflowKind'),
+    saveBidAnalysisConfig: createStoreBinding('technicalPlanStore', 'saveBidAnalysisConfig', 'technicalPlan.saveBidAnalysisConfig'),
+    saveOutlineConfig: createStoreBinding('technicalPlanStore', 'saveOutlineConfig', 'technicalPlan.saveOutlineConfig'),
+    saveOutline: createStoreBinding('technicalPlanStore', 'saveOutline', 'technicalPlan.saveOutline'),
+    saveGlobalFacts: createStoreBinding('technicalPlanStore', 'saveGlobalFacts', 'technicalPlan.saveGlobalFacts'),
+    saveContentGenerationOptions: createStoreBinding('technicalPlanStore', 'saveContentGenerationOptions', 'technicalPlan.saveContentGenerationOptions'),
+    saveChapterContent: createStoreBinding('technicalPlanStore', 'saveChapterContent', 'technicalPlan.saveChapterContent'),
+    clear: createStoreBinding('technicalPlanStore', 'clearTechnicalPlan', 'technicalPlan.clear'),
+    checkBidSections: createStoreBinding('technicalPlanStore', 'checkBidSections', 'technicalPlan.checkBidSections'),
+    selectBidSection: createStoreBinding('technicalPlanStore', 'selectBidSection', 'technicalPlan.selectBidSection'),
+  }),
+
+  knowledgeBase: Object.freeze({
+    getMigrationStatus: createStoreBinding('knowledgeBaseStore', 'getMigrationStatus', 'knowledgeBase.getMigrationStatus'),
+    migrateLegacy: createStoreBinding('knowledgeBaseStore', 'migrateLegacy', 'knowledgeBase.migrateLegacy'),
+    renameFolder: createStoreBinding('knowledgeBaseStore', 'renameFolder', 'knowledgeBase.renameFolder'),
+    deleteFolder: createStoreBinding('knowledgeBaseStore', 'deleteFolder', 'knowledgeBase.deleteFolder'),
+    deleteDocument: createStoreBinding('knowledgeBaseStore', 'deleteDocument', 'knowledgeBase.deleteDocument'),
+    moveDocument: createStoreBinding('knowledgeBaseStore', 'moveDocument', 'knowledgeBase.moveDocument'),
+    retryDocument: createStoreBinding('knowledgeBaseStore', 'recoverInterruptedDocuments', 'knowledgeBase.retryDocument'),
+    readMarkdown: createStoreBinding('knowledgeBaseStore', 'readMarkdown', 'knowledgeBase.readMarkdown'),
+    readItems: createStoreBinding('knowledgeBaseStore', 'readItems', 'knowledgeBase.readItems'),
+    readAnalysis: createStoreBinding('knowledgeBaseStore', 'readAnalysis', 'knowledgeBase.readAnalysis'),
+  }),
+
+  duplicateCheck: Object.freeze({
+    loadState: createStoreBinding('duplicateCheckStore', 'loadDuplicateCheck', 'duplicateCheck.loadState'),
+    saveFiles: createStoreBinding('duplicateCheckStore', 'saveFiles', 'duplicateCheck.saveFiles'),
+    saveUiState: createStoreBinding('duplicateCheckStore', 'saveUiState', 'duplicateCheck.saveUiState'),
+    updateState: createStoreBinding('duplicateCheckStore', 'updateDuplicateCheck', 'duplicateCheck.updateState'),
+    clear: createStoreBinding('duplicateCheckStore', 'clearDuplicateCheck', 'duplicateCheck.clear'),
+  }),
+
+  rejectionCheck: Object.freeze({
+    loadState: createStoreBinding('rejectionCheckStore', 'loadRejectionCheck', 'rejectionCheck.loadState'),
+    removeDocument: createStoreBinding('rejectionCheckStore', 'removeDocument', 'rejectionCheck.removeDocument'),
+    saveUiState: createStoreBinding('rejectionCheckStore', 'saveUiState', 'rejectionCheck.saveUiState'),
+    updateState: createStoreBinding('rejectionCheckStore', 'updateRejectionCheck', 'rejectionCheck.updateState'),
+    clear: createStoreBinding('rejectionCheckStore', 'clearRejectionCheck', 'rejectionCheck.clear'),
+    importTenderFromTechnicalPlan: createStoreBinding('rejectionCheckStore', 'importTenderFromTechnicalPlan', 'rejectionCheck.importTenderFromTechnicalPlan'),
+  }),
+
+  templates: Object.freeze({
+    list: createStoreBinding('templateStore', 'listTemplates', 'templates.list'),
+    get: createStoreBinding('templateStore', 'getTemplate', 'templates.get'),
+    create: createStoreBinding('templateStore', 'createTemplate', 'templates.create'),
+    update: createStoreBinding('templateStore', 'updateTemplate', 'templates.update'),
+    delete: createStoreBinding('templateStore', 'deleteTemplate', 'templates.delete'),
+  }),
+
+  tasks: Object.freeze({
+    getActiveTasks: createDirectBinding((ctx) => ctx.taskService.getActiveTasks(), 'tasks.getActiveTasks'),
+  }),
+});
+
+function buildDispatchers(meta) {
+  const result = Object.create(null);
+  for (const [namespace, members] of Object.entries(meta)) {
+    const namespaceDispatchers = Object.create(null);
+    for (const [method, spec] of Object.entries(members)) {
+      if (!hasOwnProperty(members, method)) {
+        continue;
       }
-      return store[storeMethod](...args);
-    };
+
+      if (!spec || typeof spec !== 'object') {
+        continue;
+      }
+
+      if (spec.type === 'store') {
+        namespaceDispatchers[method] = (ctx, args) => {
+          const store = ctx.stores[spec.storeName];
+          if (!store || typeof store[spec.storeMethod] !== 'function') {
+            throw new Error(`${spec.storeName}.${spec.storeMethod} 不可用`);
+          }
+          return store[spec.storeMethod](...args);
+        };
+      }
+
+      if (spec.type === 'direct' && typeof spec.handler === 'function') {
+        namespaceDispatchers[method] = (ctx, args) => spec.handler(ctx, args);
+      }
+    }
+
+    if (Object.keys(namespaceDispatchers).length > 0) {
+      Object.freeze(namespaceDispatchers);
+      result[namespace] = namespaceDispatchers;
+    }
   }
-  return dispatcher;
+  return Object.freeze(result);
 }
 
 function createReadOnlyDispatcherRegistry(source) {
-  const result = {};
-  for (const [namespace, methods] of Object.entries(source)) {
-    const namespaceMethods = {};
-    for (const [method, handler] of Object.entries(methods || {})) {
-      if (typeof handler === 'function') {
+  const result = Object.create(null);
+  for (const [namespace, members] of Object.entries(source)) {
+    const namespaceMethods = Object.create(null);
+    for (const [method, handler] of Object.entries(members)) {
+      if (hasOwnProperty(members, method) && typeof handler === 'function') {
         namespaceMethods[method] = handler;
       }
     }
@@ -70,77 +190,30 @@ function createReadOnlyDispatcherRegistry(source) {
   return Object.freeze(result);
 }
 
-const dispatchers = {
-  config: {
-    load: (ctx) => ctx.configStore.load(),
-    save: (ctx, args) => ctx.configStore.save(args[0]),
-  },
+let workspaceContextResolver = (workspaceId) => getWorkspaceContext(workspaceId);
 
-  technicalPlan: buildStoreDispatcher('technicalPlanStore', {
-    loadState: 'loadTechnicalPlan',
-    readTenderMarkdown: 'readTenderMarkdown',
-    readTenderSourceMarkdown: 'readTenderSourceMarkdown',
-    readOriginalPlanMarkdown: 'readOriginalPlanMarkdown',
-    updateStep: 'updateStep',
-    setWorkflowKind: 'setWorkflowKind',
-    switchWorkflowKind: 'switchWorkflowKind',
-    saveBidAnalysisConfig: 'saveBidAnalysisConfig',
-    saveOutlineConfig: 'saveOutlineConfig',
-    saveOutline: 'saveOutline',
-    saveGlobalFacts: 'saveGlobalFacts',
-    saveContentGenerationOptions: 'saveContentGenerationOptions',
-    saveChapterContent: 'saveChapterContent',
-    clear: 'clearTechnicalPlan',
-    checkBidSections: 'checkBidSections',
-    selectBidSection: 'selectBidSection',
-  }),
+function setWorkspaceContextResolver(nextResolver) {
+  const oldResolver = workspaceContextResolver;
+  workspaceContextResolver = nextResolver;
+  return oldResolver;
+}
 
-  knowledgeBase: buildStoreDispatcher('knowledgeBaseStore', {
-    getMigrationStatus: 'getMigrationStatus',
-    migrateLegacy: 'migrateLegacy',
-    renameFolder: 'renameFolder',
-    deleteFolder: 'deleteFolder',
-    deleteDocument: 'deleteDocument',
-    moveDocument: 'moveDocument',
-    retryDocument: 'recoverInterruptedDocuments',
-    readMarkdown: 'readMarkdown',
-    readItems: 'readItems',
-    readAnalysis: 'readAnalysis',
-  }),
-
-  duplicateCheck: buildStoreDispatcher('duplicateCheckStore', {
-    loadState: 'loadDuplicateCheck',
-    saveFiles: 'saveFiles',
-    saveUiState: 'saveUiState',
-    updateState: 'updateDuplicateCheck',
-    clear: 'clearDuplicateCheck',
-  }),
-
-  rejectionCheck: buildStoreDispatcher('rejectionCheckStore', {
-    loadState: 'loadRejectionCheck',
-    removeDocument: 'removeDocument',
-    saveUiState: 'saveUiState',
-    updateState: 'updateRejectionCheck',
-    clear: 'clearRejectionCheck',
-    importTenderFromTechnicalPlan: 'importTenderFromTechnicalPlan',
-  }),
-
-  templates: buildStoreDispatcher('templateStore', {
-    list: 'listTemplates',
-    get: 'getTemplate',
-    create: 'createTemplate',
-    update: 'updateTemplate',
-    delete: 'deleteTemplate',
-  }),
-
-  tasks: {
-    getActiveTasks: (ctx) => ctx.taskService.getActiveTasks(),
-  },
-};
-
+const dispatchers = buildDispatchers(bridgeBindingMetadata);
 const readOnlyDispatchers = createReadOnlyDispatcherRegistry(dispatchers);
 Object.defineProperty(router, '__contractDispatchers', {
   value: readOnlyDispatchers,
+  enumerable: false,
+  configurable: false,
+  writable: false,
+});
+Object.defineProperty(router, '__contractBindingMetadata', {
+  value: bridgeBindingMetadata,
+  enumerable: false,
+  configurable: false,
+  writable: false,
+});
+Object.defineProperty(router, '__setWorkspaceContextResolver', {
+  value: setWorkspaceContextResolver,
   enumerable: false,
   configurable: false,
   writable: false,
@@ -182,12 +255,11 @@ router.post('/bridge', (req, res) => {
     return res.status(500).json(createErrorPayload('BRIDGE_CONTRACT_MISMATCH', '桥接能力配置异常'));
   }
 
-  const workspaceId = req.workspaceId;
-
   let ctx;
   try {
-    ctx = getWorkspaceContext(workspaceId);
+    ctx = workspaceContextResolver(req.workspaceId);
   } catch (err) {
+    console.error('[bridge] getWorkspaceContext 初始化失败', err?.message || String(err));
     return res.status(500).json({ code: 'WORKSPACE_ERROR', message: '工作区初始化失败' });
   }
 

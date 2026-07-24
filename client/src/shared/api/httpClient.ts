@@ -96,21 +96,4 @@ async function uploadMultiple(files: File[]): Promise<{ files: UploadResult[] }>
   return response.json();
 }
 
-// 创建下载令牌并返回下载 URL
-async function createDownloadUrl(filePath: string, fileName?: string): Promise<string> {
-  const response = await fetch('/api/downloads', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filePath, fileName }),
-  });
-
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null);
-    throw new Error(payload?.message || `下载创建失败（HTTP ${response.status}）`);
-  }
-
-  const { downloadId } = await response.json();
-  return `/api/downloads/${downloadId}`;
-}
-
-export const httpClient = { invoke, upload, uploadMultiple, createDownloadUrl };
+export const httpClient = { invoke, upload, uploadMultiple };
