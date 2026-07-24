@@ -29,56 +29,71 @@ function createWorkspaceContext({ workspaceId, dataDir }) {
 
   // 初始化 SQLite（复用 Electron 的 migration 逻辑，不传 app）
   const sqliteDatabase = createSqliteDatabase({ databasePath: paths.databasePath });
+  let agentService;
 
-  // 初始化加密配置
-  const configStore = createEncryptedConfigStore({
-    configPath: path.join(userDir, 'config.enc.json'),
-  });
+  try {
+    // 初始化加密配置
+    const configStore = createEncryptedConfigStore({
+      configPath: path.join(userDir, 'config.enc.json'),
+    });
 
-  // 初始化 Stores（传 workspaceRoot，不传 app）
-  const technicalPlanStore = createTechnicalPlanStore({ db: sqliteDatabase.db, workspaceRoot });
-  const knowledgeBaseStore = createKnowledgeBaseStore({ db: sqliteDatabase.db, workspaceRoot });
-  const duplicateCheckStore = createDuplicateCheckStore({ db: sqliteDatabase.db, workspaceRoot });
-  const rejectionCheckStore = createRejectionCheckStore({ db: sqliteDatabase.db, workspaceRoot, technicalPlanStore });
-  const templateStore = createTemplateStore({ db: sqliteDatabase.db });
+    // 初始化 Stores（传 workspaceRoot，不传 app）
+    const technicalPlanStore = createTechnicalPlanStore({ db: sqliteDatabase.db, workspaceRoot });
+    const knowledgeBaseStore = createKnowledgeBaseStore({ db: sqliteDatabase.db, workspaceRoot });
+    const duplicateCheckStore = createDuplicateCheckStore({ db: sqliteDatabase.db, workspaceRoot });
+    const rejectionCheckStore = createRejectionCheckStore({ db: sqliteDatabase.db, workspaceRoot, technicalPlanStore });
+    const templateStore = createTemplateStore({ db: sqliteDatabase.db });
 
-  // 初始化 Web 端占位服务（真实 AI/Agent 留到后续 Sprint）
-  const aiService = createWebAiServiceStub();
-  const agentService = createWebAgentServiceStub();
-  const knowledgeBaseService = createWebKnowledgeBaseServiceStub({ knowledgeBaseStore });
-  const duplicateCheckService = createWebDuplicateCheckServiceStub({ duplicateCheckStore });
+    // 初始化 Web 端占位服务（真实 AI/Agent 留到后续 Sprint）
+    const aiService = createWebAiServiceStub();
+    agentService = createWebAgentServiceStub();
+    const knowledgeBaseService = createWebKnowledgeBaseServiceStub({ knowledgeBaseStore });
+    const duplicateCheckService = createWebDuplicateCheckServiceStub({ duplicateCheckStore });
 
-  // 初始化 taskService（复用 Electron 逻辑，per-workspace 独立实例）
-  const taskService = createTaskService({
-    aiService,
-    agentService,
-    technicalPlanStore,
-    rejectionCheckStore,
-    duplicateCheckStore,
-    knowledgeBaseService,
-    duplicateCheckService,
-  });
-
-  return {
-    workspaceId,
-    workspaceRoot,
-    paths,
-    db: sqliteDatabase.db,
-    sqliteDatabase,
-    configStore,
-    taskService,
-    stores: {
+    // 初始化 taskService（复用 Electron 逻辑，per-workspace 独立实例）
+    const taskService = createTaskService({
+      aiService,
+      agentService,
       technicalPlanStore,
-      knowledgeBaseStore,
-      duplicateCheckStore,
       rejectionCheckStore,
-      templateStore,
-    },
-    close() {
-      agentService.close?.();
+      duplicateCheckStore,
+      knowledgeBaseService,
+      duplicateCheckService,
+    });
+
+    return {
+      workspaceId,
+      workspaceRoot,
+      paths,
+      db: sqliteDatabase.db,
+      sqliteDatabase,
+      configStore,
+      taskService,
+      stores: {
+        technicalPlanStore,
+        knowledgeBaseStore,
+        duplicateCheckStore,
+        rejectionCheckStore,
+        templateStore,
+      },
+      close() {
+        agentService.close?.();
+        sqliteDatabase.close();
+      },
+    };
+  } catch (error) {
+    try {
+      agentService?.close?.();
+    } catch {
+      // 保留装配阶段的原始异常。
+    }
+    try {
       sqliteDatabase.close();
-    },
-  };
+    } catch {
+      // 保留装配阶段的原始异常。
+    }
+    throw error;
+  }
 }
 
 module.exports = { createWorkspaceContext };

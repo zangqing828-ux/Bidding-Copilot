@@ -1343,7 +1343,12 @@ function applyMigrations(db, databasePath, onStatus) {
   ensureWorkspaceSchemaHealth(db, schemaVersion, onStatus);
 }
 
-function createSqliteDatabase({ workspaceRoot, databasePath: explicitDatabasePath, onStatus } = {}) {
+function createSqliteDatabase({
+  workspaceRoot,
+  databasePath: explicitDatabasePath,
+  onStatus,
+  DatabaseClass = Database,
+} = {}) {
   const databasePath = explicitDatabasePath
     || (workspaceRoot
       ? require('./workspacePaths.cjs').resolveWorkspacePaths(workspaceRoot).databasePath
@@ -1354,12 +1359,23 @@ function createSqliteDatabase({ workspaceRoot, databasePath: explicitDatabasePat
   }
 
   fs.mkdirSync(path.dirname(databasePath), { recursive: true });
-  const db = new Database(databasePath);
+  const db = new DatabaseClass(databasePath);
 
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  db.pragma('busy_timeout = 5000');
-  applyMigrations(db, databasePath, onStatus);
+  try {
+    db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
+    db.pragma('busy_timeout = 5000');
+    applyMigrations(db, databasePath, onStatus);
+  } catch (error) {
+    try {
+      if (db.open) {
+        db.close();
+      }
+    } catch {
+      // 初始化错误必须原样抛出。
+    }
+    throw error;
+  }
 
   const close = () => {
     if (db.open) {
