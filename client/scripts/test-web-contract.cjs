@@ -237,6 +237,7 @@ function createErrorFromHttpClientPayloads(payloads, fetchIndexByCall = 0) {
     fetchIndexByCall += 1;
 
     return {
+      ok: response.status >= 200 && response.status < 300,
       status: response.status,
       async json() {
         return response.payload;
@@ -679,6 +680,12 @@ async function runBridgeBehavior(inject, context) {
     if (entry.status === 'pending') {
       pendingEntries.push(manifestKey);
     }
+    if (entry.status === 'removed') {
+      assert(
+        entry.source === 'desktop-only' || entry.source === 'deleted-product',
+        `${manifestKey} removed source 仅允许 desktop-only 或 deleted-product`
+      );
+    }
   }
 
   const bridgeLeaves = collectBridgeLeavesFromAst();
@@ -719,16 +726,16 @@ async function runBridgeBehavior(inject, context) {
         continue;
       }
 
-    if (entry.status === 'removed') {
-      if (entry.source === 'desktop-only') {
-        assert(Array.isArray(entry.errors) && entry.errors.includes('WEB_BRIDGE_DESKTOP_ONLY'), `${manifestKey} desktop-only errors 应包含 WEB_BRIDGE_DESKTOP_ONLY`);
-        continue;
-      }
-      if (entry.source === 'deleted-product') {
-        assert(Array.isArray(entry.errors) && entry.errors.includes('WEB_BRIDGE_REMOVED'), `${manifestKey} deleted-product errors 应包含 WEB_BRIDGE_REMOVED`);
-        continue;
-      }
-      assert(false, `${manifestKey} removed source 非法：${entry.source}`);
+      if (entry.status === 'removed') {
+        if (entry.source === 'desktop-only') {
+          assert(Array.isArray(entry.errors) && entry.errors.includes('WEB_BRIDGE_DESKTOP_ONLY'), `${manifestKey} desktop-only errors 应包含 WEB_BRIDGE_DESKTOP_ONLY`);
+          continue;
+        }
+        if (entry.source === 'deleted-product') {
+          assert(Array.isArray(entry.errors) && entry.errors.includes('WEB_BRIDGE_REMOVED'), `${manifestKey} deleted-product errors 应包含 WEB_BRIDGE_REMOVED`);
+          continue;
+        }
+        assert(false, `${manifestKey} removed source 非法：${entry.source}`);
       }
     }
 
@@ -1183,9 +1190,13 @@ async function closeServer() {
         const workspaceContext = originalCreateWorkspaceContext(...args);
         const options = args[0] || {};
         if (options.workspaceId === 'contract-close-warning') {
+          const originalClose = typeof workspaceContext.close === 'function' ? workspaceContext.close.bind(workspaceContext) : undefined;
           return {
             ...workspaceContext,
             close() {
+              if (originalClose) {
+                originalClose();
+              }
               throw new Error('contract-close-warning');
             },
           };
@@ -1249,8 +1260,7 @@ async function closeServer() {
         } finally {
           warnCollector.restore();
         }
-        const simulateCloseWarning = process.env.WEB_CONTRACT_SIMULATE_CLOSE_WARNING === '1';
-        if (warnCollector.observed.length > 0 || simulateCloseWarning) {
+        if (warnCollector.observed.length > 0) {
           result.strictCleanupFailure = true;
           result.failedCount = (result.failedCount || 0) + 1;
           failed.push('cleanup workspace 失败');
@@ -1261,13 +1271,6 @@ async function closeServer() {
       result.failedCount = (result.failedCount || 0) + 1;
       failed.push('cleanup workspace 失败');
       result.strictCleanupFailure = true;
-    }
-
-    if (process.env.WEB_CONTRACT_SIMULATE_CLOSE_WARNING === '1' && !failed.some((item) => item === 'cleanup workspace 失败')) {
-      result.strictCleanupFailure = true;
-      result.failedCount = (result.failedCount || 0) + 1;
-      failed.push('cleanup workspace 失败');
-      console.error('cleanup workspace 失败');
     }
 
     try {
@@ -1283,9 +1286,9 @@ async function closeServer() {
   }
 
   if (result.failedCount > 0) {
-      if (result.isStrictPendingOnlyFailure && !result.strictCleanupFailure) {
-        console.log('CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE');
-      }
+    if (result.isStrictPendingOnlyFailure && !result.strictCleanupFailure) {
+      console.log('CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE');
+    }
     process.exitCode = 1;
     return;
   }
