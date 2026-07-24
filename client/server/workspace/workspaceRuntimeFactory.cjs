@@ -1,9 +1,9 @@
 const { createTemplateStore } = require('../../core/templateStore.cjs');
 const { createEncryptedConfigStore } = require('../config/encryptedConfigStore.cjs');
-const { createTechnicalPlanStore } = require('../../electron/services/technicalPlanStore.cjs');
-const { createKnowledgeBaseStore } = require('../../electron/services/knowledgeBaseStore.cjs');
-const { createDuplicateCheckStore } = require('../../electron/services/duplicateCheckStore.cjs');
-const { createRejectionCheckStore } = require('../../electron/services/rejectionCheckStore.cjs');
+const { createTechnicalPlanStore } = require('../../core/stores/technicalPlanStore.cjs');
+const { createKnowledgeBaseStore } = require('../../core/stores/knowledgeBaseStore.cjs');
+const { createDuplicateCheckStore } = require('../../core/stores/duplicateCheckStore.cjs');
+const { createRejectionCheckStore } = require('../../core/stores/rejectionCheckStore.cjs');
 const { createTaskEventPort } = require('../../core/taskEventPort.cjs');
 const { assertPort } = require('../../core/ports.cjs');
 
