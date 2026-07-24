@@ -119,6 +119,7 @@ jobs:
         working-directory: .
         run: |
           docker run -d --name web-test -p 3000:3000 \
+            -e NODE_ENV=development \
             -e OAUTH_MODE=mock \
             -e SESSION_SECRET=ci-test-secret \
             -e CONFIG_ENCRYPTION_KEY=ci-test-key \
