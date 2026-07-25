@@ -90,6 +90,24 @@ function maskKey(key) {
   return `****${key.slice(-4)}`;
 }
 
+function cloneConfig(config) {
+  return JSON.parse(JSON.stringify(config || {}));
+}
+
+function ensureAnalyticsIdentity(config) {
+  const next = { ...config };
+  let changed = false;
+  if (!next.analytics_client_id) {
+    next.analytics_client_id = crypto.randomUUID();
+    changed = true;
+  }
+  if (!next.analytics_created_at) {
+    next.analytics_created_at = new Date().toISOString();
+    changed = true;
+  }
+  return { config: next, changed };
+}
+
 function createEncryptedConfigStore({ configPath }) {
   function readRaw() {
     if (!fs.existsSync(configPath)) {
@@ -106,12 +124,21 @@ function createEncryptedConfigStore({ configPath }) {
     fs.renameSync(tmp, configPath);
   }
 
+  function writeEncryptedConfig(config) {
+    const persisted = cloneConfig(config);
+    const sensitivePaths = getSensitiveFieldPaths(persisted);
+    for (const fieldPath of sensitivePaths) {
+      const value = getValueByPath(persisted, fieldPath);
+      if (value && typeof value === 'string' && !value.startsWith('enc:v1:')) {
+        setValueByPath(persisted, fieldPath, encrypt(value));
+      }
+    }
+    writeRaw(persisted);
+  }
+
   function loadDecrypted() {
     const raw = readRaw();
-    if (!raw) {
-      return normalizeConfig({});
-    }
-    const config = normalizeConfig(raw);
+    const config = normalizeConfig(raw || {});
     // 解密敏感字段
     const sensitivePaths = getSensitiveFieldPaths(config);
     for (const fieldPath of sensitivePaths) {
@@ -120,7 +147,11 @@ function createEncryptedConfigStore({ configPath }) {
         setValueByPath(config, fieldPath, decrypt(value));
       }
     }
-    return config;
+    const identity = ensureAnalyticsIdentity(config);
+    if (!raw || identity.changed) {
+      writeEncryptedConfig(identity.config);
+    }
+    return identity.config;
   }
 
   function load() {
@@ -139,7 +170,26 @@ function createEncryptedConfigStore({ configPath }) {
 
   function save(newConfig) {
     const current = loadDecrypted();
-    const merged = normalizeConfig({ ...current, ...newConfig });
+    const incoming = newConfig && typeof newConfig === 'object' ? newConfig : {};
+    const merged = normalizeConfig({
+      ...current,
+      ...incoming,
+      text_model_profiles: {
+        ...current.text_model_profiles,
+        ...(incoming.text_model_profiles || {}),
+      },
+      image_model_profiles: {
+        ...current.image_model_profiles,
+        ...(incoming.image_model_profiles || {}),
+      },
+      agent_mode_scenarios: {
+        ...current.agent_mode_scenarios,
+        ...(incoming.agent_mode_scenarios || {}),
+      },
+      // Analytics 身份由服务端生成并保持稳定，不能被浏览器回传值覆盖。
+      analytics_client_id: current.analytics_client_id,
+      analytics_created_at: current.analytics_created_at,
+    });
     // 加密敏感字段
     const sensitivePaths = getSensitiveFieldPaths(merged);
     for (const fieldPath of sensitivePaths) {
@@ -154,7 +204,7 @@ function createEncryptedConfigStore({ configPath }) {
         }
       }
     }
-    writeRaw(merged);
+    writeEncryptedConfig(merged);
     return load();
   }
 
