@@ -78,44 +78,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Rebuild better-sqlite3 for Node.js
+        run: npm rebuild better-sqlite3 --runtime=node
+
       - name: Check CommonJS syntax
-        run: find electron scripts server -name '*.cjs' -print0 | xargs -0 -n1 node --check
+        run: find electron scripts server core shared -name '*.cjs' -print0 | xargs -0 -n1 node --check
 
       - name: Build renderer
         run: npm run build
 
-      - name: Run Web Auth tests
-        run: |
-          npm rebuild better-sqlite3 --runtime=node
-          npm run test:web-auth
-
-      - name: Run Web Workspace tests
-        run: |
-          npm rebuild better-sqlite3 --runtime=node
-          npm run test:web-workspace
-        env:
-          CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
-
-      - name: Run AI Scheduler tests
-        run: npm run test:ai-scheduler
-
-      - name: Run Web AI Runtime tests
-        run: npm run test:web-ai-runtime
-        env:
-          CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
-
-      - name: Run Web Tasks tests
-        run: npm run test:web-tasks
-        env:
-          CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
-
-      - name: Run Web Files tests
-        run: npm run test:web-files
-        env:
-          CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
-
-      - name: Run Web Export tests
-        run: npm run test:web-export
+      - name: Run complete Web gate
+        run: npm run test:web
         env:
           CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
 

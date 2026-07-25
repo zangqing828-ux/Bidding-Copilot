@@ -34,10 +34,13 @@
     "test:web-contract": "node scripts/test-web-contract.cjs",
     "test:web-contract:strict-guard": "node scripts/test-web-contract-strict-guard.cjs",
     "test:ai-scheduler": "node scripts/test-ai-scheduler.cjs",
+    "test:web-endpoint-policy": "node scripts/test-web-endpoint-policy.cjs",
     "test:web-ai-runtime": "node scripts/test-web-ai-runtime.cjs",
+    "test:web-analytics-identity": "node scripts/test-web-analytics-identity.cjs",
     "test:portable-core": "node scripts/test-portable-core.cjs",
     "test:workspace-lifecycle": "node scripts/test-workspace-lifecycle.cjs",
-    "test:web": "npm run test:portable-core && npm run test:ai-scheduler && npm run test:web-ai-runtime && npm run test:workspace-lifecycle && npm run test:web-auth && npm run test:web-workspace && npm run test:web-contract && npm run test:web-contract:strict-guard && npm run test:web-tasks && npm run test:web-files && npm run test:web-export"
+    "test:web-workspace-registry": "node scripts/test-web-workspace-registry.cjs",
+    "test:web": "npm run test:portable-core && npm run test:ai-scheduler && npm run test:web-endpoint-policy && npm run test:web-ai-runtime && npm run test:web-analytics-identity && npm run test:workspace-lifecycle && npm run test:web-workspace-registry && npm run test:web-auth && npm run test:web-workspace && npm run test:web-contract && npm run test:web-contract:strict-guard && npm run test:web-tasks && npm run test:web-files && npm run test:web-export"
   },
   "build": {
     "appId": "com.yibiao.openbidkit",
