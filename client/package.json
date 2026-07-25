@@ -31,6 +31,7 @@
     "test:web-tasks": "node scripts/test-web-tasks.cjs",
     "test:web-files": "node scripts/test-web-files.cjs",
     "test:web-export": "node scripts/test-web-export.cjs",
+    "test:web-graceful-shutdown": "node scripts/test-web-server-graceful-shutdown.cjs",
     "test:web-contract": "node scripts/test-web-contract.cjs",
     "test:web-contract:strict-guard": "node scripts/test-web-contract-strict-guard.cjs",
     "test:ai-scheduler": "node scripts/test-ai-scheduler.cjs",
