@@ -70,7 +70,21 @@ function runTests() {
     const store = createEncryptedConfigStore({ configPath });
 
     // 保存配置（含 API Key）
-    store.save({ api_key: 'sk-secret-key-12345', model_name: 'gpt-4' });
+    const saveResult = store.save({ api_key: 'sk-secret-key-12345', model_name: 'gpt-4' });
+    assert(saveResult?.success === true, '加密配置 save 返回 success');
+    assert(saveResult?.message === '配置已保存', '加密配置 save message 正确');
+    assert(saveResult?.config_path === undefined, 'Web 配置 save 不回传服务端路径');
+
+    const baselineClientId = store.loadDecrypted().analytics_client_id;
+    const legacyId = 'legacy-web-save-test-id';
+    const legacySaveResult = store.save({
+      ...store.load(),
+      analytics_client_id: legacyId,
+    });
+    const afterLegacySave = store.loadDecrypted();
+    assert(legacySaveResult?.success === true, 'legacy id 覆盖尝试 save 仍返回 success');
+    assert(afterLegacySave.analytics_client_id === baselineClientId, 'server 端 identity 不被 legacy id 覆盖');
+    assert(afterLegacySave.analytics_client_id !== legacyId, 'legacy id 未写入文件');
 
     // load 返回脱敏
     const masked = store.load();

@@ -205,7 +205,10 @@ function createEncryptedConfigStore({ configPath }) {
       }
     }
     writeEncryptedConfig(merged);
-    return load();
+    return {
+      success: true,
+      message: '配置已保存',
+    };
   }
 
   return { load, loadDecrypted, save };

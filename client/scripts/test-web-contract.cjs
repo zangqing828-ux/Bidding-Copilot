@@ -593,7 +593,7 @@ function parseLoginState(authLocation, setCookies) {
   return { stateValue, stateCookieValue };
 }
 
-async function createSessionCookie(inject) {
+async function createSessionCookie(inject, userEmail = 'contract@test.com', userName = 'ContractTester') {
   const loginRes = await inject({ method: 'GET', url: '/api/auth/login' });
   assert(loginRes.statusCode === 302, 'auth/login 返回 302');
 
@@ -605,7 +605,7 @@ async function createSessionCookie(inject) {
       'content-type': 'application/x-www-form-urlencoded',
       cookie: `yibiao_oauth_state=${stateCookieValue}`,
     },
-    payload: `email=contract@test.com&name=ContractTester&state=${stateValue}`,
+    payload: `email=${encodeURIComponent(userEmail)}&name=${encodeURIComponent(userName)}&state=${stateValue}`,
   });
   assert(callbackRes.statusCode === 302, 'mock-callback 返回 302');
 
@@ -847,13 +847,14 @@ async function runBridgeBehavior(inject, context) {
   }
 
   const session = await createSessionCookie(inject);
-  const statusPayload = async (body) => {
+  const statusPayload = async (body, sessionCookie) => {
+    const cookie = sessionCookie || session;
     const response = await inject({
       method: 'POST',
       url: '/api/bridge',
       headers: {
         'content-type': 'application/json',
-        cookie: session,
+        ...(cookie ? { cookie } : {}),
       },
       payload: body,
     });
@@ -1089,6 +1090,42 @@ async function runBridgeBehavior(inject, context) {
 
   const implementedRequiresWorkspace = await statusPayload({ namespace: 'tasks', method: 'getActiveTasks', args: [] });
   assert(implementedRequiresWorkspace.response.statusCode === 200, 'implemented 调用可正常返回');
+
+  {
+    const sessionA = await createSessionCookie(inject, 'legacy-a@example.com', 'LegacyA');
+    const sessionB = await createSessionCookie(inject, 'legacy-b@example.com', 'LegacyB');
+
+    const accountAInitial = await statusPayload({ namespace: 'config', method: 'load', args: [] }, sessionA);
+    assert(accountAInitial.response.statusCode === 200, 'config.load_A 返回 200');
+    assert(accountAInitial.payload.code === 'OK', 'config.load_A code 为 OK');
+    const accountAClientId = accountAInitial.payload?.data?.analytics_client_id || '';
+    assert(accountAClientId, 'config.load_A 返回 analytics_client_id');
+
+    const legacyId = 'legacy-id-from-browser-side';
+    const accountASave = await statusPayload({
+      namespace: 'config',
+      method: 'save',
+      args: [{
+        ...accountAInitial.payload?.data,
+        analytics_client_id: legacyId,
+      }],
+    }, sessionA);
+    const accountASaveData = accountASave.payload?.data || {};
+    assert(accountASave.response.statusCode === 200, 'config.save_A 返回 200');
+    assert(accountASaveData.success === true, 'config.save_A success 为 true');
+    assert(accountASaveData.message === '配置已保存', 'config.save_A message 为配置已保存');
+    assert(accountASaveData.config_path === undefined, 'config.save_A 不回传服务端路径');
+
+    const accountALoadAfterSave = await statusPayload({ namespace: 'config', method: 'load', args: [] }, sessionA);
+    const accountALoadedIdAfterSave = accountALoadAfterSave.payload?.data?.analytics_client_id || '';
+    assert(accountALoadedIdAfterSave === accountAClientId, 'save legacy id 后 load_A 仍为原账号 analytics_client_id');
+    assert(accountALoadedIdAfterSave !== legacyId, 'legacy id 未覆盖服务端 analytics_client_id');
+
+    const accountBLoad = await statusPayload({ namespace: 'config', method: 'load', args: [] }, sessionB);
+    const accountBClientId = accountBLoad.payload?.data?.analytics_client_id || '';
+    assert(accountBLoad.response.statusCode === 200, 'config.load_B 返回 200');
+    assert(accountBClientId && accountBClientId !== accountAClientId, '两个账号读取的 analytics_client_id 不同');
+  }
 
   const menuApiText = collectStringLiterals(readSource('src/app/menuConfig.ts'));
   const routerText = collectStringLiterals(readSource('src/app/AppRouter.tsx'));

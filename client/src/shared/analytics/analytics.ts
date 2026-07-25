@@ -104,8 +104,11 @@ async function migrateLegacyClientId(config: ClientConfig) {
   try {
     const result = await window.yibiao?.config.save(migratedConfig);
     if (result?.success) {
-      removeLegacyClientId();
-      return migratedConfig;
+      const reloadedConfig = await window.yibiao?.config.load();
+      if (reloadedConfig && reloadedConfig.analytics_client_id) {
+        removeLegacyClientId();
+        return reloadedConfig;
+      }
     }
   } catch {
     // 保存失败时保留旧 localStorage，后续启动继续尝试迁移。
@@ -114,7 +117,7 @@ async function migrateLegacyClientId(config: ClientConfig) {
   return migratedConfig;
 }
 
-function getAnalyticsIdentity() {
+export function getAnalyticsIdentity() {
   if (!identityPromise) {
     identityPromise = window.yibiao?.config.load()
       .then((config) => migrateLegacyClientId(config))
