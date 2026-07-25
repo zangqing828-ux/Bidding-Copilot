@@ -94,6 +94,63 @@ function buildCloseError(errors) {
   );
 }
 
+function countActiveTasks(value) {
+  if (Array.isArray(value)) {
+    return value.length;
+  }
+  if (Number.isFinite(Number(value))) {
+    return Math.max(0, Number(value));
+  }
+  if (value && typeof value === 'object') {
+    return Object.keys(value).length;
+  }
+  return 0;
+}
+
+function createActivitySnapshot(runtime) {
+  function readTaskCount() {
+    if (!runtime.taskService || typeof runtime.taskService.getActiveTasks !== 'function') {
+      return 0;
+    }
+    return countActiveTasks(runtime.taskService.getActiveTasks());
+  }
+
+  function readQueueStatus(methodName) {
+    if (!runtime.aiService || typeof runtime.aiService[methodName] !== 'function') {
+      return { active: 0, queued: 0 };
+    }
+    const status = runtime.aiService[methodName]();
+    return {
+      active: Math.max(0, Number(status?.active) || 0),
+      queued: Math.max(0, Number(status?.queued) || 0),
+    };
+  }
+
+  try {
+    const activeTaskCount = readTaskCount();
+    const text = readQueueStatus('getTextQueueStatus');
+    const image = readQueueStatus('getImageQueueStatus');
+    const aiActiveCount = text.active + image.active;
+    const aiQueuedCount = text.queued + image.queued;
+    return {
+      activeTaskCount,
+      aiActiveCount,
+      aiQueuedCount,
+      active: activeTaskCount > 0 || aiActiveCount > 0 || aiQueuedCount > 0,
+      unknown: false,
+    };
+  } catch {
+    // 无法确认资源状态时保守地阻止 TTL 回收，等待下一次检查。
+    return {
+      activeTaskCount: 0,
+      aiActiveCount: 0,
+      aiQueuedCount: 0,
+      active: true,
+      unknown: true,
+    };
+  }
+}
+
 function createWorkspaceContext({
   workspaceId,
   dataDir,
@@ -154,6 +211,9 @@ function createWorkspaceContext({
     stores: runtime.stores,
     taskService: runtime.taskService,
     taskEvents: runtime.taskEvents,
+    getActivitySnapshot() {
+      return createActivitySnapshot(runtime);
+    },
     close,
   };
 }

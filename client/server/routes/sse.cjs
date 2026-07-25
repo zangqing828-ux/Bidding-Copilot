@@ -3,15 +3,17 @@
 // callback 收到事件时 res.write SSE data。连接关闭时 unsubscribe。
 // taskEvents.subscribe 自动重放当前 activeTasks 快照，支持页面刷新恢复。
 const express = require('express');
-const { getWorkspaceContext } = require('../workspace/workspaceRegistry.cjs');
+const { acquireWorkspaceContext } = require('../workspace/workspaceRegistry.cjs');
 
 const router = express.Router();
 
 router.get('/tasks/events', (req, res) => {
   const workspaceId = req.workspaceId;
+  let lease;
   let ctx;
   try {
-    ctx = getWorkspaceContext(workspaceId);
+    lease = acquireWorkspaceContext(workspaceId);
+    ctx = lease.context;
   } catch {
     return res.status(500).json({ code: 'WORKSPACE_ERROR', message: '工作区初始化失败' });
   }
@@ -26,13 +28,19 @@ router.get('/tasks/events', (req, res) => {
   res.write('\n');
 
   // 订阅 taskEvents 事件
-  const unsubscribe = ctx.taskEvents.subscribe((event) => {
-    try {
-      res.write(`data: ${JSON.stringify(event)}\n\n`);
-    } catch {
-      // 连接已断开，忽略写入错误
-    }
-  });
+  let unsubscribe = () => {};
+  try {
+    unsubscribe = ctx.taskEvents.subscribe((event) => {
+      try {
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      } catch {
+        // 连接已断开，忽略写入错误
+      }
+    });
+  } catch {
+    lease.release();
+    return res.end();
+  }
 
   // 心跳，防止代理超时断开
   const heartbeat = setInterval(() => {
@@ -43,15 +51,23 @@ router.get('/tasks/events', (req, res) => {
     }
   }, 30000);
 
-  // 客户端断开时清理
-  req.on('close', () => {
+  // 客户端断开时清理。req/res 任一 close 事件触发即可，release 本身幂等。
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) {
+      return;
+    }
+    cleaned = true;
     clearInterval(heartbeat);
     try {
       unsubscribe();
     } catch (error) {
       console.warn('SSE: 断开连接时取消任务事件订阅失败', error?.message || error);
     }
-  });
+    lease.release();
+  };
+  req.on('close', cleanup);
+  res.on('close', cleanup);
 });
 
 module.exports = router;
