@@ -830,7 +830,7 @@ async function runBridgeBehavior(inject, context) {
     }
   } finally {
     if (workspaceContext && workspaceContext.close) {
-      workspaceContext.close();
+      await workspaceContext.close();
     }
   }
 
@@ -1230,17 +1230,20 @@ async function closeServer() {
           const originalClose = typeof workspaceContext.close === 'function' ? workspaceContext.close.bind(workspaceContext) : undefined;
           return {
             ...workspaceContext,
-            close() {
-              if (originalClose) {
-                originalClose();
+            async close() {
+              try {
+                if (originalClose) {
+                  await originalClose();
+                }
+              } finally {
+                throw new Error('contract-close-warning');
               }
-              throw new Error('contract-close-warning');
             },
           };
         }
         return {
           ...workspaceContext,
-          close() {
+          async close() {
             return workspaceContext.close();
           },
         };
@@ -1293,7 +1296,7 @@ async function closeServer() {
       if (typeof closeWorkspace === 'function') {
         const warnCollector = collectWorkspaceCloseWarnings();
         try {
-          closeWorkspace();
+          await closeWorkspace();
         } finally {
           warnCollector.restore();
         }

@@ -254,12 +254,47 @@ async function main() {
         assert.equal(capture.fetchOptions?.dispatcher, dispatcher);
         assert.equal(capture.fetchOptions?.redirect, 'manual');
       } finally {
-        runtimeWithPolicy.close();
+        await runtimeWithPolicy.close();
         assert.equal(capture.policyClosed, true, 'runtime.close 应触发 policy.close');
       }
     });
 
-    await run('runtime.close 吞并异步 policy.close 失败且保持幂等', async () => {
+    await run('runtime.close resolve 时返回同一 in-flight Promise 并保持幂等', async () => {
+      let closeCalls = 0;
+      let resolveClose;
+      const policyClose = new Promise((resolve) => {
+        resolveClose = resolve;
+      });
+      const runtimeWithPendingPolicy = createAiRuntime({
+        workspaceKey: 'pending-policy-close-runtime',
+        loadConfig: () => createConfig(mock.baseUrl),
+        sharedCoordinator: createAiFairCoordinator(),
+        endpointPolicy: {
+          assertAllowed: async () => true,
+          close() {
+            closeCalls += 1;
+            return policyClose;
+          },
+        },
+      });
+      try {
+        const first = runtimeWithPendingPolicy.close();
+        const second = runtimeWithPendingPolicy.close();
+        assert(first instanceof Promise);
+        assert.equal(first, second, '并发 close 应返回同一 in-flight Promise');
+        assert.equal(closeCalls, 0, '关闭处理器在返回 Promise 后异步启动');
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(closeCalls, 1);
+        resolveClose();
+        await first;
+        assert.equal(runtimeWithPendingPolicy.close(), first, '成功后 close 仍保持幂等');
+      } finally {
+        resolveClose?.();
+        await runtimeWithPendingPolicy.close();
+      }
+    });
+
+    await run('runtime.close 透传异步 policy.close 失败且不会产生未处理拒绝', async () => {
       let closeCalls = 0;
       const unhandledRejections = [];
       const onUnhandledRejection = (error) => unhandledRejections.push(error);
@@ -277,10 +312,12 @@ async function main() {
       });
       process.once('unhandledRejection', onUnhandledRejection);
       try {
-        runtimeWithRejectingPolicy.close();
-        runtimeWithRejectingPolicy.close();
-        await new Promise((resolve) => setImmediate(resolve));
+        const first = runtimeWithRejectingPolicy.close();
+        const second = runtimeWithRejectingPolicy.close();
+        assert.equal(first, second, '失败中的重复 close 应共享同一 Promise');
+        await assert.rejects(first, /policy close failed/);
         assert.equal(closeCalls, 1);
+        await new Promise((resolve) => setImmediate(resolve));
         assert.deepEqual(unhandledRejections, []);
       } finally {
         process.removeListener('unhandledRejection', onUnhandledRejection);
@@ -404,10 +441,10 @@ async function main() {
           assertNoSecret(errorResult, 'provider 切换错误');
           assert(!JSON.stringify(errorResult).includes(PROVIDER_B_KEY), '错误不得包含目标 provider Key');
         } finally {
-          errorRuntime.close();
+          await errorRuntime.close();
         }
       } finally {
-        providerRuntime.close();
+        await providerRuntime.close();
       }
     });
 
@@ -438,7 +475,7 @@ async function main() {
           (error) => error.code === 'AI_CONFIG_INVALID' && error.message === '请先配置文本模型名称',
         );
       } finally {
-        emptyModelRuntime.close();
+        await emptyModelRuntime.close();
       }
     });
 
@@ -461,8 +498,8 @@ async function main() {
         assert.equal(first.getTextTokenStats().request_count, 0);
         assert.equal(second.getTextTokenStats().request_count, 1);
       } finally {
-        first.close();
-        second.close();
+        await first.close();
+        await second.close();
       }
     });
 
@@ -487,7 +524,7 @@ async function main() {
           assert.equal(await retryRuntime.chat({ messages: [{ role: 'user', content: 'retry' }] }), 'retry success');
           assert.equal(attempts, 3);
         } finally {
-          retryRuntime.close();
+          await retryRuntime.close();
         }
       }
 
@@ -507,7 +544,7 @@ async function main() {
         );
         assert.equal(badRequestAttempts, 1);
       } finally {
-        badRequestRuntime.close();
+        await badRequestRuntime.close();
       }
     });
 
@@ -532,7 +569,7 @@ async function main() {
         assertNoSecret(error.message, 'timeout 错误');
         throw error;
       } finally {
-        timeoutRuntime.close();
+        await timeoutRuntime.close();
       }
     });
 
@@ -562,7 +599,7 @@ async function main() {
         assertNoSecret(payloads[0], 'analytics payload');
         assert(!JSON.stringify(payloads[0]).includes('secret-workspace-id'), 'analytics 不得包含 workspace ID');
       } finally {
-        analyticsRuntime.close();
+        await analyticsRuntime.close();
       }
     });
 
@@ -584,7 +621,7 @@ async function main() {
         const high = createGlobalAiCoordinator();
         assert.equal(high.getStatus().text.limit, 30);
         assert.equal(high.getStatus().image.limit, 6);
-        high.close();
+        await high.close();
       } finally {
         resetGlobalAiCoordinator();
         if (oldText === undefined) delete process.env.WEB_AI_GLOBAL_TEXT_LIMIT;
@@ -678,8 +715,8 @@ async function main() {
         assert.ok(defaultFetchOptions?.dispatcher, '开发环境未注入 policy 时仍应带安全 dispatcher');
       } finally {
         process.env.NODE_ENV = oldNodeEnv;
-        defaultContext.close();
-        runtimeCoordinator.close();
+        await defaultContext.close();
+        await runtimeCoordinator.close();
         fs.rmSync(defaultTempDir, { recursive: true, force: true });
       }
     });
@@ -693,7 +730,7 @@ async function main() {
       assert.equal(typeof context.aiService.chat, 'function');
       assert.notEqual(context.aiService.chat, undefined);
       const coordinatorStatusBefore = bridgeCoordinator.getStatus();
-      context.close();
+      await context.close();
       assert.deepEqual(bridgeCoordinator.getStatus(), coordinatorStatusBefore);
       const coordinatorProbe = await bridgeCoordinator.enqueue('text', 'post-close-probe', async () => 'alive');
       assert.equal(coordinatorProbe, 'alive');
@@ -751,8 +788,8 @@ async function main() {
         assert.equal(injectedEndpointCalled, false, '生产环境应忽略注入 endpointPolicy');
       } finally {
         process.env.NODE_ENV = oldNodeEnv;
-        productionContext.close();
-        runtimeCoordinator.close();
+        await productionContext.close();
+        await runtimeCoordinator.close();
         if (workspaceTempDir && fs.existsSync(workspaceTempDir)) {
           fs.rmSync(workspaceTempDir, { recursive: true, force: true });
           workspaceTempDir = null;
@@ -774,15 +811,15 @@ async function main() {
   } finally {
     if (context) {
       try {
-        context.close();
+        await context.close();
       } catch {
         // 测试收尾继续释放临时目录。
       }
     }
     if (encryptedRuntime) {
-      encryptedRuntime.close();
+      await encryptedRuntime.close();
     }
-    runtime.close();
+    await runtime.close();
     if (tempDir && fs.existsSync(tempDir)) {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -790,7 +827,7 @@ async function main() {
       fs.rmSync(workspaceTempDir, { recursive: true, force: true });
     }
     if (bridgeCoordinator && typeof bridgeCoordinator.close === 'function') {
-      bridgeCoordinator.close();
+      await bridgeCoordinator.close();
     }
     await mock.close();
     resetGlobalAiCoordinator();

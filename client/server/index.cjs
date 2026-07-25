@@ -22,39 +22,83 @@ function createGracefulShutdownHandler({
   timeoutMs = SHUTDOWN_TIMEOUT_MS,
 }) {
   let shuttingDown = false;
+  let shutdownPromise = null;
+  let forceExitTimer = null;
+  let exitRequested = false;
+
+  function requestExit(code) {
+    if (exitRequested) {
+      return;
+    }
+    exitRequested = true;
+    if (forceExitTimer) {
+      clearTimeout(forceExitTimer);
+      forceExitTimer = null;
+    }
+    exit(code);
+  }
+
+  function closeServer() {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      };
+
+      try {
+        server.close(finish);
+      } catch (error) {
+        finish(error);
+      }
+    });
+  }
 
   function gracefulShutdown(signal) {
+    if (shutdownPromise) {
+      return shutdownPromise;
+    }
     if (shuttingDown) {
-      return;
+      return shutdownPromise;
     }
     shuttingDown = true;
     logger.log(`[web] 收到 ${signal}，开始优雅关闭...`);
 
-    const forceExitTimer = setTimeout(() => {
+    forceExitTimer = setTimeout(() => {
       logger.warn('[web] 优雅关闭超时，强制退出');
-      exit(1);
+      requestExit(1);
     }, timeoutMs);
     forceExitTimer.unref?.();
 
-    server.close(() => {
-      clearTimeout(forceExitTimer);
-
-      logger.log('[web] HTTP 服务已关闭');
+    shutdownPromise = (async () => {
       try {
-        const closeResult = closeAllFn();
+        await closeServer();
+        logger.log('[web] HTTP 服务已关闭');
+
+        const closeResult = await closeAllFn();
         const failed = resolveFailedCount(closeResult);
         if (failed > 0) {
           logger.warn(`[web] workspace 关闭失败，失败数量: ${failed}`);
-          exit(1);
+          requestExit(1);
           return;
         }
+
         logger.log('[web] workspace 连接已释放');
-        exit(0);
+        requestExit(0);
       } catch (error) {
         logger.warn('[web] 关闭 workspace 失败', error?.message || String(error));
-        exit(1);
+        requestExit(1);
       }
-    });
+    })();
+
+    return shutdownPromise;
   }
 
   return gracefulShutdown;
@@ -78,8 +122,8 @@ function startServer() {
     timeoutMs: SHUTDOWN_TIMEOUT_MS,
   });
 
-  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('SIGTERM', () => { void gracefulShutdown('SIGTERM'); });
+  process.on('SIGINT', () => { void gracefulShutdown('SIGINT'); });
 
   return server;
 }

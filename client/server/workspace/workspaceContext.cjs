@@ -70,7 +70,12 @@ function runCloseCandidates(targets) {
     }
 
     try {
-      closeFn.call(target.owner);
+      const result = closeFn.call(target.owner);
+      if (result && typeof result.then === 'function') {
+        void Promise.resolve(result).catch((error) => {
+          console.warn(`[workspace] ${target.label} 异步清理失败`, error?.message || String(error));
+        });
+      }
     } catch (error) {
       errors.push(error);
     }
@@ -190,14 +195,22 @@ function createWorkspaceContext({
     throw closeError || new Error('runtime 关闭能力无效');
   }
 
-  let closed = false;
+  let closePromise = null;
   const close = () => {
-    if (closed) {
-      return;
+    if (closePromise) {
+      return closePromise;
     }
 
-    runtimeCloseCandidate.closeFn.call(runtimeCloseCandidate.owner);
-    closed = true;
+    const attempt = (async () => {
+      await runtimeCloseCandidate.closeFn.call(runtimeCloseCandidate.owner);
+    })();
+    closePromise = attempt;
+    void attempt.catch(() => {
+      if (closePromise === attempt) {
+        closePromise = null;
+      }
+    });
+    return attempt;
   };
 
   return {

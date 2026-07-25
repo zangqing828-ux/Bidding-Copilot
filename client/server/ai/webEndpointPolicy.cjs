@@ -345,7 +345,7 @@ function createWebEndpointPolicy(options = {}) {
     },
   });
   const policyRequestOptions = { dispatcher };
-  let closed = false;
+  let closePromise = null;
 
   async function assertAllowed(endpoint) {
     let parsed;
@@ -386,11 +386,12 @@ function createWebEndpointPolicy(options = {}) {
   }
 
   function close() {
-    if (closed) {
-      return;
+    if (closePromise) {
+      return closePromise;
     }
-    closed = true;
-    return dispatcher.close();
+
+    closePromise = Promise.resolve().then(() => dispatcher.close());
+    return closePromise;
   }
 
   function getConnectLookup() {

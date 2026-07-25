@@ -8,9 +8,9 @@ const {
 const passed = [];
 const failed = [];
 
-function run(name, fn) {
+async function run(name, fn) {
   try {
-    fn();
+    await fn();
     passed.push(name);
     console.log(`  PASS: ${name}`);
   } catch (error) {
@@ -23,15 +23,9 @@ function createLogger() {
   const logs = [];
   return {
     logs,
-    log: (...args) => {
-      logs.push(['log', ...args]);
-    },
-    warn: (...args) => {
-      logs.push(['warn', ...args]);
-    },
-    error: (...args) => {
-      logs.push(['error', ...args]);
-    },
+    log: (...args) => logs.push(['log', ...args]),
+    warn: (...args) => logs.push(['warn', ...args]),
+    error: (...args) => logs.push(['error', ...args]),
   };
 }
 
@@ -39,87 +33,150 @@ function createExitSpy() {
   const calls = [];
   return {
     calls,
-    exit: (code) => {
-      calls.push(code);
-    },
+    exit: (code) => calls.push(code),
   };
 }
 
-function createServer() {
+function createServer({ error = null, delayMs = 0, hang = false } = {}) {
   return {
-    close: (callback) => {
-      callback();
+    close(callback) {
+      if (hang) {
+        return;
+      }
+      if (delayMs > 0) {
+        setTimeout(() => callback(error), delayMs);
+        return;
+      }
+      callback(error);
     },
   };
 }
 
-function runTest() {
-  run('closeAll 成功时记录成功并 exit 0', () => {
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function runTests() {
+  await run('closeAll 异步成功时 await 后 exit 0 且重复信号不双退', async () => {
     const logger = createLogger();
     const exit = createExitSpy();
-
+    let closeCalls = 0;
     const gracefulShutdown = createGracefulShutdownHandler({
-      server: createServer(),
-      closeAllFn: () => ({ closed: 2, failed: 0 }),
+      server: createServer({ delayMs: 2 }),
+      closeAllFn: async () => {
+        closeCalls += 1;
+        await wait(2);
+        return { closed: 2, failed: 0 };
+      },
       logger,
       exit: exit.exit,
-      timeoutMs: 1,
+      timeoutMs: 100,
     });
 
-    gracefulShutdown('SIGTERM');
-
-    assert.equal(exit.calls.length, 1);
-    assert.equal(exit.calls[0], 0);
+    const first = gracefulShutdown('SIGTERM');
+    const second = gracefulShutdown('SIGINT');
+    assert.equal(first, second, '重复信号应共享同一关闭 Promise');
+    await first;
+    assert.equal(closeCalls, 1);
+    assert.deepEqual(exit.calls, [0]);
     assert.equal(logger.logs.some((entry) => entry[1].includes('workspace 连接已释放')), true);
-    assert.equal(
-      logger.logs.some((entry) => entry[0] === 'warn' && /失败数量/.test(entry[1])),
-      false,
-    );
   });
 
-  run('closeAll 返回 failed>0 时记录失败数量并 exit 1', () => {
-    const logger = createLogger();
+  await run('closeAll failed>0 时 exit 1', async () => {
     const exit = createExitSpy();
-
     const gracefulShutdown = createGracefulShutdownHandler({
       server: createServer(),
-      closeAllFn: () => ({ closed: 1, failed: 2, errors: [new Error('a'), new Error('b')] }),
-      logger,
+      closeAllFn: async () => ({ closed: 1, failed: 2, errors: [new Error('a'), new Error('b')] }),
+      logger: createLogger(),
       exit: exit.exit,
-      timeoutMs: 1,
+      timeoutMs: 100,
     });
 
-    gracefulShutdown('SIGINT');
-
-    assert.equal(exit.calls.length, 1);
-    assert.equal(exit.calls[0], 1);
-    assert.equal(
-      logger.logs.some((entry) => {
-        if (entry[0] !== 'warn') {
-          return false;
-        }
-        const message = entry.slice(1).map((part) => String(part)).join('');
-        return /失败数量/.test(message) && /2/.test(message);
-      }),
-      true,
-    );
+    await gracefulShutdown('SIGINT');
+    assert.deepEqual(exit.calls, [1]);
   });
 
-  run('超时仍保持 10s 默认（常量）', () => {
-    assert.equal(SHUTDOWN_TIMEOUT_MS, 10_000);
+  await run('closeAll reject 时 exit 1', async () => {
+    const exit = createExitSpy();
+    const gracefulShutdown = createGracefulShutdownHandler({
+      server: createServer(),
+      closeAllFn: async () => {
+        throw new Error('async close failed');
+      },
+      logger: createLogger(),
+      exit: exit.exit,
+      timeoutMs: 100,
+    });
+
+    await gracefulShutdown('SIGTERM');
+    assert.deepEqual(exit.calls, [1]);
   });
+
+  await run('closeAll 同步 throw 时 exit 1', async () => {
+    const exit = createExitSpy();
+    const gracefulShutdown = createGracefulShutdownHandler({
+      server: createServer(),
+      closeAllFn: () => {
+        throw new Error('sync close failed');
+      },
+      logger: createLogger(),
+      exit: exit.exit,
+      timeoutMs: 100,
+    });
+
+    await gracefulShutdown('SIGTERM');
+    assert.deepEqual(exit.calls, [1]);
+  });
+
+  await run('关闭流程真实挂起超时 exit 1，完成回调不再二次 exit', async () => {
+    const exit = createExitSpy();
+    let resolveCloseAll;
+    const closeAllPromise = new Promise((resolve) => {
+      resolveCloseAll = resolve;
+    });
+    const gracefulShutdown = createGracefulShutdownHandler({
+      server: createServer(),
+      closeAllFn: () => closeAllPromise,
+      logger: createLogger(),
+      exit: exit.exit,
+      timeoutMs: 5,
+    });
+
+    const shutdown = gracefulShutdown('SIGTERM');
+    await wait(20);
+    assert.deepEqual(exit.calls, [1]);
+    resolveCloseAll({ closed: 1, failed: 0 });
+    await shutdown;
+    assert.deepEqual(exit.calls, [1]);
+  });
+
+  await run('HTTP server 关闭 reject 时 exit 1', async () => {
+    const exit = createExitSpy();
+    const gracefulShutdown = createGracefulShutdownHandler({
+      server: createServer({ error: new Error('server close failed') }),
+      closeAllFn: async () => ({ closed: 0, failed: 0 }),
+      logger: createLogger(),
+      exit: exit.exit,
+      timeoutMs: 100,
+    });
+
+    await gracefulShutdown('SIGTERM');
+    assert.deepEqual(exit.calls, [1]);
+  });
+
+  assert.equal(SHUTDOWN_TIMEOUT_MS, 10_000);
 }
 
-runTest();
-
-console.log(`\n=== Web graceful shutdown 测试结果 ===`);
-console.log(`通过: ${passed.length}`);
-console.log(`失败: ${failed.length}`);
-
-if (failed.length > 0) {
-  console.log('\n失败项:');
-  failed.forEach((item) => {
-    console.log(`  - ${item}`);
-  });
+runTests().then(() => {
+  console.log(`\n=== Web graceful shutdown 测试结果 ===`);
+  console.log(`通过: ${passed.length}`);
+  console.log(`失败: ${failed.length}`);
+  if (failed.length > 0) {
+    console.log('\n失败项:');
+    failed.forEach((item) => console.log(`  - ${item}`));
+    process.exitCode = 1;
+  }
+}).catch((error) => {
+  console.error(error.stack || error.message);
   process.exitCode = 1;
-}
+});

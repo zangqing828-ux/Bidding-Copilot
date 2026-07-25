@@ -32,9 +32,22 @@ function expectThrow(fn, message) {
   return captured;
 }
 
-function run(name, fn) {
+async function expectReject(fn, message) {
+  let captured;
   try {
-    fn();
+    await fn();
+  } catch (error) {
+    captured = error;
+  }
+  if (!captured) {
+    throw new Error(`${message}（未拒绝）`);
+  }
+  return captured;
+}
+
+async function run(name, fn) {
+  try {
+    await fn();
     passed.push(name);
     return true;
   } catch (error) {
@@ -67,20 +80,20 @@ function cleanupTrackedDirs() {
   }
 }
 
-function cleanupContext(ctx) {
+async function cleanupContext(ctx) {
   if (ctx && typeof ctx.close === 'function') {
     try {
-      ctx.close();
+      await ctx.close();
     } catch {
       // 需要在调用层统计
     }
   }
 }
 
-function withTempDir(prefix, fn) {
+async function withTempDir(prefix, fn) {
   const dir = trackTempDir(prefix);
   try {
-    return fn(dir);
+    return await fn(dir);
   } finally {
     cleanupTempDir(dir, `临时目录 ${dir}`);
   }
@@ -141,7 +154,8 @@ function withBlockedElectronRequire() {
   };
 }
 
-run('ports: 七类端口契约完整且缺失提示清晰', () => {
+async function main() {
+await run('ports: 七类端口契约完整且缺失提示清晰', () => {
   assert(Object.keys(PORT_METHODS).length === 7, '必须是七类端口契约');
   assert(Array.isArray(PORT_METHODS.config) && PORT_METHODS.config.join(',') === 'load,save', 'config 契约不变');
   assert(Array.isArray(PORT_METHODS.fileParser), 'fileParser 契约存在');
@@ -170,7 +184,7 @@ run('ports: 七类端口契约完整且缺失提示清晰', () => {
   assert(/缺少/.test(bad.message), '缺少方法错误需含“缺少”');
 });
 
-run('taskEvents: 多订阅/单独取消/close 聚合/幂等/异常路径', () => {
+await run('taskEvents: 多订阅/单独取消/close 聚合/幂等/异常路径', () => {
   const incompleteService = {
     subscribeCount: 0,
     subscribeCallback() {
@@ -347,8 +361,8 @@ run('taskEvents: 多订阅/单独取消/close 聚合/幂等/异常路径', () =>
   assert(closedService.called === 0, '已关闭端口再次 subscribe 不应触发底层 callback');
 });
 
-run('workspaceContext: 默认创建和注入 factory 的关闭校验', () => {
-  withTempDir('wc-ctx-default', (baseDir) => {
+await run('workspaceContext: 默认创建和注入 factory 的关闭校验', async () => {
+  await withTempDir('wc-ctx-default', async (baseDir) => {
     const ctx = createWorkspaceContext({
       workspaceId: 'default-user',
       dataDir: baseDir,
@@ -364,11 +378,11 @@ run('workspaceContext: 默认创建和注入 factory 的关闭校验', () => {
       assert(ctx.taskEvents && typeof ctx.taskEvents.subscribe === 'function', 'taskEvents 存在');
       assert(ctx.db && ctx.db.open === true, 'db 初始打开');
 
-      ctx.close();
+      await ctx.close();
       assert(ctx.db.open === false, 'default close 后 db 关闭');
-      ctx.close();
+      await ctx.close();
     } finally {
-      cleanupContext(ctx);
+      await cleanupContext(ctx);
     }
   });
 
@@ -411,7 +425,7 @@ run('workspaceContext: 默认创建和注入 factory 的关闭校验', () => {
   };
   let closeCalled = false;
 
-  withTempDir('wc-ctx-factory', (baseDir) => {
+  await withTempDir('wc-ctx-factory', async (baseDir) => {
     const runtimeFactory = (opts) => {
       assert(opts.workspaceId === 'injected-user', 'runtimeFactory 接收 workspaceId');
       assert(opts.databasePath === path.join(opts.workspaceRoot, 'yibiao.sqlite'), 'runtimeFactory 接收 databasePath');
@@ -425,18 +439,18 @@ run('workspaceContext: 默认创建和注入 factory 的关闭校验', () => {
     });
 
     try {
-      ctx.close();
+      await ctx.close();
       closeCalled = true;
       assert(fakeRuntime.db.open === false, 'sqlite db 已关闭');
       assert(closeOrder.join(',') === 'runtime', 'context close 仅走 runtime.close');
     } finally {
-      cleanupContext(ctx);
+      await cleanupContext(ctx);
     }
   });
 
   assert(closeCalled, 'runtimeFactory 注入生效');
 
-  withTempDir('wc-ctx-invalid-close', (baseDir) => {
+  await withTempDir('wc-ctx-invalid-close', async (baseDir) => {
     function createFallbackRuntime(prefix, closeGetter) {
       const closeOrder = [];
       const sharedClosePrototype = {
@@ -531,8 +545,8 @@ run('workspaceContext: 默认创建和注入 factory 的关闭校验', () => {
   });
 });
 
-run('workspaceRuntimeFactory: 依赖失败需回滚并保留原始错误', () => {
-  withTempDir('wc-factory-rollback', (baseDir) => {
+await run('workspaceRuntimeFactory: 依赖失败需回滚并保留原始错误', async () => {
+  await withTempDir('wc-factory-rollback', async (baseDir) => {
     const workspaceRoot = path.join(baseDir, 'users', 'rollback-user', 'workspace');
     const paths = coreWorkspacePaths.resolveWorkspacePaths(workspaceRoot);
     const databasePath = paths.databasePath;
@@ -638,8 +652,8 @@ run('workspaceRuntimeFactory: 依赖失败需回滚并保留原始错误', () =>
   assert(blockedResult.ok, `electron 禁止环境加载 factory 成功 (status=${blockedResult.status})`);
 });
 
-run('workspaceRuntimeFactory: close 按顺序关闭并聚合失败', () => {
-  withTempDir('wc-factory-close', (baseDir) => {
+await run('workspaceRuntimeFactory: close 按顺序关闭并聚合失败', async () => {
+  await withTempDir('wc-factory-close', async (baseDir) => {
     const workspaceRoot = path.join(baseDir, 'users', 'closeerr', 'workspace');
     const paths = coreWorkspacePaths.resolveWorkspacePaths(workspaceRoot);
     const databasePath = paths.databasePath;
@@ -728,7 +742,7 @@ run('workspaceRuntimeFactory: close 按顺序关闭并聚合失败', () => {
       assert(!runtime.ports.renderer, 'Web factory 不暴露 renderer');
       assert(!runtime.ports.exporter, 'Web factory 不暴露 exporter');
 
-      const closeError = expectThrow(() => runtime.close(), 'close 异常应聚合');
+      const closeError = await expectReject(() => runtime.close(), 'close 异常应聚合');
       assert(closeError instanceof AggregateError, 'close 应聚合多个关闭错误');
       assert(closeError.errors.length === 2, '关闭错误数应为 2');
       assert(runtime.db.open === false, 'runtime.close 即使部分失败也应关闭 sqlite');
@@ -742,8 +756,8 @@ run('workspaceRuntimeFactory: close 按顺序关闭并聚合失败', () => {
   });
 });
 
-run('workspaceRuntimeFactory: close 重试会保留失败 handler，成功 handler 不重复执行', () => {
-  withTempDir('wc-factory-close-retry', (baseDir) => {
+await run('workspaceRuntimeFactory: close 重试会保留失败 handler，成功 handler 不重复执行', async () => {
+  await withTempDir('wc-factory-close-retry', async (baseDir) => {
     const workspaceRoot = path.join(baseDir, 'users', 'closeretry', 'workspace');
     const paths = coreWorkspacePaths.resolveWorkspacePaths(workspaceRoot);
     const databasePath = paths.databasePath;
@@ -851,14 +865,14 @@ run('workspaceRuntimeFactory: close 重试会保留失败 handler，成功 handl
         configPath,
       });
 
-      const first = expectThrow(() => runtime.close(), '第一次 close 应透出首次失败');
+      const first = await expectReject(() => runtime.close(), '第一次 close 应透出首次失败');
       assert(first instanceof Error, '第一次 close 需可见错误');
       assert(closeStats.agentClose === 1, 'agent close 首次执行一次');
       assert(closeStats.taskServiceClose === 1, 'taskService close 应只执行一次');
       assert(closeStats.taskEventsClose === 1, 'taskEvents close 应只执行一次');
       assert(closeStats.sqliteClose === 1, 'sqlite close 执行一次');
 
-      runtime.close();
+      await runtime.close();
       assert(closeStats.agentClose === 2, 'agent 失败后重试只执行第二次并成功');
       assert(closeStats.taskServiceClose === 1, 'taskService close 不应在成功后重复');
       assert(closeStats.taskEventsClose === 1, 'taskEvents close 不应在成功后重复');
@@ -873,8 +887,8 @@ run('workspaceRuntimeFactory: close 重试会保留失败 handler，成功 handl
   });
 });
 
-run('workspaceContext x100: 每次只开一个上下文并完整回收', () => {
-  withTempDir('wc-loop', (baseDir) => {
+await run('workspaceContext x100: 每次只开一个上下文并完整回收', async () => {
+  await withTempDir('wc-loop', async (baseDir) => {
     const before = snapshotActiveHandles();
     const dbRefs = [];
     let maxDelta = 0;
@@ -903,7 +917,7 @@ run('workspaceContext x100: 每次只开一个上下文并完整回收', () => {
       } finally {
         if (ctx) {
           try {
-            ctx.close();
+            await ctx.close();
           } catch (error) {
             throw new Error(`第 ${i + 1} 次 ctx.close 失败: ${error.message}`);
           }
@@ -956,3 +970,10 @@ cleanupTrackedDirs();
 console.log(`\n=== Workspace 生命周期测试结果 ===`);
 console.log(`通过: ${passed.length}`);
 console.log(`失败: ${failed.length}`);
+}
+
+main().catch((error) => {
+  cleanupTrackedDirs();
+  console.error(error.stack || error.message);
+  process.exitCode = 1;
+});

@@ -490,8 +490,8 @@ function createAiRuntime(options = {}) {
   const version = normalizeText(options.version);
   const platform = normalizeText(options.platform) || process.platform;
   const arch = normalizeText(options.arch) || process.arch;
-  let closed = false;
-  let endpointPolicyClosed = false;
+  let closePromise = null;
+  let endpointPolicyClosePromise = null;
 
   function getScopeId(request, fallbackScopeId) {
     return normalizeScopeId(
@@ -578,16 +578,25 @@ function createAiRuntime(options = {}) {
   }
 
   function closeEndpointPolicy() {
-    if (endpointPolicyClosed || !endpointPolicy || typeof endpointPolicy.close !== 'function') {
-      return;
+    if (!endpointPolicy || typeof endpointPolicy.close !== 'function') {
+      return Promise.resolve();
     }
-    endpointPolicyClosed = true;
-    try {
-      const closeResult = endpointPolicy.close();
-      void Promise.resolve(closeResult).catch(() => undefined);
-    } catch {
-      // endpoint policy 关闭失败不能阻断同步 runtime.close，也不能产生未处理拒绝。
+
+    if (endpointPolicyClosePromise) {
+      return endpointPolicyClosePromise;
     }
+
+    const attempt = Promise.resolve().then(() => endpointPolicy.close());
+    endpointPolicyClosePromise = attempt;
+    void attempt.then(
+      () => undefined,
+      () => {
+        if (endpointPolicyClosePromise === attempt) {
+          endpointPolicyClosePromise = null;
+        }
+      },
+    );
+    return attempt;
   }
 
   async function fetchWithTimeout(url, requestOptions, timeoutMs) {
@@ -862,13 +871,46 @@ function createAiRuntime(options = {}) {
     },
 
     close() {
-      if (closed) {
-        return;
+      if (closePromise) {
+        return closePromise;
       }
-      closed = true;
-      closeEndpointPolicy();
-      queue.close();
-      textTokenStats.close();
+
+      const attempt = (async () => {
+        const errors = [];
+
+        try {
+          await closeEndpointPolicy();
+        } catch (error) {
+          errors.push(error);
+        }
+
+        try {
+          queue.close();
+        } catch (error) {
+          errors.push(error);
+        }
+
+        try {
+          textTokenStats.close();
+        } catch (error) {
+          errors.push(error);
+        }
+
+        if (errors.length > 1) {
+          throw new AggregateError(errors, `aiRuntime.close: 关闭失败 ${errors.length} 处`, { cause: errors[0] });
+        }
+        if (errors.length === 1) {
+          throw errors[0];
+        }
+      })();
+
+      closePromise = attempt;
+      void attempt.catch(() => {
+        if (closePromise === attempt) {
+          closePromise = null;
+        }
+      });
+      return attempt;
     },
   };
 

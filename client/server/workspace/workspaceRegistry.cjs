@@ -101,7 +101,9 @@ function createWorkspaceRegistry(options = {}) {
       return;
     }
     sweepTimer = setInterval(() => {
-      sweepIdleContexts();
+      void sweepIdleContexts().catch((error) => {
+        console.warn('[workspace] 空闲 workspace 回收失败', error?.message || String(error));
+      });
     }, sweepIntervalMs);
     if (typeof sweepTimer.unref === 'function') {
       sweepTimer.unref();
@@ -131,6 +133,7 @@ function createWorkspaceRegistry(options = {}) {
       leases: new Set(),
       closeAttempts: 0,
       lastCloseError: null,
+      closePromise: null,
     };
     contexts.set(workspaceId, entry);
     ensureSweepTimer();
@@ -151,17 +154,32 @@ function createWorkspaceRegistry(options = {}) {
   }
 
   function closeEntry(entry) {
-    entry.closeAttempts += 1;
-    try {
-      entry.context.close();
-      contexts.delete(entry.workspaceId);
-      entry.lastCloseError = null;
-      return null;
-    } catch (error) {
-      entry.lastCloseError = error;
-      console.warn('[workspace] 关闭 workspace 失败，保留上下文等待重试', error?.message || String(error));
-      return error;
+    if (entry.closePromise) {
+      return entry.closePromise;
     }
+
+    entry.closeAttempts += 1;
+    const attempt = Promise.resolve()
+      .then(() => entry.context.close())
+      .then(
+        () => {
+          if (contexts.get(entry.workspaceId) === entry) {
+            contexts.delete(entry.workspaceId);
+          }
+          entry.lastCloseError = null;
+          return true;
+        },
+        (error) => {
+          entry.lastCloseError = error;
+          console.warn('[workspace] 关闭 workspace 失败，保留上下文等待重试', error?.message || String(error));
+          if (entry.closePromise === attempt) {
+            entry.closePromise = null;
+          }
+          throw error;
+        },
+      );
+    entry.closePromise = attempt;
+    return attempt;
   }
 
   function isReclaimable(entry, timestamp) {
@@ -175,14 +193,24 @@ function createWorkspaceRegistry(options = {}) {
     return timestamp - entry.lastAccessAt >= idleTtlMs;
   }
 
-  function sweepIdleContexts() {
+  async function sweepIdleContexts() {
     const timestamp = now();
+    const closePromises = [];
     for (const entry of Array.from(contexts.values())) {
       if (isReclaimable(entry, timestamp)) {
-        closeEntry(entry);
+        closePromises.push(closeEntry(entry));
       }
     }
+    const results = await Promise.allSettled(closePromises);
     stopSweepTimerIfEmpty();
+    const errors = results
+      .filter((result) => result.status === 'rejected')
+      .map((result) => result.reason);
+    return {
+      closed: results.filter((result) => result.status === 'fulfilled').length,
+      failed: errors.length,
+      errors,
+    };
   }
 
   function getWorkspaceContext(workspaceId) {
@@ -232,25 +260,25 @@ function createWorkspaceRegistry(options = {}) {
     return released;
   }
 
-  function closeWorkspaceContext(workspaceId, options = {}) {
+  async function closeWorkspaceContext(workspaceId, options = {}) {
     const normalized = String(workspaceId || '').trim();
     const entry = contexts.get(normalized);
     if (!entry) {
       return false;
     }
+    if (entry.closePromise) {
+      return entry.closePromise;
+    }
     const force = Boolean(options.force);
     if (!force && (entry.leases.size > 0 || readActivitySnapshot(entry.context).active)) {
       throw createBusyError(normalized);
     }
-    const error = closeEntry(entry);
-    if (error) {
-      throw error;
-    }
+    await closeEntry(entry);
     stopSweepTimerIfEmpty();
     return true;
   }
 
-  function closeAll(options = {}) {
+  async function closeAll(options = {}) {
     const force = options.force === undefined ? true : Boolean(options.force);
     if (sweepTimer) {
       clearInterval(sweepTimer);
@@ -259,20 +287,26 @@ function createWorkspaceRegistry(options = {}) {
 
     const errors = [];
     let closed = 0;
+    const closePromises = [];
     for (const entry of Array.from(contexts.values())) {
-      if (!force && (entry.leases.size > 0 || readActivitySnapshot(entry.context).active)) {
+      if (!force && !entry.closePromise && (entry.leases.size > 0 || readActivitySnapshot(entry.context).active)) {
         const busyError = createBusyError(entry.workspaceId);
         entry.lastCloseError = busyError;
         errors.push(busyError);
         continue;
       }
-      const error = closeEntry(entry);
-      if (error) {
-        errors.push(error);
-      } else {
+      closePromises.push(closeEntry(entry));
+    }
+
+    const results = await Promise.allSettled(closePromises);
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
         closed += 1;
+      } else {
+        errors.push(result.reason);
       }
     }
+    stopSweepTimerIfEmpty();
     return { closed, failed: errors.length, errors };
   }
 

@@ -28,14 +28,39 @@ function pushCloseHandler(closeHandlers, closeHandler, label) {
   }
 }
 
-function runCloseHandlers(closeHandlers, { preserveFailures = false } = {}) {
+function isPromiseLike(value) {
+  return value && typeof value.then === 'function';
+}
+
+function restoreFailedHandlers(closeHandlers, failedHandlers) {
+  closeHandlers.length = 0;
+  for (let i = failedHandlers.length - 1; i >= 0; i -= 1) {
+    const failedHandler = failedHandlers[i];
+    if (!closeHandlers.includes(failedHandler)) {
+      closeHandlers.push(failedHandler);
+    }
+  }
+}
+
+function buildCloseError(errors) {
+  if (errors.length > 1) {
+    return new AggregateError(
+      errors,
+      `runtime.close: 关闭处理器失败 ${errors.length} 处`,
+      { cause: errors[0] },
+    );
+  }
+  return errors[0] || null;
+}
+
+async function runCloseHandlers(closeHandlers, { preserveFailures = false } = {}) {
   const errors = [];
   const failedHandlers = [];
 
   for (let i = closeHandlers.length - 1; i >= 0; i -= 1) {
     const handler = closeHandlers[i];
     try {
-      handler();
+      await handler();
       closeHandlers.splice(i, 1);
     } catch (error) {
       errors.push(error);
@@ -46,28 +71,34 @@ function runCloseHandlers(closeHandlers, { preserveFailures = false } = {}) {
   }
 
   if (preserveFailures) {
-    closeHandlers.length = 0;
-    for (let i = failedHandlers.length - 1; i >= 0; i -= 1) {
-      const failedHandler = failedHandlers[i];
-      if (!closeHandlers.includes(failedHandler)) {
-        closeHandlers.push(failedHandler);
-      }
-    }
+    restoreFailedHandlers(closeHandlers, failedHandlers);
   } else {
     closeHandlers.length = 0;
   }
 
-  if (errors.length > 1) {
-    return new AggregateError(
-      errors,
-      `runtime.close: 关闭处理器失败 ${errors.length} 处`,
-      { cause: errors[0] },
-    );
+  return buildCloseError(errors);
+}
+
+function runCloseHandlersSync(closeHandlers) {
+  const errors = [];
+
+  for (let i = closeHandlers.length - 1; i >= 0; i -= 1) {
+    const handler = closeHandlers[i];
+    try {
+      const result = handler();
+      if (isPromiseLike(result)) {
+        void Promise.resolve(result).catch((error) => {
+          console.warn('[workspace] 初始化失败后的异步资源清理失败', error?.message || String(error));
+        });
+      }
+      closeHandlers.splice(i, 1);
+    } catch (error) {
+      errors.push(error);
+    }
   }
-  if (errors.length === 1) {
-    return errors[0];
-  }
-  return null;
+
+  closeHandlers.length = 0;
+  return buildCloseError(errors);
 }
 
 function wrapSetupError(error, closeError) {
@@ -98,7 +129,7 @@ function createWebWorkspaceRuntime({
   aiRuntimeOptions = {},
 }) {
   const closeHandlers = [];
-  let runtimeClosed = false;
+  let closePromise = null;
 
   if (!workspaceId || typeof workspaceId !== 'string') {
     throw new Error('workspaceId 必须为非空字符串');
@@ -200,16 +231,24 @@ function createWebWorkspaceRuntime({
         taskEvents,
       },
       close() {
-        if (runtimeClosed) {
-          return;
+        if (closePromise) {
+          return closePromise;
         }
 
-        const closeError = runCloseHandlers(closeHandlers, { preserveFailures: true });
-        if (closeError) {
-          throw closeError;
-        }
+        const attempt = (async () => {
+          const closeError = await runCloseHandlers(closeHandlers, { preserveFailures: true });
+          if (closeError) {
+            throw closeError;
+          }
+        })();
 
-        runtimeClosed = true;
+        closePromise = attempt;
+        void attempt.catch(() => {
+          if (closePromise === attempt) {
+            closePromise = null;
+          }
+        });
+        return attempt;
       },
     };
 
@@ -220,7 +259,7 @@ function createWebWorkspaceRuntime({
 
     return runtime;
   } catch (error) {
-    const closeError = runCloseHandlers(closeHandlers, { preserveFailures: false });
+    const closeError = runCloseHandlersSync(closeHandlers);
     if (closeError) {
       throw wrapSetupError(error, closeError);
     }

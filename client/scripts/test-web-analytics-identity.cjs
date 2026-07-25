@@ -91,7 +91,7 @@ async function main() {
     try {
       await runtime.chat({ messages: [{ role: 'user', content: 'identity test' }] });
     } finally {
-      runtime.close();
+      await runtime.close();
     }
     const payload = payloads[0];
     assert(payload && UUID_PATTERN.test(payload.client_id), 'AI tracker payload 包含 Worker 必填 client_id');

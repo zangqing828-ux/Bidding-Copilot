@@ -170,7 +170,7 @@ async function runTests() {
 
     try {
       if (typeof closeWorkspace === 'function') {
-        closeWorkspace();
+        await closeWorkspace();
       }
     } catch (error) {
       console.error('清理 workspace 失败:', error instanceof Error ? error.message : error);

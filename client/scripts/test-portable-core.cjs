@@ -1094,7 +1094,7 @@ async function run() {
       assert(fs.existsSync(expectedConfigPath), 'Web workspace: config 精确落当前 workspaceId 目录');
     } finally {
       if (webContext) {
-        webContext.close();
+        await webContext.close();
         untrackDb(webContext.sqliteDatabase);
       }
     }

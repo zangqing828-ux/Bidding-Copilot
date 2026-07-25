@@ -23,7 +23,7 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-test-'));
 process.env.YIBIAO_DATA_DIR = tmpDir;
 process.env.CONFIG_ENCRYPTION_KEY = 'test-encryption-key-for-testing';
 
-function runTests() {
+async function runTests() {
   // 测试 1：resolveWorkspacePaths 返回完整路径
   {
     const paths = resolveWorkspacePaths('/tmp/fake-workspace');
@@ -117,8 +117,8 @@ function runTests() {
     const ctx2Config = ctx2.configStore.load();
     assert(ctx2Config.api_key !== '****ws1-key', 'workspace 2 不含 workspace 1 的 Key');
 
-    ctx1.close();
-    ctx2.close();
+    await ctx1.close();
+    await ctx2.close();
   }
 
   // 测试 7：同一 workspaceId 重新获取保持数据
@@ -126,13 +126,13 @@ function runTests() {
     const { getWorkspaceContext, closeAll } = require('../server/workspace/workspaceRegistry.cjs');
     const ctx1 = getWorkspaceContext('ws-persist-test');
     ctx1.configStore.save({ api_key: 'sk-persist-key' });
-    closeAll();
+    await closeAll();
 
     // 重新获取同一个 workspace
     const ctx2 = getWorkspaceContext('ws-persist-test');
     const config = ctx2.configStore.loadDecrypted();
     assert(config.api_key === 'sk-persist-key', '同一 workspace 重新获取后数据仍在');
-    closeAll();
+    await closeAll();
   }
 
   // 测试 8：bridge dispatcher config.load 返回脱敏
@@ -146,7 +146,7 @@ function runTests() {
     assert(result.api_key === '****-key', 'bridge config.load 返回脱敏');
     assert(!JSON.stringify(result).includes('sk-bridge-secret-key'), 'bridge config.load 不含明文');
 
-    closeAll();
+    await closeAll();
   }
 
   // 清理
@@ -168,4 +168,7 @@ function runTests() {
   console.log('全部通过 ✅');
 }
 
-runTests();
+runTests().catch((error) => {
+  console.error(error.stack || error.message);
+  process.exitCode = 1;
+});
