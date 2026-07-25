@@ -548,6 +548,8 @@ async function main() {
           sharedCoordinator: coordinator,
           aiRuntimeOptions: {
             fetch: globalThis.fetch,
+            // 该 workspace 测试使用本地 HTTP mock；真实 Web runtime 默认注入安全 endpoint policy。
+            endpointPolicy: async () => true,
             retryDelay: 0,
           },
         }),

@@ -9,6 +9,7 @@ const { assertPort } = require('../../core/ports.cjs');
 const { createAiRuntime } = require('../../core/aiRuntime.cjs');
 const { getGlobalAiCoordinator } = require('../ai/globalAiCoordinator.cjs');
 const { createAiAnalyticsTracker } = require('../ai/aiAnalytics.cjs');
+const { createWebEndpointPolicy } = require('../ai/webEndpointPolicy.cjs');
 
 function createCloseHandler(target) {
   if (!target || typeof target.close !== 'function') {
@@ -148,6 +149,9 @@ function createWebWorkspaceRuntime({
       sharedCoordinator: resolvedCoordinator,
       loadConfig: configStore.loadDecrypted.bind(configStore),
     };
+    if (process.env.NODE_ENV === 'production' || !runtimeAiOptions.endpointPolicy) {
+      runtimeAiOptions.endpointPolicy = createWebEndpointPolicy();
+    }
     if (typeof runtimeAiOptions.trackRequest !== 'function') {
       runtimeAiOptions.trackRequest = createAiAnalyticsTracker({
         fetch: runtimeAiOptions.analyticsFetch,

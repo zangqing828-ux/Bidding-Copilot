@@ -18,6 +18,7 @@ const SAFE_ERROR_CODES = new Set([
   'AI_REQUEST_TIMEOUT',
   'AI_RESPONSE_INVALID',
   'AI_RESPONSE_PARSE_ERROR',
+  'AI_ENDPOINT_NOT_ALLOWED',
   'WEB_CAPABILITY_PENDING',
 ]);
 const CHAT_BODY_FIELDS = Object.freeze([
@@ -485,6 +486,7 @@ function createAiRuntime(options = {}) {
   const timeouts = normalizeTimeouts(options);
   const waitBeforeRetry = createRetryWaiter(options.retryDelay ?? options.retryDelayMs);
   const trackRequest = typeof options.trackRequest === 'function' ? options.trackRequest : null;
+  const endpointPolicy = options.endpointPolicy;
   const version = normalizeText(options.version);
   const platform = normalizeText(options.platform) || process.platform;
   const arch = normalizeText(options.arch) || process.arch;
@@ -537,12 +539,36 @@ function createAiRuntime(options = {}) {
     }
   }
 
+  async function assertEndpointAllowed(url, operation) {
+    if (!endpointPolicy) {
+      return;
+    }
+
+    const validate = typeof endpointPolicy === 'function'
+      ? endpointPolicy
+      : endpointPolicy && (endpointPolicy.assertAllowed || endpointPolicy.validate);
+    if (typeof validate !== 'function') {
+      throw createRuntimeError('AI 上游地址校验失败', 'AI_ENDPOINT_NOT_ALLOWED');
+    }
+
+    try {
+      const result = await validate.call(endpointPolicy, url, { operation });
+      if (result === false) {
+        throw new Error('endpoint rejected');
+      }
+    } catch {
+      // endpoint policy 的底层异常可能包含 URL、DNS 信息或实现细节，统一收敛为安全错误。
+      throw createRuntimeError('AI 上游地址不允许', 'AI_ENDPOINT_NOT_ALLOWED');
+    }
+  }
+
   async function fetchWithTimeout(url, requestOptions, timeoutMs) {
     const controller = new AbortController();
     let timedOut = false;
     let timer = null;
     const fetchPromise = Promise.resolve().then(() => fetchImpl(url, {
       ...requestOptions,
+      redirect: 'manual',
       signal: controller.signal,
     }));
     const timeoutPromise = new Promise((_resolve, reject) => {
@@ -583,7 +609,8 @@ function createAiRuntime(options = {}) {
     throw lastError || createRuntimeError('AI 请求失败', 'AI_REQUEST_FAILED');
   }
 
-  async function requestJsonBody(url, requestOptions, timeoutMs) {
+  async function requestJsonBody(url, requestOptions, timeoutMs, operation) {
+    await assertEndpointAllowed(url, operation);
     const response = await fetchWithTimeout(url, requestOptions, timeoutMs);
     if (!isResponseOk(response)) {
       throw createHttpError(response?.status);
@@ -630,7 +657,7 @@ function createAiRuntime(options = {}) {
 
     try {
       const responseData = await runWithRetry(
-        () => requestJsonBody(url, requestOptions, timeouts.text),
+        () => requestJsonBody(url, requestOptions, timeouts.text, 'chat'),
       );
       const usage = normalizeTokenUsage(responseData?.usage);
       textTokenStats.record(usage);
@@ -682,6 +709,7 @@ function createAiRuntime(options = {}) {
           },
         },
         timeouts.listModels,
+        'listModels',
       ));
       const source = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
       const models = source
