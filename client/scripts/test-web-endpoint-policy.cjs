@@ -118,6 +118,21 @@ async function main() {
     assert.equal(seen[1], 'rebinding.test');
   });
 
+  await run('undici connect lookup callback 使用已校验的 address/family', async () => {
+    const policy = createPolicy(async () => [{ address: '93.184.216.34', family: 4 }]);
+    const connectLookup = policy.getConnectLookup();
+    const result = await new Promise((resolve, reject) => {
+      connectLookup('public.example', { family: 4 }, (error, address, family) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve({ address, family });
+      });
+    });
+    assert.deepEqual(result, { address: '93.184.216.34', family: 4 });
+  });
+
   await run('生产环境拒绝 HTTP，开发环境只有显式 allowHttp 才放行', async () => {
     const lookup = async () => [{ address: '93.184.216.34', family: 4 }];
     const productionPolicy = createWebEndpointPolicy({ production: true, lookup });

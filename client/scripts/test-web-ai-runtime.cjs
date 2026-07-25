@@ -259,6 +259,34 @@ async function main() {
       }
     });
 
+    await run('runtime.close 吞并异步 policy.close 失败且保持幂等', async () => {
+      let closeCalls = 0;
+      const unhandledRejections = [];
+      const onUnhandledRejection = (error) => unhandledRejections.push(error);
+      const runtimeWithRejectingPolicy = createAiRuntime({
+        workspaceKey: 'rejecting-policy-close-runtime',
+        loadConfig: () => createConfig(mock.baseUrl),
+        sharedCoordinator: createAiFairCoordinator(),
+        endpointPolicy: {
+          assertAllowed: async () => true,
+          close() {
+            closeCalls += 1;
+            return Promise.reject(new Error('policy close failed'));
+          },
+        },
+      });
+      process.once('unhandledRejection', onUnhandledRejection);
+      try {
+        runtimeWithRejectingPolicy.close();
+        runtimeWithRejectingPolicy.close();
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(closeCalls, 1);
+        assert.deepEqual(unhandledRejections, []);
+      } finally {
+        process.removeListener('unhandledRejection', onUnhandledRejection);
+      }
+    });
+
     await run('configStore.load 脱敏，loadDecrypted 与 runtime 使用明文', async () => {
       tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'web-ai-runtime-config-'));
       process.env.CONFIG_ENCRYPTION_KEY = 'web-ai-runtime-test-encryption-key';
@@ -566,7 +594,7 @@ async function main() {
       }
     });
 
-    await run('config.listModels dispatcher 真实成功，合同仅 listModels implemented', async () => {
+    await run('development 显式注入 endpoint policy 仍可测试本地 mock', async () => {
       assert.equal(bridgeContract.methods.config.listModels.status, 'implemented');
       assert.equal(bridgeContract.methods.ai.chat.status, 'pending');
       assert.equal(bridgeContract.methods.ai.requestJson.status, 'pending');
@@ -608,6 +636,52 @@ async function main() {
       assert.equal(result.success, true);
       assert.deepEqual(result.models, ['model-a', 'model-b']);
       assertNoSecret(result, 'bridge listModels 返回值');
+    });
+
+    await run('development workspace factory 未注入时默认创建安全 endpoint policy', async () => {
+      const oldNodeEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'development';
+      const runtimeCoordinator = createAiFairCoordinator();
+      const defaultTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'web-ai-runtime-workspace-dev-default-'));
+      let defaultFetchOptions = null;
+      const defaultContext = createWorkspaceContext({
+        workspaceId: 'bridge-model-list-dev-default',
+        dataDir: defaultTempDir,
+        runtimeFactory: (runtimeOptions) => createWorkspaceRuntimeFactory({
+          ...runtimeOptions,
+          sharedCoordinator: runtimeCoordinator,
+          aiRuntimeOptions: {
+            fetch: async (_url, options) => {
+              defaultFetchOptions = options;
+              return createResponse(200, {
+                data: [{ id: 'model-a' }],
+              });
+            },
+            retryDelay: 0,
+          },
+        }),
+      });
+      try {
+        defaultContext.configStore.save({
+          text_model_provider: 'custom',
+          api_key: API_KEY,
+          base_url: 'https://93.184.216.34/v1',
+          model_name: 'runtime-test-model',
+        });
+        const result = await bridgeRouter.__contractDispatchers.config.listModels(defaultContext, [{
+          api_key: API_KEY,
+          base_url: 'https://93.184.216.34/v1',
+          model_name: 'runtime-test-model',
+        }]);
+        assert.equal(result.success, true);
+        assert.deepEqual(result.models, ['model-a']);
+        assert.ok(defaultFetchOptions?.dispatcher, '开发环境未注入 policy 时仍应带安全 dispatcher');
+      } finally {
+        process.env.NODE_ENV = oldNodeEnv;
+        defaultContext.close();
+        runtimeCoordinator.close();
+        fs.rmSync(defaultTempDir, { recursive: true, force: true });
+      }
     });
 
     await run('live workspace factory 不再使用 AI stub，workspace close 不关闭共享 coordinator', async () => {

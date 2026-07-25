@@ -150,7 +150,9 @@ function createWebWorkspaceRuntime({
       loadConfig: configStore.loadDecrypted.bind(configStore),
     };
     const isProductionRuntime = process.env.NODE_ENV === 'production';
-    if (isProductionRuntime) {
+    const hasInjectedEndpointPolicy = typeof runtimeAiOptions.endpointPolicy === 'function'
+      || (runtimeAiOptions.endpointPolicy && typeof runtimeAiOptions.endpointPolicy === 'object');
+    if (isProductionRuntime || !hasInjectedEndpointPolicy) {
       runtimeAiOptions.endpointPolicy = createWebEndpointPolicy();
     }
     if (typeof runtimeAiOptions.trackRequest !== 'function') {

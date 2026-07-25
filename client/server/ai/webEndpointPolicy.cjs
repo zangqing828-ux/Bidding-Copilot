@@ -304,6 +304,31 @@ function pickSafeRecord(records, familyHint) {
   return records[0];
 }
 
+async function resolveSafeConnectRecord(lookup, hostname, options) {
+  const records = filterSafeLookupResults(await promiseFromLookup(lookup, hostname, { all: true, verbatim: true }));
+  const familyHint = normalizeFamilyHint(options);
+  const record = pickSafeRecord(records, familyHint);
+  return {
+    address: record.address,
+    family: record.family || familyHint || 0,
+  };
+}
+
+function createConnectLookup(lookup) {
+  return (hostname, options, callback) => {
+    const result = resolveSafeConnectRecord(lookup, hostname, options);
+    if (typeof callback !== 'function') {
+      return result;
+    }
+
+    result.then(
+      (record) => callback(null, record.address, record.family),
+      (error) => callback(error),
+    );
+    return undefined;
+  };
+}
+
 function createWebEndpointPolicy(options = {}) {
   const env = options.env || process.env;
   const production = options.production === undefined
@@ -311,20 +336,12 @@ function createWebEndpointPolicy(options = {}) {
     : Boolean(options.production);
   const allowHttp = !production && (options.allowHttp === true || env.WEB_AI_ALLOW_HTTP === '1');
   const lookup = typeof options.lookup === 'function' ? options.lookup : dns.lookup.bind(dns);
+  const connectLookup = createConnectLookup(lookup);
 
   const { Agent } = require('undici');
   const dispatcher = new Agent({
     connect: {
-      lookup: async (hostname, options, callback) => {
-        try {
-          const records = filterSafeLookupResults(await promiseFromLookup(lookup, hostname, { all: true, verbatim: true }));
-          const familyHint = normalizeFamilyHint(options);
-          const selected = pickSafeRecord(records, familyHint);
-          callback(null, selected.address, selected.family || familyHint || 0);
-        } catch (error) {
-          callback(error);
-        }
-      },
+      lookup: connectLookup,
     },
   });
   const policyRequestOptions = { dispatcher };
@@ -377,15 +394,7 @@ function createWebEndpointPolicy(options = {}) {
   }
 
   function getConnectLookup() {
-    return async (hostname, options) => {
-      const records = filterSafeLookupResults(await promiseFromLookup(lookup, hostname, { all: true, verbatim: true }));
-      const familyHint = normalizeFamilyHint(options);
-      const record = pickSafeRecord(records, familyHint);
-      return {
-        address: record.address,
-        family: record.family || familyHint || 0,
-      };
-    };
+    return connectLookup;
   }
 
   return Object.freeze({

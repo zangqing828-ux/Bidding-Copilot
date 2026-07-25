@@ -582,7 +582,12 @@ function createAiRuntime(options = {}) {
       return;
     }
     endpointPolicyClosed = true;
-    endpointPolicy.close();
+    try {
+      const closeResult = endpointPolicy.close();
+      void Promise.resolve(closeResult).catch(() => undefined);
+    } catch {
+      // endpoint policy 关闭失败不能阻断同步 runtime.close，也不能产生未处理拒绝。
+    }
   }
 
   async function fetchWithTimeout(url, requestOptions, timeoutMs) {
