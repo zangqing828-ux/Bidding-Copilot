@@ -272,6 +272,13 @@ router.post('/bridge', (req, res) => {
   try {
     ctx = workspaceContextResolver(req.workspaceId);
   } catch (err) {
+    if (err?.code === 'WORKSPACE_UNAVAILABLE') {
+      return res.status(503).json({
+        code: 'WORKSPACE_UNAVAILABLE',
+        message: '工作区暂时不可用，请稍后重试',
+        retryable: true,
+      });
+    }
     console.error('[bridge] getWorkspaceContext 初始化失败', err?.message || String(err));
     return res.status(500).json({ code: 'WORKSPACE_ERROR', message: '工作区初始化失败' });
   }

@@ -1088,6 +1088,34 @@ async function runBridgeBehavior(inject, context) {
     }
   }
 
+  const unavailableResolver = setWorkspaceContextResolver(() => {
+    const error = new Error('closing /private/workspace/path');
+    error.code = 'WORKSPACE_UNAVAILABLE';
+    error.state = 'closing';
+    error.retryable = true;
+    throw error;
+  });
+  try {
+    const unavailableResult = await statusPayload({
+      namespace: 'tasks',
+      method: 'getActiveTasks',
+      args: [],
+    });
+    assert(unavailableResult.response.statusCode === 503, 'workspace unavailable bridge 返回 503');
+    assert(unavailableResult.payload.code === 'WORKSPACE_UNAVAILABLE', 'workspace unavailable bridge 保留错误码');
+    assert(unavailableResult.payload.retryable === true, 'workspace unavailable bridge 标记可重试');
+    assert(
+      typeof unavailableResult.payload.message === 'string'
+        && unavailableResult.payload.message.includes('稍后重试'),
+      'workspace unavailable bridge 返回安全中文提示',
+    );
+    const unavailablePayload = JSON.stringify(unavailableResult.payload);
+    assert(!unavailablePayload.includes('closing'), 'workspace unavailable bridge 不泄露 state');
+    assert(!unavailablePayload.includes('/private/workspace/path'), 'workspace unavailable bridge 不泄露路径');
+  } finally {
+    setWorkspaceContextResolver(unavailableResolver);
+  }
+
   const implementedRequiresWorkspace = await statusPayload({ namespace: 'tasks', method: 'getActiveTasks', args: [] });
   assert(implementedRequiresWorkspace.response.statusCode === 200, 'implemented 调用可正常返回');
 

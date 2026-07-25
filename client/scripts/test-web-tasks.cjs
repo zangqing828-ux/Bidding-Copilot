@@ -229,6 +229,48 @@ async function runTests() {
     sse2.close();
   }
 
+  // 7. workspace 正在关闭时 SSE 返回可重试 503，且不泄露内部状态
+  {
+    const { getSystemDb } = require('../server/database/systemDatabase.cjs');
+    const {
+      closeWorkspaceContext,
+      getWorkspaceContext,
+    } = require('../server/workspace/workspaceRegistry.cjs');
+    const account = getSystemDb()
+      .prepare('SELECT workspace_id FROM accounts WHERE email = ?')
+      .get('tasks@test.com');
+    const workspaceId = account.workspace_id;
+    const context = getWorkspaceContext(workspaceId);
+    const originalClose = context.close.bind(context);
+    let resolveClose;
+    const closeGate = new Promise((resolve) => {
+      resolveClose = resolve;
+    });
+    context.close = async () => {
+      await closeGate;
+      await originalClose();
+    };
+    const closePromise = closeWorkspaceContext(workspaceId, { force: true });
+
+    try {
+      const res = await httpRequest('GET', '/api/tasks/events', {
+        cookie: cookieStr,
+        Accept: 'text/event-stream',
+      });
+      const body = JSON.parse(res.body);
+      assert(res.statusCode === 503, 'workspace closing 时 SSE 返回 503');
+      assert(body.code === 'WORKSPACE_UNAVAILABLE', 'workspace closing 时 SSE 保留错误码');
+      assert(body.retryable === true, 'workspace closing 时 SSE 标记可重试');
+      assert(typeof body.message === 'string' && body.message.includes('稍后重试'), 'workspace closing 时 SSE 返回安全中文提示');
+      const payload = JSON.stringify(body);
+      assert(!payload.includes('closing'), 'workspace closing 时 SSE 不泄露 state');
+      assert(!payload.includes(workspaceId), 'workspace closing 时 SSE 不泄露 workspaceId');
+    } finally {
+      resolveClose();
+      await closePromise;
+    }
+  }
+
   // 清理
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true });

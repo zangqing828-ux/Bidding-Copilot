@@ -14,7 +14,14 @@ router.get('/tasks/events', (req, res) => {
   try {
     lease = acquireWorkspaceContext(workspaceId);
     ctx = lease.context;
-  } catch {
+  } catch (error) {
+    if (error?.code === 'WORKSPACE_UNAVAILABLE') {
+      return res.status(503).json({
+        code: 'WORKSPACE_UNAVAILABLE',
+        message: '工作区暂时不可用，请稍后重试',
+        retryable: true,
+      });
+    }
     return res.status(500).json({ code: 'WORKSPACE_ERROR', message: '工作区初始化失败' });
   }
 

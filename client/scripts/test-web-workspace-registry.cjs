@@ -47,18 +47,22 @@ function waitFor(predicate, timeoutMs = 1200) {
   });
 }
 
-function createFakeContextFactory(states, closeCounts) {
+function createFakeContextFactory(states, closeCounts, createCounts) {
   return ({ workspaceId }) => {
+    const generation = (createCounts.get(workspaceId) || 0) + 1;
+    createCounts.set(workspaceId, generation);
     const state = {
       taskCount: 0,
       aiActive: 0,
       aiQueued: 0,
       failClose: false,
       closeGate: null,
+      generation,
     };
     states.set(workspaceId, state);
-    return {
+    const context = {
       workspaceId,
+      generation,
       getActivitySnapshot() {
         return {
           activeTaskCount: state.taskCount,
@@ -76,21 +80,38 @@ function createFakeContextFactory(states, closeCounts) {
         return state.closeGate || Promise.resolve();
       },
     };
+    state.context = context;
+    return context;
   };
 }
 
 function createTestRegistry(states = new Map(), closeCounts = new Map(), registryOptions = {}) {
+  const createCounts = new Map();
   return {
     registry: createWorkspaceRegistry({
       dataDir: '/tmp/web-workspace-registry-test',
-      createContext: createFakeContextFactory(states, closeCounts),
+      createContext: createFakeContextFactory(states, closeCounts, createCounts),
       idleTtlMs: 25,
       sweepIntervalMs: 5,
       ...registryOptions,
     }),
     states,
     closeCounts,
+    createCounts,
   };
+}
+
+function assertUnavailable(callback, expectedState) {
+  let error;
+  try {
+    callback();
+  } catch (caught) {
+    error = caught;
+  }
+  assert(error, `workspace ${expectedState} 时应拒绝分配`);
+  assert.equal(error.code, 'WORKSPACE_UNAVAILABLE');
+  assert.equal(error.state, expectedState);
+  assert.equal(error.retryable, true);
 }
 
 async function main() {
@@ -138,6 +159,76 @@ async function main() {
     await waitFor(() => registry.getStatus().size === 0);
   });
 
+  await runAsync('TTL sweep 关闭期间隔离旧 context，成功后才允许创建新 context', async () => {
+    let currentTime = 0;
+    const states = new Map();
+    const closeCounts = new Map();
+    const {
+      registry,
+      createCounts,
+    } = createTestRegistry(states, closeCounts, {
+      now: () => currentTime,
+      idleTtlMs: 25,
+      sweepIntervalMs: 10_000,
+    });
+    const originalContext = registry.getWorkspaceContext('closing-account');
+    let resolveClose;
+    states.get('closing-account').closeGate = new Promise((resolve) => {
+      resolveClose = resolve;
+    });
+    currentTime = 30;
+
+    const sweep = registry.sweepIdleContexts();
+    assert.equal(registry.getStatus().entries[0].state, 'closing');
+    assertUnavailable(() => registry.getWorkspaceContext('closing-account'), 'closing');
+    assertUnavailable(() => registry.acquireWorkspaceContext('closing-account'), 'closing');
+    assertUnavailable(() => registry.touchWorkspaceContext('closing-account'), 'closing');
+    assert.equal(registry.getStatus().entries[0].leaseCount, 0);
+    assert.equal(createCounts.get('closing-account'), 1);
+
+    resolveClose();
+    const closeResult = await sweep;
+    assert.equal(closeResult.closed, 1);
+    assert.equal(registry.getStatus().size, 0);
+
+    const replacementContext = registry.getWorkspaceContext('closing-account');
+    assert.notEqual(replacementContext, originalContext);
+    assert.equal(replacementContext.generation, 2);
+    assert.equal(createCounts.get('closing-account'), 2);
+    assert.equal(registry.getStatus().entries[0].state, 'active');
+    await registry.closeAll();
+  });
+
+  await runAsync('close reject 后隔离 context，后续 sweep 优先重试并删除', async () => {
+    let currentTime = 0;
+    const states = new Map();
+    const closeCounts = new Map();
+    const { registry } = createTestRegistry(states, closeCounts, {
+      now: () => currentTime,
+      idleTtlMs: 25,
+      sweepIntervalMs: 10_000,
+    });
+    registry.getWorkspaceContext('close-failed-account');
+    states.get('close-failed-account').failClose = true;
+    currentTime = 30;
+
+    const failedSweep = await registry.sweepIdleContexts();
+    assert.equal(failedSweep.closed, 0);
+    assert.equal(failedSweep.failed, 1);
+    assert.equal(registry.getStatus().entries[0].state, 'close_failed');
+    assertUnavailable(() => registry.getWorkspaceContext('close-failed-account'), 'close_failed');
+    assertUnavailable(() => registry.acquireWorkspaceContext('close-failed-account'), 'close_failed');
+    assertUnavailable(() => registry.touchWorkspaceContext('close-failed-account'), 'close_failed');
+    assert.equal(registry.getStatus().entries[0].leaseCount, 0);
+
+    states.get('close-failed-account').failClose = false;
+    const retriedSweep = await registry.sweepIdleContexts();
+    assert.equal(retriedSweep.closed, 1);
+    assert.equal(retriedSweep.failed, 0);
+    assert.equal(closeCounts.get('close-failed-account'), 2);
+    assert.equal(registry.getStatus().size, 0);
+  });
+
   await runAsync('close 失败保留上下文并可重试，closeAll 清理定时器', async () => {
     const states = new Map();
     const { registry } = createTestRegistry(states);
@@ -146,6 +237,7 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 45));
     const afterFailure = registry.getStatus();
     assert.equal(afterFailure.size, 1);
+    assert.equal(afterFailure.entries[0].state, 'close_failed');
     assert(afterFailure.entries[0].closeAttempts >= 1);
     assert(afterFailure.entries[0].closeError.includes('close failed'));
     states.get('retry-account').failClose = false;
@@ -171,6 +263,7 @@ async function main() {
     assert.equal(closeResult.failed, 1);
     assert.equal(registry.getStatus().size, 1);
     assert.equal(registry.getStatus().entries[0].workspaceId, 'async-failed-account');
+    assert.equal(registry.getStatus().entries[0].state, 'close_failed');
 
     states.get('async-failed-account').failClose = false;
     assert.equal(await registry.closeWorkspaceContext('async-failed-account'), true);
@@ -192,6 +285,8 @@ async function main() {
 
     const first = registry.closeWorkspaceContext('concurrent-account');
     const second = registry.closeWorkspaceContext('concurrent-account');
+    assert.equal(first, second);
+    assert.equal(registry.getStatus().entries[0].state, 'closing');
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(closeCounts.get('concurrent-account'), 1);
     resolveClose();

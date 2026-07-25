@@ -127,6 +127,50 @@ async function runTests() {
     assert(res.statusCode === 401, '未登录上传返回 401');
   }
 
+  // 4. workspace 正在关闭时上传返回可重试 503，且不泄露内部状态
+  {
+    const { getSystemDb } = require('../server/database/systemDatabase.cjs');
+    const {
+      closeWorkspaceContext,
+      getWorkspaceContext,
+    } = require('../server/workspace/workspaceRegistry.cjs');
+    const account = getSystemDb()
+      .prepare('SELECT workspace_id FROM accounts WHERE email = ?')
+      .get('files@test.com');
+    const workspaceId = account.workspace_id;
+    const context = getWorkspaceContext(workspaceId);
+    const originalClose = context.close.bind(context);
+    let resolveClose;
+    const closeGate = new Promise((resolve) => {
+      resolveClose = resolve;
+    });
+    context.close = async () => {
+      await closeGate;
+      await originalClose();
+    };
+    const closePromise = closeWorkspaceContext(workspaceId, { force: true });
+
+    try {
+      const boundary = '----workspaceclosing';
+      const body = `--${boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.txt\"\r\nContent-Type: text/plain\r\n\r\nsafe\r\n--${boundary}--\r\n`;
+      const res = await httpRequest('POST', '/api/uploads', {
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+        cookie: cookieStr,
+      }, body);
+      const parsed = parseJson(res.body);
+      assert(res.statusCode === 503, 'workspace closing 时上传返回 503');
+      assert(parsed?.code === 'WORKSPACE_UNAVAILABLE', 'workspace closing 时上传保留错误码');
+      assert(parsed?.retryable === true, 'workspace closing 时上传标记可重试');
+      assert(typeof parsed?.message === 'string' && parsed.message.includes('稍后重试'), 'workspace closing 时上传返回安全中文提示');
+      const payload = JSON.stringify(parsed);
+      assert(!payload.includes('closing'), 'workspace closing 时上传不泄露 state');
+      assert(!payload.includes(workspaceId), 'workspace closing 时上传不泄露 workspaceId');
+    } finally {
+      resolveClose();
+      await closePromise;
+    }
+  }
+
   console.log(`\n=== Web Files 测试结果 ===`);
   console.log(`通过: ${passed.length}`);
   console.log(`失败: ${failed.length}`);

@@ -3,6 +3,10 @@ const { createWorkspaceContext } = require('./workspaceContext.cjs');
 
 const DEFAULT_IDLE_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_SWEEP_INTERVAL_MS = 60 * 1000;
+const WORKSPACE_STATE_ACTIVE = 'active';
+const WORKSPACE_STATE_CLOSING = 'closing';
+const WORKSPACE_STATE_CLOSE_FAILED = 'close_failed';
+const WORKSPACE_STATE_CLOSED = 'closed';
 
 function normalizeDuration(value, fallback) {
   const number = Number(value);
@@ -20,6 +24,14 @@ function getDataDir() {
 function createBusyError(workspaceId) {
   const error = new Error(`workspace ${workspaceId} 仍有活跃资源`);
   error.code = 'WORKSPACE_BUSY';
+  return error;
+}
+
+function createUnavailableError(entry) {
+  const error = new Error(`workspace ${entry.workspaceId} 当前不可用，请稍后重试`);
+  error.code = 'WORKSPACE_UNAVAILABLE';
+  error.state = entry.state;
+  error.retryable = true;
   return error;
 }
 
@@ -134,6 +146,7 @@ function createWorkspaceRegistry(options = {}) {
       closeAttempts: 0,
       lastCloseError: null,
       closePromise: null,
+      state: WORKSPACE_STATE_ACTIVE,
     };
     contexts.set(workspaceId, entry);
     ensureSweepTimer();
@@ -149,6 +162,9 @@ function createWorkspaceRegistry(options = {}) {
     if (!entry) {
       entry = createEntry(normalized);
     }
+    if (entry.state !== WORKSPACE_STATE_ACTIVE) {
+      throw createUnavailableError(entry);
+    }
     touch(entry);
     return entry;
   }
@@ -158,18 +174,22 @@ function createWorkspaceRegistry(options = {}) {
       return entry.closePromise;
     }
 
+    entry.state = WORKSPACE_STATE_CLOSING;
     entry.closeAttempts += 1;
     const attempt = Promise.resolve()
       .then(() => entry.context.close())
       .then(
         () => {
+          entry.state = WORKSPACE_STATE_CLOSED;
           if (contexts.get(entry.workspaceId) === entry) {
             contexts.delete(entry.workspaceId);
           }
           entry.lastCloseError = null;
+          stopSweepTimerIfEmpty();
           return true;
         },
         (error) => {
+          entry.state = WORKSPACE_STATE_CLOSE_FAILED;
           entry.lastCloseError = error;
           console.warn('[workspace] 关闭 workspace 失败，保留上下文等待重试', error?.message || String(error));
           if (entry.closePromise === attempt) {
@@ -184,6 +204,12 @@ function createWorkspaceRegistry(options = {}) {
 
   function isReclaimable(entry, timestamp) {
     if (entry.leases.size > 0) {
+      return false;
+    }
+    if (entry.state === WORKSPACE_STATE_CLOSE_FAILED) {
+      return true;
+    }
+    if (entry.state !== WORKSPACE_STATE_ACTIVE) {
       return false;
     }
     const activity = readActivitySnapshot(entry.context);
@@ -255,27 +281,30 @@ function createWorkspaceRegistry(options = {}) {
       released = entry.leases.delete(first);
     }
     if (released) {
-      touch(entry);
+      if (entry.state === WORKSPACE_STATE_ACTIVE) {
+        touch(entry);
+      }
     }
     return released;
   }
 
-  async function closeWorkspaceContext(workspaceId, options = {}) {
+  function closeWorkspaceContext(workspaceId, options = {}) {
     const normalized = String(workspaceId || '').trim();
     const entry = contexts.get(normalized);
     if (!entry) {
-      return false;
+      return Promise.resolve(false);
     }
     if (entry.closePromise) {
       return entry.closePromise;
     }
     const force = Boolean(options.force);
-    if (!force && (entry.leases.size > 0 || readActivitySnapshot(entry.context).active)) {
-      throw createBusyError(normalized);
+    if (!force && (
+      entry.leases.size > 0
+      || (entry.state === WORKSPACE_STATE_ACTIVE && readActivitySnapshot(entry.context).active)
+    )) {
+      return Promise.reject(createBusyError(normalized));
     }
-    await closeEntry(entry);
-    stopSweepTimerIfEmpty();
-    return true;
+    return closeEntry(entry);
   }
 
   async function closeAll(options = {}) {
@@ -289,7 +318,10 @@ function createWorkspaceRegistry(options = {}) {
     let closed = 0;
     const closePromises = [];
     for (const entry of Array.from(contexts.values())) {
-      if (!force && !entry.closePromise && (entry.leases.size > 0 || readActivitySnapshot(entry.context).active)) {
+      if (!force && !entry.closePromise && (
+        entry.leases.size > 0
+        || (entry.state === WORKSPACE_STATE_ACTIVE && readActivitySnapshot(entry.context).active)
+      )) {
         const busyError = createBusyError(entry.workspaceId);
         entry.lastCloseError = busyError;
         errors.push(busyError);
@@ -307,6 +339,9 @@ function createWorkspaceRegistry(options = {}) {
       }
     }
     stopSweepTimerIfEmpty();
+    if (contexts.size > 0) {
+      ensureSweepTimer();
+    }
     return { closed, failed: errors.length, errors };
   }
 
@@ -315,6 +350,7 @@ function createWorkspaceRegistry(options = {}) {
       const activity = readActivitySnapshot(entry.context);
       return {
         workspaceId: entry.workspaceId,
+        state: entry.state,
         leaseCount: entry.leases.size,
         lastAccessAt: entry.lastAccessAt,
         closeAttempts: entry.closeAttempts,
