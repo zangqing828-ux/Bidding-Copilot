@@ -92,6 +92,32 @@ async function main() {
     assert.deepEqual(seen, ['public.example', 'private.example']);
   });
 
+  await run('预检与连接 lookup 分离：预检返回公网，连接解析返回私网须拒绝', async () => {
+    const seen = [];
+    const policy = createPolicy(async (hostname) => {
+      seen.push(hostname);
+      if (hostname === 'rebinding.test') {
+        if (seen.length === 1) {
+          return [{ address: '93.184.216.34', family: 4 }];
+        }
+        return [{ address: '10.0.0.7', family: 4 }];
+      }
+      return [{ address: '93.184.216.34', family: 4 }];
+    });
+
+    const options = await policy.assertAllowed('https://rebinding.test/v1');
+    assert.ok(options && options.dispatcher, 'policy 应返回带 dispatcher 的 request options');
+    assert.equal(seen.length, 1);
+
+    const connectLookup = policy.getConnectLookup();
+    await assert.rejects(
+      connectLookup('rebinding.test', {}),
+      (error) => error.code === 'AI_ENDPOINT_NOT_ALLOWED',
+    );
+    assert.equal(seen.length, 2);
+    assert.equal(seen[1], 'rebinding.test');
+  });
+
   await run('生产环境拒绝 HTTP，开发环境只有显式 allowHttp 才放行', async () => {
     const lookup = async () => [{ address: '93.184.216.34', family: 4 }];
     const productionPolicy = createWebEndpointPolicy({ production: true, lookup });
@@ -137,6 +163,14 @@ async function main() {
     } finally {
       runtime.close();
     }
+  });
+
+  await run('policy.close 可关闭且可安全重复关闭', async () => {
+    const policy = createPolicy(async () => [{ address: '93.184.216.34', family: 4 }]);
+    await policy.assertAllowed('https://public.example/v1');
+    assert.equal(typeof policy.close, 'function');
+    await policy.close();
+    await policy.close();
   });
 
   if (failed.length) {

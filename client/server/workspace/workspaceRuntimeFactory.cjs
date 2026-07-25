@@ -149,7 +149,8 @@ function createWebWorkspaceRuntime({
       sharedCoordinator: resolvedCoordinator,
       loadConfig: configStore.loadDecrypted.bind(configStore),
     };
-    if (process.env.NODE_ENV === 'production' || !runtimeAiOptions.endpointPolicy) {
+    const isProductionRuntime = process.env.NODE_ENV === 'production';
+    if (isProductionRuntime) {
       runtimeAiOptions.endpointPolicy = createWebEndpointPolicy();
     }
     if (typeof runtimeAiOptions.trackRequest !== 'function') {

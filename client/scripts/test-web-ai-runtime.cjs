@@ -223,6 +223,42 @@ async function main() {
       assertNoSecret(parsed, 'requestJson 返回值');
     });
 
+    await run('policy 返回的 requestOptions 会透传到 runtime fetch 并保持 redirect manual', async () => {
+      const capture = {
+        policyClosed: false,
+        fetchOptions: null,
+      };
+      const dispatcher = { __kind: 'test-dispatcher' };
+      const runtimeWithPolicy = createAiRuntime({
+        workspaceKey: 'request-options-runtime',
+        loadConfig: () => createConfig(mock.baseUrl),
+        sharedCoordinator: createAiFairCoordinator(),
+        endpointPolicy: {
+          assertAllowed: async () => ({ dispatcher }),
+          close() {
+            capture.policyClosed = true;
+          },
+        },
+        fetch: async (_url, options) => {
+          capture.fetchOptions = options;
+          return createResponse(200, {
+            choices: [{ message: { content: 'dispatcher-ok' } }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          });
+        },
+        retryDelay: 0,
+      });
+      try {
+        const content = await runtimeWithPolicy.chat({ messages: [{ role: 'user', content: 'use dispatcher' }] });
+        assert.equal(content, 'dispatcher-ok');
+        assert.equal(capture.fetchOptions?.dispatcher, dispatcher);
+        assert.equal(capture.fetchOptions?.redirect, 'manual');
+      } finally {
+        runtimeWithPolicy.close();
+        assert.equal(capture.policyClosed, true, 'runtime.close 应触发 policy.close');
+      }
+    });
+
     await run('configStore.load 脱敏，loadDecrypted 与 runtime 使用明文', async () => {
       tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'web-ai-runtime-config-'));
       process.env.CONFIG_ENCRYPTION_KEY = 'web-ai-runtime-test-encryption-key';
@@ -588,6 +624,66 @@ async function main() {
       const coordinatorProbe = await bridgeCoordinator.enqueue('text', 'post-close-probe', async () => 'alive');
       assert.equal(coordinatorProbe, 'alive');
       context = null;
+    });
+
+    await run('生产环境下 workspace factory 强制注入安全 endpoint policy，忽略注入的空策略', async () => {
+      const oldNodeEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      const runtimeCoordinator = createAiFairCoordinator();
+      let injectedEndpointCalled = false;
+      workspaceTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'web-ai-runtime-workspace-prod-'));
+      const productionContext = createWorkspaceContext({
+        workspaceId: 'bridge-model-list-prod',
+        dataDir: workspaceTempDir,
+        runtimeFactory: (runtimeOptions) => createWorkspaceRuntimeFactory({
+          ...runtimeOptions,
+          sharedCoordinator: runtimeCoordinator,
+          aiRuntimeOptions: {
+            fetch: async (url) => {
+              if (String(url).includes('/v1/models')) {
+                return createResponse(200, {
+                  data: [{ id: 'model-a' }, { id: 'model-b' }],
+                });
+              }
+              return createResponse(200, {
+                choices: [{ message: { content: 'ok' } }],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              });
+            },
+            endpointPolicy: {
+              assertAllowed: async () => {
+                injectedEndpointCalled = true;
+                return false;
+              },
+            },
+            retryDelay: 0,
+          },
+        }),
+      });
+      try {
+        productionContext.configStore.save({
+          text_model_provider: 'custom',
+          api_key: API_KEY,
+          base_url: 'https://93.184.216.34/v1',
+          model_name: 'runtime-test-model',
+        });
+        const result = await bridgeRouter.__contractDispatchers.config.listModels(productionContext, [{
+          api_key: API_KEY,
+          base_url: 'https://93.184.216.34/v1',
+          model_name: 'runtime-test-model',
+        }]);
+        assert.equal(result.success, true);
+        assert.equal(result.models.length, 2);
+        assert.equal(injectedEndpointCalled, false, '生产环境应忽略注入 endpointPolicy');
+      } finally {
+        process.env.NODE_ENV = oldNodeEnv;
+        productionContext.close();
+        runtimeCoordinator.close();
+        if (workspaceTempDir && fs.existsSync(workspaceTempDir)) {
+          fs.rmSync(workspaceTempDir, { recursive: true, force: true });
+          workspaceTempDir = null;
+        }
+      }
     });
 
     await run('Web/core 可达 require 图不进入 Electron', async () => {

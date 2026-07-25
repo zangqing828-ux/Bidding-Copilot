@@ -202,18 +202,106 @@ function isBlockedHostname(hostname) {
 }
 
 function normalizeLookupResults(result) {
-  if (Array.isArray(result)) {
-    return result
-      .map((item) => (typeof item === 'string' ? item : item?.address))
-      .filter(Boolean);
+  const entries = Array.isArray(result) ? result : [result];
+  return entries
+    .map((item) => {
+      if (typeof item === 'string') {
+        return { address: item, family: 0 };
+      }
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+      if (typeof item.address !== 'string') {
+        return null;
+      }
+      return {
+        address: item.address,
+        family: Number(item.family) || 0,
+      };
+    })
+    .filter(Boolean)
+    .filter((item) => item.address);
+}
+
+function normalizeFamilyHint(options) {
+  const family = Number(options?.family);
+  return Number.isInteger(family) ? family : 0;
+}
+
+function promiseFromLookup(lookupFn, hostname, options) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const finish = (error, value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(value);
+    };
+
+    try {
+      if (lookupFn.length >= 3) {
+        const lookupCallback = (error, addressOrArray, family) => {
+          if (error) {
+            return finish(error);
+          }
+          const records = normalizeLookupResults(
+            Array.isArray(addressOrArray) ? addressOrArray : { address: addressOrArray, family },
+          );
+          finish(null, records);
+        };
+        const callbackResult = lookupFn(hostname, options, lookupCallback);
+        if (callbackResult && typeof callbackResult.then === 'function') {
+          callbackResult
+            .then((value) => finish(null, normalizeLookupResults(value)))
+            .catch((error) => finish(error));
+        }
+      } else {
+        const result = lookupFn(hostname, options);
+        if (result && typeof result.then === 'function') {
+          result.then((value) => finish(null, normalizeLookupResults(value))).catch((error) => finish(error));
+        } else {
+          finish(null, normalizeLookupResults(result));
+        }
+      }
+    } catch (error) {
+      finish(error);
+    }
+  });
+}
+
+function filterSafeLookupResults(result) {
+  const records = normalizeLookupResults(result);
+  if (!records.length) {
+    throw createEndpointPolicyError();
   }
-  if (typeof result === 'string') {
-    return [result];
+  if (records.some((record) => isBlockedAddress(record.address))) {
+    throw createEndpointPolicyError();
   }
-  if (result && typeof result.address === 'string') {
-    return [result.address];
+  const safe = records.filter((record) => !isBlockedAddress(record.address));
+  if (!safe.length) {
+    throw createEndpointPolicyError();
   }
-  return [];
+  return safe;
+}
+
+function pickSafeRecord(records, familyHint) {
+  if (!Array.isArray(records) || !records.length) {
+    throw createEndpointPolicyError();
+  }
+  const normalizedHint = Number(familyHint) || 0;
+  if (normalizedHint > 0) {
+    const matched = records.find((record) => Number(record.family) === normalizedHint && Number(record.family) > 0);
+    if (matched) {
+      return matched;
+    }
+  }
+  return records[0];
 }
 
 function createWebEndpointPolicy(options = {}) {
@@ -223,6 +311,24 @@ function createWebEndpointPolicy(options = {}) {
     : Boolean(options.production);
   const allowHttp = !production && (options.allowHttp === true || env.WEB_AI_ALLOW_HTTP === '1');
   const lookup = typeof options.lookup === 'function' ? options.lookup : dns.lookup.bind(dns);
+
+  const { Agent } = require('undici');
+  const dispatcher = new Agent({
+    connect: {
+      lookup: async (hostname, options, callback) => {
+        try {
+          const records = filterSafeLookupResults(await promiseFromLookup(lookup, hostname, { all: true, verbatim: true }));
+          const familyHint = normalizeFamilyHint(options);
+          const selected = pickSafeRecord(records, familyHint);
+          callback(null, selected.address, selected.family || familyHint || 0);
+        } catch (error) {
+          callback(error);
+        }
+      },
+    },
+  });
+  const policyRequestOptions = { dispatcher };
+  let closed = false;
 
   async function assertAllowed(endpoint) {
     let parsed;
@@ -248,25 +354,45 @@ function createWebEndpointPolicy(options = {}) {
       if (isBlockedAddress(hostname)) {
         throw createEndpointPolicyError();
       }
-      return true;
+      return policyRequestOptions;
     }
 
-    let lookupResult;
     try {
-      lookupResult = await lookup(hostname, { all: true, verbatim: true });
+      const records = filterSafeLookupResults(await promiseFromLookup(lookup, hostname, { all: true, verbatim: true }));
+      if (!records.length) {
+        throw createEndpointPolicyError();
+      }
+      return policyRequestOptions;
     } catch {
       throw createEndpointPolicyError();
     }
-    const addresses = normalizeLookupResults(lookupResult);
-    if (!addresses.length || addresses.some((address) => isBlockedAddress(address))) {
-      throw createEndpointPolicyError();
+  }
+
+  function close() {
+    if (closed) {
+      return;
     }
-    return true;
+    closed = true;
+    return dispatcher.close();
+  }
+
+  function getConnectLookup() {
+    return async (hostname, options) => {
+      const records = filterSafeLookupResults(await promiseFromLookup(lookup, hostname, { all: true, verbatim: true }));
+      const familyHint = normalizeFamilyHint(options);
+      const record = pickSafeRecord(records, familyHint);
+      return {
+        address: record.address,
+        family: record.family || familyHint || 0,
+      };
+    };
   }
 
   return Object.freeze({
     assertAllowed,
     validate: assertAllowed,
+    close,
+    getConnectLookup,
   });
 }
 

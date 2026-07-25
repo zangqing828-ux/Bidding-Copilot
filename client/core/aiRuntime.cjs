@@ -491,6 +491,7 @@ function createAiRuntime(options = {}) {
   const platform = normalizeText(options.platform) || process.platform;
   const arch = normalizeText(options.arch) || process.arch;
   let closed = false;
+  let endpointPolicyClosed = false;
 
   function getScopeId(request, fallbackScopeId) {
     return normalizeScopeId(
@@ -539,9 +540,25 @@ function createAiRuntime(options = {}) {
     }
   }
 
-  async function assertEndpointAllowed(url, operation) {
+  function extractEndpointRequestOptions(policyResult) {
+    if (policyResult === true || policyResult === undefined || policyResult === null) {
+      return {};
+    }
+    if (policyResult === false || typeof policyResult !== 'object') {
+      throw createRuntimeError('AI 上游地址不允许', 'AI_ENDPOINT_NOT_ALLOWED');
+    }
+    if (policyResult.requestOptions && typeof policyResult.requestOptions === 'object') {
+      return policyResult.requestOptions;
+    }
+    if (Object.prototype.hasOwnProperty.call(policyResult, 'dispatcher') && policyResult.dispatcher) {
+      return { dispatcher: policyResult.dispatcher };
+    }
+    return {};
+  }
+
+  async function resolveEndpointRequestOptions(url, operation) {
     if (!endpointPolicy) {
-      return;
+      return {};
     }
 
     const validate = typeof endpointPolicy === 'function'
@@ -553,13 +570,19 @@ function createAiRuntime(options = {}) {
 
     try {
       const result = await validate.call(endpointPolicy, url, { operation });
-      if (result === false) {
-        throw new Error('endpoint rejected');
-      }
+      return extractEndpointRequestOptions(result);
     } catch {
       // endpoint policy 的底层异常可能包含 URL、DNS 信息或实现细节，统一收敛为安全错误。
       throw createRuntimeError('AI 上游地址不允许', 'AI_ENDPOINT_NOT_ALLOWED');
     }
+  }
+
+  function closeEndpointPolicy() {
+    if (endpointPolicyClosed || !endpointPolicy || typeof endpointPolicy.close !== 'function') {
+      return;
+    }
+    endpointPolicyClosed = true;
+    endpointPolicy.close();
   }
 
   async function fetchWithTimeout(url, requestOptions, timeoutMs) {
@@ -610,8 +633,13 @@ function createAiRuntime(options = {}) {
   }
 
   async function requestJsonBody(url, requestOptions, timeoutMs, operation) {
-    await assertEndpointAllowed(url, operation);
-    const response = await fetchWithTimeout(url, requestOptions, timeoutMs);
+    const endpointRequestOptions = await resolveEndpointRequestOptions(url, operation);
+    const mergedRequestOptions = {
+      ...endpointRequestOptions,
+      ...requestOptions,
+    };
+
+    const response = await fetchWithTimeout(url, mergedRequestOptions, timeoutMs);
     if (!isResponseOk(response)) {
       throw createHttpError(response?.status);
     }
@@ -833,6 +861,7 @@ function createAiRuntime(options = {}) {
         return;
       }
       closed = true;
+      closeEndpointPolicy();
       queue.close();
       textTokenStats.close();
     },
