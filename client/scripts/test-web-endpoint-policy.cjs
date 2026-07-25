@@ -263,6 +263,35 @@ async function main() {
     }
   });
 
+  await run('policy.close 失败后允许重试，并发共享 Promise 且成功后永久幂等', async () => {
+    let closeCalls = 0;
+    const dispatcher = {
+      close() {
+        closeCalls += 1;
+        if (closeCalls === 1) {
+          return Promise.reject(new Error('dispatcher close failed'));
+        }
+        return Promise.resolve();
+      },
+    };
+    const policy = createPolicy(
+      async () => [{ address: '93.184.216.34', family: 4 }],
+      { __testDispatcher: dispatcher },
+    );
+
+    const first = policy.close();
+    const concurrent = policy.close();
+    assert.equal(first, concurrent, '失败中的并发 close 应共享同一 Promise');
+    await assert.rejects(first, /dispatcher close failed/);
+    assert.equal(closeCalls, 1);
+
+    const retry = policy.close();
+    assert.notEqual(retry, first, '失败后重试应创建新的关闭 Promise');
+    await retry;
+    assert.equal(closeCalls, 2);
+    assert.equal(policy.close(), retry, '成功后重复 close 应永久复用已完成 Promise');
+  });
+
   if (failed.length) {
     console.error(`\n=== Web endpoint policy 测试失败：${failed.length} ===`);
     failed.forEach((message) => console.error(`- ${message}`));

@@ -339,11 +339,14 @@ function createWebEndpointPolicy(options = {}) {
   const connectLookup = createConnectLookup(lookup);
 
   const { Agent } = require('undici');
-  const dispatcher = new Agent({
-    connect: {
-      lookup: connectLookup,
-    },
-  });
+  // 仅供模块测试注入；生产环境始终创建带安全 lookup 的 Undici Agent。
+  const dispatcher = !production && options.__testDispatcher
+    ? options.__testDispatcher
+    : new Agent({
+      connect: {
+        lookup: connectLookup,
+      },
+    });
   const policyRequestOptions = { dispatcher };
   let closePromise = null;
 
@@ -390,8 +393,17 @@ function createWebEndpointPolicy(options = {}) {
       return closePromise;
     }
 
-    closePromise = Promise.resolve().then(() => dispatcher.close());
-    return closePromise;
+    const attempt = Promise.resolve().then(() => dispatcher.close());
+    closePromise = attempt;
+    void attempt.then(
+      () => undefined,
+      () => {
+        if (closePromise === attempt) {
+          closePromise = null;
+        }
+      },
+    );
+    return attempt;
   }
 
   function getConnectLookup() {
