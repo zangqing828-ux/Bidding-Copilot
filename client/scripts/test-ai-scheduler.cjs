@@ -164,6 +164,47 @@ async function testLocalQueueLimitsAndScopePause() {
   assert(busyResult === 'running', '暂停后运行中的任务仍可完成');
 }
 
+async function testDelegatedGlobalWaitPause() {
+  const coordinator = createAiFairCoordinator({ textLimit: 1 });
+  const queue = createAiRequestQueue({
+    coordinator,
+    workspaceKey: 'delegated-pause',
+    textLimit: 2,
+  });
+  const hold = createDeferred();
+  let pausedRunnerStarted = false;
+
+  const running = queue.enqueue('text', async () => {
+    await hold.promise;
+    return 'running';
+  });
+  const paused = queue.enqueue('text', async () => {
+    pausedRunnerStarted = true;
+    return 'should-not-run';
+  }, { scopeId: 'paused-scope' });
+  const pausedOutcome = paused.then(
+    () => ({ status: 'resolved' }),
+    (error) => ({ status: 'rejected', code: error && error.code }),
+  );
+
+  assert(coordinator.getStatus().text.active === 1, '暂停回归中的首项正在全局执行');
+  assert(coordinator.getStatus().text.queued === 1, '暂停回归中的第二项已进入全局队列');
+
+  const dropped = queue.pauseScope('paused-scope');
+  const observed = await Promise.race([
+    pausedOutcome,
+    wait(100).then(() => ({ status: 'timeout' })),
+  ]);
+
+  assert(dropped === 1, '全局排队任务暂停后返回 dropped = 1');
+  assert(observed.status === 'rejected' && observed.code === AI_QUEUE_SCOPE_PAUSED, '全局排队任务立即拒绝 AI_QUEUE_SCOPE_PAUSED');
+  assert(pausedRunnerStarted === false, '被暂停的全局排队任务 runner 从未执行');
+
+  hold.resolve();
+  assert(await running === 'running', '全局排队暂停不影响已执行任务');
+  await pausedOutcome;
+}
+
 async function testCloseIsolation() {
   const coordinator = createAiFairCoordinator({ textLimit: 2 });
   const queueA = createAiRequestQueue({ coordinator, workspaceKey: 'account-a', textLimit: 1 });
@@ -195,6 +236,43 @@ async function testCloseIsolation() {
   assert(bResult === 'b-running', '关闭一个本地 queue 不影响共享 coordinator 与另一个工作区任务');
   const status = coordinator.getStatus();
   assert(status.text.queued === 0, '共享 coordinator 可继续处理其他队列，不被本地 close 卡住');
+}
+
+async function testDelegatedGlobalWaitClose() {
+  const coordinator = createAiFairCoordinator({ textLimit: 1 });
+  const queueA = createAiRequestQueue({ coordinator, workspaceKey: 'close-a', textLimit: 2 });
+  const queueB = createAiRequestQueue({ coordinator, workspaceKey: 'close-b', textLimit: 2 });
+  const hold = createDeferred();
+  let accountBStarted = false;
+
+  const aRunning = queueA.enqueue('text', async () => {
+    await hold.promise;
+    return 'a-running';
+  });
+  const aQueued = queueA.enqueue('text', async () => 'a-queued');
+  const bQueued = queueB.enqueue('text', async () => {
+    accountBStarted = true;
+    return 'b-running';
+  });
+  const aQueuedOutcome = aQueued.then(
+    () => ({ status: 'resolved' }),
+    (error) => ({ status: 'rejected', code: error && error.code }),
+  );
+
+  queueA.close();
+  const observed = await Promise.race([
+    aQueuedOutcome,
+    wait(100).then(() => ({ status: 'timeout' })),
+  ]);
+  assert(observed.status === 'rejected' && observed.code === 'AI_REQUEST_QUEUE_CLOSED', '本地 close 立即拒绝全局排队任务');
+
+  hold.resolve();
+  const runningResult = await aRunning;
+  const bResult = await bQueued;
+  assert(runningResult === 'a-running', '本地 close 后已执行任务继续完成');
+  assert(bResult === 'b-running' && accountBStarted, '本地 close 后另一个账号继续执行');
+  assert(coordinator.getStatus().text.queued === 0, '本地 close 只移除所属全局排队任务');
+  await aQueuedOutcome;
 }
 
 async function testTextTokenStatsIsolation() {
@@ -266,7 +344,9 @@ async function run() {
   await testLaneIsolationAndLimits();
   await testTwoAccountFairness();
   await testLocalQueueLimitsAndScopePause();
+  await testDelegatedGlobalWaitPause();
   await testCloseIsolation();
+  await testDelegatedGlobalWaitClose();
   await testTextTokenStatsIsolation();
   testCoreFilesNoElectronRequire();
 

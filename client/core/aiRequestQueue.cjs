@@ -80,12 +80,14 @@ function createAiRequestQueue(options = {}) {
       activeCount: 0,
       limit: textLimit,
       pausedScopes: new Set(),
+      delegatedJobs: new Set(),
     },
     image: {
       queue: [],
       activeCount: 0,
       limit: imageLimit,
       pausedScopes: new Set(),
+      delegatedJobs: new Set(),
     },
   };
   let isClosed = false;
@@ -118,6 +120,8 @@ function createAiRequestQueue(options = {}) {
       });
     }
 
+    job.delegated = delegated;
+    state.delegatedJobs.add(job);
     return Promise.resolve(delegated)
       .then((value) => {
         job.resolve(value);
@@ -125,6 +129,7 @@ function createAiRequestQueue(options = {}) {
         job.reject(error);
       })
       .finally(() => {
+        state.delegatedJobs.delete(job);
         state.activeCount -= 1;
         pumpLane(lane);
       });
@@ -156,6 +161,20 @@ function createAiRequestQueue(options = {}) {
       const job = state.queue.shift();
       job.reject(createQueueClosedError());
     }
+  }
+
+  function cancelDelegatedJobs(state, shouldCancel, createError) {
+    let dropped = 0;
+    for (const job of state.delegatedJobs) {
+      if (!shouldCancel(job) || !job.delegated || typeof job.delegated.cancel !== 'function') {
+        continue;
+      }
+
+      if (job.delegated.cancel(createError())) {
+        dropped += 1;
+      }
+    }
+    return dropped;
   }
 
   function enqueue(lane, runner, options = {}) {
@@ -212,6 +231,11 @@ function createAiRequestQueue(options = {}) {
         }
       }
       state.queue = remaining;
+      dropped += cancelDelegatedJobs(
+        state,
+        (job) => job.scopeId === normalizedScopeId,
+        createQueueScopePausedError,
+      );
     });
 
     return dropped;
@@ -251,6 +275,7 @@ function createAiRequestQueue(options = {}) {
     Object.keys(laneStates).forEach((lane) => {
       const state = laneStates[lane];
       rejectQueuedJobs(state);
+      cancelDelegatedJobs(state, () => true, createQueueClosedError);
       state.pausedScopes.clear();
     });
   }

@@ -107,8 +107,10 @@ function createAiFairCoordinator(options = {}) {
   async function runJob(laneState, lane, laneKey, job) {
     try {
       const result = await job.runner();
+      job.settled = true;
       job.resolve(result);
     } catch (error) {
+      job.settled = true;
       job.reject(error);
     } finally {
       laneState.activeCount = Math.max(0, laneState.activeCount - 1);
@@ -140,8 +142,38 @@ function createAiFairCoordinator(options = {}) {
       }
 
       laneState.activeCount += 1;
+      job.started = true;
       void runJob(laneState, lane, lane, job);
     }
+  }
+
+  function cancelQueuedJob(lane, workspaceKey, job, reason) {
+    if (job.started || job.settled) {
+      return false;
+    }
+
+    const laneState = lanes[lane];
+    const queue = laneState.queues.get(workspaceKey);
+    if (!queue) {
+      return false;
+    }
+
+    const index = queue.indexOf(job);
+    if (index < 0) {
+      return false;
+    }
+
+    queue.splice(index, 1);
+    if (queue.length === 0) {
+      laneState.queues.delete(workspaceKey);
+      if (laneState.lastScheduledWorkspace === workspaceKey) {
+        laneState.lastScheduledWorkspace = null;
+      }
+    }
+
+    job.settled = true;
+    job.reject(reason);
+    return true;
   }
 
   function rejectQueuedJobs(lane) {
@@ -149,6 +181,7 @@ function createAiFairCoordinator(options = {}) {
     for (const queue of laneState.queues.values()) {
       while (queue.length) {
         const job = queue.shift();
+        job.settled = true;
         job.reject(createQueueClosedError());
       }
     }
@@ -173,14 +206,22 @@ function createAiFairCoordinator(options = {}) {
       laneState.queues.set(key, queue);
     }
 
-    return new Promise((resolve, reject) => {
-      queue.push({
-        runner,
-        resolve,
-        reject,
-      });
+    const job = {
+      runner,
+      resolve: null,
+      reject: null,
+      started: false,
+      settled: false,
+    };
+    const promise = new Promise((resolve, reject) => {
+      job.resolve = resolve;
+      job.reject = reject;
+      queue.push(job);
       pumpLane(normalizedLane);
     });
+
+    promise.cancel = (reason) => cancelQueuedJob(normalizedLane, key, job, reason);
+    return promise;
   }
 
   function getLaneStatus(laneState) {
