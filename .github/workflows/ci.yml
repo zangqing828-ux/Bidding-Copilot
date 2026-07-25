@@ -96,6 +96,11 @@ jobs:
         env:
           CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
 
+      - name: Run Web AI Runtime tests
+        run: npm run test:web-ai-runtime
+        env:
+          CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
+
       - name: Run Web Tasks tests
         run: npm run test:web-tasks
         env:

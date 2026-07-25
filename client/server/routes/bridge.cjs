@@ -81,6 +81,7 @@ const bridgeBindingMetadata = Object.freeze({
   config: Object.freeze({
     load: createDirectBinding((ctx) => ctx.configStore.load(), 'config.load'),
     save: createDirectBinding((ctx, args) => ctx.configStore.save(args[0]), 'config.save'),
+    listModels: createDirectBinding((ctx, args) => ctx.aiService.listModels(args[0]), 'config.listModels'),
   }),
 
   technicalPlan: Object.freeze({

@@ -6,6 +6,9 @@ const { createDuplicateCheckStore } = require('../../core/stores/duplicateCheckS
 const { createRejectionCheckStore } = require('../../core/stores/rejectionCheckStore.cjs');
 const { createTaskEventPort } = require('../../core/taskEventPort.cjs');
 const { assertPort } = require('../../core/ports.cjs');
+const { createAiRuntime } = require('../../core/aiRuntime.cjs');
+const { getGlobalAiCoordinator } = require('../ai/globalAiCoordinator.cjs');
+const { createAiAnalyticsTracker } = require('../ai/aiAnalytics.cjs');
 
 function createCloseHandler(target) {
   if (!target || typeof target.close !== 'function') {
@@ -90,6 +93,8 @@ function createWebWorkspaceRuntime({
   paths,
   databasePath,
   configPath,
+  sharedCoordinator,
+  aiRuntimeOptions = {},
 }) {
   const closeHandlers = [];
   let runtimeClosed = false;
@@ -117,7 +122,6 @@ function createWebWorkspaceRuntime({
   try {
     const { createSqliteDatabase } = require('../../core/sqliteDatabase.cjs');
     const {
-      createWebAiServiceStub,
       createWebAgentServiceStub,
       createWebTaskServiceStub,
       createWebKnowledgeBaseServiceStub,
@@ -137,7 +141,21 @@ function createWebWorkspaceRuntime({
     const rejectionCheckStore = createRejectionCheckStore({ db: sqliteDatabase.db, workspaceRoot, technicalPlanStore });
     const templateStore = createTemplateStore({ db: sqliteDatabase.db });
 
-    const aiService = createWebAiServiceStub();
+    const resolvedCoordinator = sharedCoordinator || getGlobalAiCoordinator();
+    const runtimeAiOptions = {
+      ...aiRuntimeOptions,
+      workspaceKey: workspaceId,
+      sharedCoordinator: resolvedCoordinator,
+      loadConfig: configStore.loadDecrypted.bind(configStore),
+    };
+    if (typeof runtimeAiOptions.trackRequest !== 'function') {
+      runtimeAiOptions.trackRequest = createAiAnalyticsTracker({
+        fetch: runtimeAiOptions.analyticsFetch,
+      });
+    }
+    delete runtimeAiOptions.analyticsFetch;
+    const aiService = createAiRuntime(runtimeAiOptions);
+    pushCloseHandler(closeHandlers, createCloseHandler(aiService), 'aiService');
     const agentService = createWebAgentServiceStub();
     if (!agentService || typeof agentService.close !== 'function') {
       throw new Error('agentService 缺少 close 方法');
@@ -155,6 +173,7 @@ function createWebWorkspaceRuntime({
       db: sqliteDatabase.db,
       sqliteDatabase,
       configStore,
+      aiService,
       taskService,
       taskEvents,
       stores: {
@@ -211,6 +230,8 @@ function createWorkspaceRuntimeFactory(runtimeOptions = {}) {
     databasePath,
     configPath,
     adapter = 'web',
+    sharedCoordinator,
+    aiRuntimeOptions,
   } = runtimeOptions;
 
   if (adapter !== 'web') {
@@ -224,6 +245,8 @@ function createWorkspaceRuntimeFactory(runtimeOptions = {}) {
     paths,
     databasePath,
     configPath,
+    sharedCoordinator,
+    aiRuntimeOptions,
   });
 }
 

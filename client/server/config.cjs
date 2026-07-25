@@ -38,6 +38,26 @@ const oauth = {
 
 const sessionSecret = process.env.SESSION_SECRET || '';
 const publicBaseUrl = process.env.PUBLIC_BASE_URL || 'http://localhost:3000';
+const WEB_AI_DEFAULT_TEXT_LIMIT = 30;
+const WEB_AI_DEFAULT_IMAGE_LIMIT = 6;
+
+function normalizeWebAiLimit(value, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+  const normalized = Math.floor(number);
+  return normalized > 0 ? Math.min(normalized, fallback) : fallback;
+}
+
+const webAiGlobalTextLimit = normalizeWebAiLimit(
+  process.env.WEB_AI_GLOBAL_TEXT_LIMIT,
+  WEB_AI_DEFAULT_TEXT_LIMIT,
+);
+const webAiGlobalImageLimit = normalizeWebAiLimit(
+  process.env.WEB_AI_GLOBAL_IMAGE_LIMIT,
+  WEB_AI_DEFAULT_IMAGE_LIMIT,
+);
 
 // mainquest 模式启动时校验必需配置，错误信息只列配置名。
 if (oauthMode === 'mainquest') {
@@ -82,6 +102,8 @@ const config = {
   sessionTtlDays: Number(process.env.SESSION_TTL_DAYS) || 7,
   configEncryptionKey: process.env.CONFIG_ENCRYPTION_KEY || '',
   uploadMaxSize: Number(process.env.UPLOAD_MAX_SIZE_MB) || 50,
+  webAiGlobalTextLimit,
+  webAiGlobalImageLimit,
 };
 
 module.exports = config;

@@ -311,7 +311,7 @@ const rawMethods = {
   config: {
     load: createContractEntry({ status: 'implemented', owner: 'settings', workPackage: 'WP-A', contractRef: 'config.load' }),
     save: createContractEntry({ status: 'implemented', owner: 'settings', workPackage: 'WP-A', contractRef: 'config.save' }),
-    listModels: createContractEntry({ status: 'pending', owner: 'settings', workPackage: 'WP-C', contractRef: 'config.listModels' }),
+    listModels: createContractEntry({ status: 'implemented', owner: 'settings', workPackage: 'WP-C', contractRef: 'config.listModels' }),
     openConfigFolder: createContractEntry({
       status: 'removed',
       owner: 'desktop',

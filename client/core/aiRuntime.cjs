@@ -1,0 +1,794 @@
+const { createAiRequestQueue } = require('./aiRequestQueue.cjs');
+const { createTextTokenStatsStore } = require('./textTokenStatsStore.cjs');
+
+const DEFAULT_TIMEOUTS = Object.freeze({
+  text: 600000,
+  listModels: 600000,
+});
+const MAX_ATTEMPTS = 3;
+const RETRYABLE_STATUS_CODES = new Set([408, 429]);
+const SAFE_ERROR_CODES = new Set([
+  'AI_CONFIG_LOAD_FAILED',
+  'AI_CONFIG_INVALID',
+  'AI_HTTP_ERROR',
+  'AI_INVALID_REQUEST',
+  'AI_JSON_PARSE_ERROR',
+  'AI_NETWORK_ERROR',
+  'AI_REQUEST_FAILED',
+  'AI_REQUEST_TIMEOUT',
+  'AI_RESPONSE_INVALID',
+  'AI_RESPONSE_PARSE_ERROR',
+  'WEB_CAPABILITY_PENDING',
+]);
+const CHAT_BODY_FIELDS = Object.freeze([
+  'messages',
+  'model',
+  'temperature',
+  'top_p',
+  'max_tokens',
+  'max_completion_tokens',
+  'response_format',
+  'tools',
+  'tool_choice',
+  'parallel_tool_calls',
+  'seed',
+  'stop',
+  'presence_penalty',
+  'frequency_penalty',
+  'n',
+  'user',
+]);
+
+function normalizePositiveInteger(value, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+  const normalized = Math.floor(number);
+  return normalized > 0 ? normalized : fallback;
+}
+
+function normalizeTimeouts(options) {
+  const source = options && typeof options === 'object' ? options : {};
+  const nested = source.timeouts && typeof source.timeouts === 'object' ? source.timeouts : {};
+  return {
+    text: normalizePositiveInteger(
+      nested.text
+        ?? nested.chat
+        ?? nested.request
+        ?? nested.requestMs
+        ?? source.timeoutMs
+        ?? source.timeout_ms
+        ?? source.requestTimeoutMs,
+      DEFAULT_TIMEOUTS.text,
+    ),
+    listModels: normalizePositiveInteger(
+      nested.listModels ?? nested.models ?? source.listModelsTimeoutMs,
+      DEFAULT_TIMEOUTS.listModels,
+    ),
+  };
+}
+
+function normalizeWorkspaceKey(workspaceKey) {
+  const normalized = String(workspaceKey || '').trim();
+  if (!normalized) {
+    throw new Error('workspace/account key 不能为空');
+  }
+  return normalized;
+}
+
+function normalizeScopeId(scopeId) {
+  return String(scopeId || '').trim();
+}
+
+function trimBaseUrl(baseUrl) {
+  return String(baseUrl || '').trim().replace(/\/+$/, '');
+}
+
+function appendEndpoint(baseUrl, endpoint) {
+  const normalizedBaseUrl = trimBaseUrl(baseUrl);
+  return normalizedBaseUrl ? `${normalizedBaseUrl}/${endpoint}` : '';
+}
+
+function normalizeEndpointHost(baseUrl) {
+  const rawValue = String(baseUrl || '').trim();
+  if (!rawValue) {
+    return '';
+  }
+
+  try {
+    const candidate = rawValue.includes('://') ? rawValue : `https://${rawValue}`;
+    return new URL(candidate).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function normalizeText(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    if (normalizeText(value)) {
+      return value;
+    }
+  }
+  return '';
+}
+
+function firstDefined(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function isMaskedApiKey(value) {
+  return /^\*{4}/.test(normalizeText(value));
+}
+
+function readTextModelConfig(source, fallbackProvider = '') {
+  const config = source && typeof source === 'object' ? source : {};
+  const provider = firstNonEmpty(config.text_model_provider, config.provider, fallbackProvider) || 'custom';
+  const profiles = config.text_model_profiles && typeof config.text_model_profiles === 'object'
+    ? config.text_model_profiles
+    : {};
+  const profile = profiles[provider] && typeof profiles[provider] === 'object' ? profiles[provider] : {};
+
+  return {
+    provider,
+    apiKey: firstNonEmpty(config.api_key, config.apiKey, profile.api_key, profile.apiKey),
+    baseUrl: firstNonEmpty(config.base_url, config.baseUrl, profile.base_url, profile.baseUrl),
+    modelName: firstNonEmpty(config.model_name, config.modelName, profile.model_name, profile.modelName),
+  };
+}
+
+function resolveTextModelConfig(savedConfig, override) {
+  const saved = readTextModelConfig(savedConfig);
+  if (!override || typeof override !== 'object') {
+    return saved;
+  }
+
+  const candidate = readTextModelConfig(override, saved.provider);
+  const overrideApiKey = firstDefined(
+    override.api_key,
+    override.apiKey,
+    override.text_model_profiles?.[candidate.provider]?.api_key,
+    override.text_model_profiles?.[candidate.provider]?.apiKey,
+  );
+  const apiKey = isMaskedApiKey(overrideApiKey)
+    ? saved.apiKey
+    : normalizeText(overrideApiKey) ? overrideApiKey : saved.apiKey;
+
+  return {
+    provider: candidate.provider || saved.provider,
+    apiKey,
+    baseUrl: firstNonEmpty(candidate.baseUrl, saved.baseUrl),
+    modelName: firstNonEmpty(candidate.modelName, saved.modelName),
+  };
+}
+
+function createRuntimeError(message, code, options = {}) {
+  const error = new Error(message);
+  error.code = code;
+  if (options.status) {
+    error.status = options.status;
+  }
+  error.retryable = Boolean(options.retryable);
+  return error;
+}
+
+function sanitizeRuntimeError(error, fallbackMessage = 'AI 请求失败') {
+  if (error && SAFE_ERROR_CODES.has(error.code) && error.message && error instanceof Error) {
+    return error;
+  }
+  if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') {
+    return createRuntimeError('AI 请求超时', 'AI_REQUEST_TIMEOUT', { retryable: true });
+  }
+  return createRuntimeError(fallbackMessage, 'AI_NETWORK_ERROR', { retryable: true });
+}
+
+function isRetryableStatus(status) {
+  const normalized = Number(status);
+  return RETRYABLE_STATUS_CODES.has(normalized) || (normalized >= 500 && normalized <= 599);
+}
+
+function createHttpError(status) {
+  const normalizedStatus = Number(status) || 0;
+  return createRuntimeError(
+    normalizedStatus ? `AI 上游请求失败（HTTP ${normalizedStatus}）` : 'AI 上游请求失败',
+    'AI_HTTP_ERROR',
+    { status: normalizedStatus, retryable: isRetryableStatus(normalizedStatus) },
+  );
+}
+
+function isResponseOk(response) {
+  if (!response || typeof response !== 'object') {
+    return false;
+  }
+  if (response.ok === true) {
+    return true;
+  }
+  const status = Number(response.status);
+  return status >= 200 && status < 300;
+}
+
+function normalizeTokenNumber(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
+}
+
+function normalizeTokenUsage(usage) {
+  const source = usage && typeof usage === 'object' ? usage : {};
+  const promptTokens = normalizeTokenNumber(source.prompt_tokens ?? source.promptTokens ?? source.promptTokenCount);
+  const completionTokens = normalizeTokenNumber(
+    source.completion_tokens
+    ?? source.completionTokens
+    ?? source.completionTokenCount
+    ?? source.candidatesTokenCount,
+  );
+  const totalTokens = normalizeTokenNumber(source.total_tokens ?? source.totalTokens ?? source.totalTokenCount)
+    || promptTokens + completionTokens;
+  const promptDetails = source.prompt_tokens_details
+    || source.promptTokensDetails
+    || source.input_token_details
+    || source.inputTokenDetails
+    || {};
+  const cachedTokens = normalizeTokenNumber(
+    source.cached_tokens
+    ?? source.cachedTokens
+    ?? source.prompt_cached_tokens
+    ?? source.promptCachedTokens
+    ?? promptDetails.cached_tokens
+    ?? promptDetails.cachedTokens
+    ?? promptDetails.cache_read
+    ?? promptDetails.cacheRead,
+  );
+
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens,
+    cached_tokens: cachedTokens,
+  };
+}
+
+function buildChatBody(modelConfig, request) {
+  const source = request && typeof request === 'object' ? request : {};
+  const body = {};
+  for (const field of CHAT_BODY_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(source, field)) {
+      body[field] = source[field];
+    }
+  }
+
+  if (!body.model) {
+    body.model = modelConfig.modelName;
+  }
+  if (!body.messages && Array.isArray(source.messages)) {
+    body.messages = source.messages;
+  }
+  body.stream = false;
+
+  if (!Array.isArray(body.messages)) {
+    throw createRuntimeError('AI 请求缺少 messages', 'AI_INVALID_REQUEST');
+  }
+  if (!normalizeText(body.model)) {
+    throw createRuntimeError('AI 请求缺少模型名称', 'AI_INVALID_REQUEST');
+  }
+
+  return body;
+}
+
+function extractMessageContent(message) {
+  if (typeof message?.content === 'string') {
+    return message.content;
+  }
+  if (Array.isArray(message?.content)) {
+    return message.content
+      .map((part) => (typeof part === 'string' ? part : part?.text || part?.content || ''))
+      .join('');
+  }
+  return '';
+}
+
+function extractBalancedJsonCandidates(content) {
+  const text = String(content || '');
+  const candidates = [];
+
+  for (let start = 0; start < text.length; start += 1) {
+    const firstChar = text[start];
+    if (firstChar !== '{' && firstChar !== '[') {
+      continue;
+    }
+
+    const stack = [firstChar];
+    let inString = false;
+    let escaped = false;
+    for (let index = start + 1; index < text.length; index += 1) {
+      const char = text[index];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === '\\') {
+          escaped = true;
+        } else if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inString = true;
+        continue;
+      }
+      if (char === '{' || char === '[') {
+        stack.push(char);
+        continue;
+      }
+      if (char !== '}' && char !== ']') {
+        continue;
+      }
+
+      const expectedOpen = char === '}' ? '{' : '[';
+      if (stack[stack.length - 1] !== expectedOpen) {
+        break;
+      }
+      stack.pop();
+      if (!stack.length) {
+        candidates.push(text.slice(start, index + 1).trim());
+        start = index;
+        break;
+      }
+    }
+  }
+
+  return candidates;
+}
+
+function extractFencedJsonCandidates(content) {
+  const blocks = [];
+  const normalized = String(content || '').trim();
+  const fenceRegex = /```(?:json)?\s*([\s\S]*?)```/gi;
+  let match = fenceRegex.exec(normalized);
+  while (match) {
+    const block = String(match[1] || '').trim();
+    if (block) {
+      blocks.push(block);
+    }
+    match = fenceRegex.exec(normalized);
+  }
+  return blocks;
+}
+
+function parseJsonResponseContent(content) {
+  const normalized = String(content || '').replace(/^\uFEFF/, '').trim();
+  const candidates = [
+    normalized,
+    ...extractFencedJsonCandidates(normalized),
+    ...extractBalancedJsonCandidates(normalized),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // 继续尝试下一种安全候选内容。
+    }
+  }
+
+  throw createRuntimeError('AI 返回内容无法解析为 JSON', 'AI_JSON_PARSE_ERROR');
+}
+
+function applyJsonRequestContract(request, parsed) {
+  const source = request && typeof request === 'object' ? request : {};
+  try {
+    const normalized = typeof source.normalizer === 'function' ? source.normalizer(parsed) : parsed;
+    if (typeof source.validator === 'function') {
+      source.validator(normalized);
+    }
+    return normalized;
+  } catch {
+    throw createRuntimeError('AI 返回内容未通过 JSON 校验', 'AI_JSON_PARSE_ERROR');
+  }
+}
+
+function createDefaultFetch() {
+  if (typeof globalThis.fetch !== 'function') {
+    throw new Error('当前运行环境缺少 fetch');
+  }
+  return globalThis.fetch.bind(globalThis);
+}
+
+function waitForRetry(delay) {
+  const normalizedDelay = Number(delay);
+  if (!Number.isFinite(normalizedDelay) || normalizedDelay <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => setTimeout(resolve, Math.floor(normalizedDelay)));
+}
+
+function createRetryWaiter(retryDelay) {
+  return async (attempt, error) => {
+    if (typeof retryDelay === 'function') {
+      try {
+        await retryDelay(attempt, error);
+      } catch {
+        // 延迟注入器失败时直接进入下一次尝试。
+      }
+      return;
+    }
+
+    if (retryDelay !== undefined) {
+      await waitForRetry(retryDelay);
+      return;
+    }
+
+    await waitForRetry(250 * (2 ** Math.max(0, attempt - 1)));
+  };
+}
+
+function createAiRuntime(options = {}) {
+  const workspaceKey = normalizeWorkspaceKey(options.workspaceKey);
+  const loadConfig = options.loadConfig;
+  if (typeof loadConfig !== 'function') {
+    throw new Error('createAiRuntime 需要 loadConfig 函数');
+  }
+
+  const sharedCoordinator = options.sharedCoordinator || options.coordinator;
+  if (!sharedCoordinator || typeof sharedCoordinator.enqueue !== 'function') {
+    throw new Error('createAiRuntime 需要共享 AI coordinator');
+  }
+
+  const fetchImpl = options.fetch || createDefaultFetch();
+  if (typeof fetchImpl !== 'function') {
+    throw new Error('createAiRuntime 的 fetch 必须为函数');
+  }
+
+  const queue = createAiRequestQueue({
+    coordinator: sharedCoordinator,
+    workspaceKey,
+    textLimit: 10,
+    imageLimit: 2,
+  });
+  const textTokenStats = createTextTokenStatsStore();
+  const timeouts = normalizeTimeouts(options);
+  const waitBeforeRetry = createRetryWaiter(options.retryDelay ?? options.retryDelayMs);
+  const trackRequest = typeof options.trackRequest === 'function' ? options.trackRequest : null;
+  const version = normalizeText(options.version);
+  const platform = normalizeText(options.platform) || process.platform;
+  const arch = normalizeText(options.arch) || process.arch;
+  let closed = false;
+
+  function getScopeId(request, fallbackScopeId) {
+    return normalizeScopeId(
+      request?.queueScopeId
+      || request?.queue_scope_id
+      || fallbackScopeId,
+    );
+  }
+
+  function loadConfigSafely() {
+    try {
+      return loadConfig() || {};
+    } catch {
+      throw createRuntimeError('AI 配置读取失败', 'AI_CONFIG_LOAD_FAILED');
+    }
+  }
+
+  function buildAnalyticsPayload(modelConfig, config, usage) {
+    const tokenUsage = normalizeTokenUsage(usage);
+    return {
+      ai_request_type: 'text',
+      ai_model_provider: normalizeText(modelConfig.provider),
+      ai_model_base_url: normalizeEndpointHost(modelConfig.baseUrl),
+      ai_model_name: normalizeText(modelConfig.modelName),
+      text_model_name: normalizeText(modelConfig.modelName),
+      prompt_tokens: tokenUsage.prompt_tokens,
+      completion_tokens: tokenUsage.completion_tokens,
+      total_tokens: tokenUsage.total_tokens,
+      version,
+      platform,
+      arch,
+      client_id: normalizeText(config?.analytics_client_id),
+      client_created_at: normalizeText(config?.analytics_created_at),
+    };
+  }
+
+  function trackSafely(modelConfig, config, usage) {
+    if (!trackRequest) {
+      return;
+    }
+    const payload = buildAnalyticsPayload(modelConfig, config, usage);
+    try {
+      void Promise.resolve(trackRequest(payload)).catch(() => undefined);
+    } catch {
+      // 统计上报失败不能影响 AI 请求。
+    }
+  }
+
+  async function fetchWithTimeout(url, requestOptions, timeoutMs) {
+    const controller = new AbortController();
+    let timedOut = false;
+    let timer = null;
+    const fetchPromise = Promise.resolve().then(() => fetchImpl(url, {
+      ...requestOptions,
+      signal: controller.signal,
+    }));
+    const timeoutPromise = new Promise((_resolve, reject) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        reject(createRuntimeError('AI 请求超时', 'AI_REQUEST_TIMEOUT', { retryable: true }));
+      }, timeoutMs);
+    });
+
+    try {
+      return await Promise.race([fetchPromise, timeoutPromise]);
+    } catch (error) {
+      if (timedOut) {
+        throw createRuntimeError('AI 请求超时', 'AI_REQUEST_TIMEOUT', { retryable: true });
+      }
+      throw sanitizeRuntimeError(error, 'AI 请求网络失败');
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  }
+
+  async function runWithRetry(operation) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = sanitizeRuntimeError(error);
+        if (!lastError.retryable || attempt >= MAX_ATTEMPTS) {
+          throw lastError;
+        }
+        await waitBeforeRetry(attempt, lastError);
+      }
+    }
+    throw lastError || createRuntimeError('AI 请求失败', 'AI_REQUEST_FAILED');
+  }
+
+  async function requestJsonBody(url, requestOptions, timeoutMs) {
+    const response = await fetchWithTimeout(url, requestOptions, timeoutMs);
+    if (!isResponseOk(response)) {
+      throw createHttpError(response?.status);
+    }
+    try {
+      if (typeof response.json === 'function') {
+        return await response.json();
+      }
+      const text = typeof response.text === 'function' ? await response.text() : '';
+      return JSON.parse(text);
+    } catch {
+      throw createRuntimeError('AI 上游响应格式无效', 'AI_RESPONSE_PARSE_ERROR');
+    }
+  }
+
+  function requireModelConfig(config, override) {
+    const modelConfig = resolveTextModelConfig(config, override);
+    if (!normalizeText(modelConfig.apiKey) || isMaskedApiKey(modelConfig.apiKey)) {
+      throw createRuntimeError('请先配置文本模型 API Key', 'AI_CONFIG_INVALID');
+    }
+    if (!trimBaseUrl(modelConfig.baseUrl)) {
+      throw createRuntimeError('请先配置文本模型 Base URL', 'AI_CONFIG_INVALID');
+    }
+    if (!normalizeText(modelConfig.modelName)) {
+      throw createRuntimeError('请先配置文本模型名称', 'AI_CONFIG_INVALID');
+    }
+    return modelConfig;
+  }
+
+  async function executeChat(request) {
+    const config = loadConfigSafely();
+    const modelConfig = requireModelConfig(config);
+    const body = buildChatBody(modelConfig, request);
+    const url = appendEndpoint(modelConfig.baseUrl, 'chat/completions');
+    const requestOptions = {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${modelConfig.apiKey}`,
+      },
+      body: JSON.stringify(body),
+    };
+    let tracked = false;
+
+    try {
+      const responseData = await runWithRetry(
+        () => requestJsonBody(url, requestOptions, timeouts.text),
+      );
+      const usage = normalizeTokenUsage(responseData?.usage);
+      textTokenStats.record(usage);
+      trackSafely(modelConfig, config, usage);
+      tracked = true;
+
+      const content = extractMessageContent(responseData?.choices?.[0]?.message);
+      if (!content) {
+        throw createRuntimeError('AI 响应缺少文本内容', 'AI_RESPONSE_INVALID');
+      }
+      return content;
+    } catch (error) {
+      if (!tracked) {
+        trackSafely(modelConfig, config, undefined);
+      }
+      throw sanitizeRuntimeError(error);
+    }
+  }
+
+  async function executeListModels(configOverride) {
+    let config;
+    try {
+      config = loadConfigSafely();
+    } catch {
+      return {
+        success: false,
+        message: 'AI 配置读取失败',
+        models: [],
+      };
+    }
+    let modelConfig;
+    try {
+      modelConfig = requireModelConfig(config, configOverride);
+    } catch (error) {
+      return {
+        success: false,
+        message: error.message,
+        models: [],
+      };
+    }
+
+    try {
+      const data = await runWithRetry(() => requestJsonBody(
+        appendEndpoint(modelConfig.baseUrl, 'models'),
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${modelConfig.apiKey}`,
+          },
+        },
+        timeouts.listModels,
+      ));
+      const source = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
+      const models = source
+        .map((item) => (typeof item === 'string' ? item : item?.id || item?.name || ''))
+        .filter(Boolean);
+      return {
+        success: true,
+        message: '模型列表已更新',
+        models,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: sanitizeRuntimeError(error, '获取模型列表失败').message,
+        models: [],
+      };
+    }
+  }
+
+  function enqueueText(request, runner, scopeId) {
+    return queue.enqueue('text', runner, { scopeId: getScopeId(request, scopeId) });
+  }
+
+  const service = {
+    chat(request) {
+      return enqueueText(request, () => executeChat(request));
+    },
+
+    async requestJson(request) {
+      const source = request && typeof request === 'object' ? request : {};
+      const content = await service.chat({
+        ...source,
+        response_format: source.response_format || { type: 'json_object' },
+      });
+      return applyJsonRequestContract(source, parseJsonResponseContent(content));
+    },
+
+    async collectJsonResponse(request) {
+      return service.requestJson(request);
+    },
+
+    parseJsonResponseContent(request, content) {
+      return applyJsonRequestContract(request, parseJsonResponseContent(content));
+    },
+
+    listModels(configOverride) {
+      return enqueueText(configOverride, () => executeListModels(configOverride));
+    },
+
+    generateImage() {
+      return Promise.reject(createRuntimeError('Web 端生图能力将在后续包提供', 'WEB_CAPABILITY_PENDING'));
+    },
+
+    testImageModel() {
+      return Promise.reject(createRuntimeError('Web 端生图模型测试将在后续包提供', 'WEB_CAPABILITY_PENDING'));
+    },
+
+    pauseQueueScope(scopeId) {
+      return queue.pauseScope(scopeId);
+    },
+
+    resumeQueueScope(scopeId) {
+      queue.resumeScope(scopeId);
+    },
+
+    getTextQueueStatus() {
+      return queue.getStatus().text;
+    },
+
+    getImageQueueStatus() {
+      return queue.getStatus().image;
+    },
+
+    getTextTokenStats() {
+      return textTokenStats.snapshot();
+    },
+
+    reset() {
+      return textTokenStats.reset();
+    },
+
+    resetTextTokenStats() {
+      return service.reset();
+    },
+
+    onChanged(listener) {
+      return textTokenStats.subscribe(listener);
+    },
+
+    onTextTokenStatsChanged(listener) {
+      return service.onChanged(listener);
+    },
+
+    withQueueScope(scopeId) {
+      const normalizedScopeId = normalizeScopeId(scopeId);
+      return {
+        ...service,
+        chat(request) {
+          return service.chat({ ...(request || {}), queueScopeId: getScopeId(request, normalizedScopeId) || normalizedScopeId });
+        },
+        requestJson(request) {
+          return service.requestJson({ ...(request || {}), queueScopeId: getScopeId(request, normalizedScopeId) || normalizedScopeId });
+        },
+        collectJsonResponse(request) {
+          return service.collectJsonResponse({ ...(request || {}), queueScopeId: getScopeId(request, normalizedScopeId) || normalizedScopeId });
+        },
+        listModels(configOverride) {
+          return service.listModels({ ...(configOverride || {}), queueScopeId: normalizedScopeId });
+        },
+        generateImage(request) {
+          return service.generateImage(request);
+        },
+        testImageModel(config) {
+          return service.testImageModel(config);
+        },
+      };
+    },
+
+    close() {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      queue.close();
+      textTokenStats.close();
+    },
+  };
+
+  return service;
+}
+
+module.exports = {
+  createAiRuntime,
+  parseJsonResponseContent,
+  normalizeEndpointHost,
+  resolveTextModelConfig,
+};

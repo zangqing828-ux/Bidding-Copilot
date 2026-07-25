@@ -42,6 +42,7 @@ function collectFallbackCloseCandidates(runtime) {
   return [
     getCloseCandidate(runtime.taskEvents, 'runtime.taskEvents'),
     getCloseCandidate(runtime.taskService, 'runtime.taskService'),
+    getCloseCandidate(runtime.aiService || (runtime.ports && runtime.ports.ai), 'runtime.aiService/runtime.ports.ai'),
     getCloseCandidate((runtime.ports && runtime.ports.agent) || runtime.agent, 'runtime.ports.agent/runtime.agent'),
     getCloseCandidate(runtime.sqliteDatabase, 'runtime.sqliteDatabase'),
   ];
@@ -149,6 +150,7 @@ function createWorkspaceContext({
     db: runtime.db,
     sqliteDatabase: runtime.sqliteDatabase,
     configStore: runtime.configStore,
+    aiService: runtime.aiService || (runtime.ports && runtime.ports.ai),
     stores: runtime.stores,
     taskService: runtime.taskService,
     taskEvents: runtime.taskEvents,
