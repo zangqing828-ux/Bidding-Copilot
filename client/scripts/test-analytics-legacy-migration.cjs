@@ -14,6 +14,11 @@ const transpiled = ts.transpileModule(source, {
 
 const passed = [];
 const failed = [];
+const serverConfig = {
+  analytics_client_id: 'server-stable-id',
+  analytics_created_at: '2026-07-25T00:00:00.000Z',
+  api_key: 'sk-server',
+};
 
 function assert(condition, message) {
   if (condition) {
@@ -62,7 +67,10 @@ function createAnalyticsRuntime({ loadSequence, saveResult }) {
   const save = (...args) => {
     events.push('save');
     savePayloads.push(args[0] || null);
-    return Promise.resolve(saveResult);
+    const result = typeof saveResult === 'function'
+      ? saveResult(...args)
+      : saveResult;
+    return Promise.resolve(result);
   };
 
   const configLoad = async () => {
@@ -117,11 +125,6 @@ function createAnalyticsRuntime({ loadSequence, saveResult }) {
 }
 
 function runCaseSuccess() {
-  const serverConfig = {
-    analytics_client_id: 'server-stable-id',
-    analytics_created_at: '2026-07-25T00:00:00.000Z',
-    api_key: 'sk-server',
-  };
   let loadCount = 0;
   const runtime = createAnalyticsRuntime({
     loadSequence: () => {
@@ -161,39 +164,77 @@ function runCaseSuccess() {
     });
 }
 
-function runCaseFailure() {
-  const serverConfig = {
-    analytics_client_id: 'server-stable-id',
-    analytics_created_at: '2026-07-25T00:00:00.000Z',
-    api_key: 'sk-server',
-  };
-  let loadCount = 0;
+async function runFailureCase({
+  label,
+  loadSequence = () => ({ ...serverConfig }),
+  saveResult,
+  expectedLoadCount,
+}) {
   const runtime = createAnalyticsRuntime({
-    loadSequence: () => {
-      loadCount += 1;
-      return {
-        ...serverConfig,
-      };
-    },
-    saveResult: {
-      success: false,
-      message: '模拟失败',
-    },
+    loadSequence,
+    saveResult,
   });
 
-  return runtime.analytics.getAnalyticsIdentity()
-    .then((identity) => {
-      assert(identity.clientId === 'legacy-for-renderer-migration', '迁移失败时仍保留 legacy identity');
-      assert(runtime.storage.analytics_client_id === 'legacy-for-renderer-migration', '迁移失败后 legacy 不会被清理');
-      assert(!runtime.events.includes('removeItem:analytics_client_id'), '迁移失败不触发 localStorage 清理');
-      assert(loadCount === 1, '迁移失败不会触发额外 load 复读');
-    });
+  const identity = await runtime.analytics.getAnalyticsIdentity();
+  const loadCount = runtime.events.filter((event) => event === 'load:before-save').length;
+  assert(identity.clientId === serverConfig.analytics_client_id, `${label}：当前运行使用 server id`);
+  assert(identity.clientCreatedAt === serverConfig.analytics_created_at, `${label}：当前运行使用 server created_at`);
+  assert(runtime.storage.analytics_client_id === 'legacy-for-renderer-migration', `${label}：legacy localStorage 保留`);
+  assert(!runtime.events.includes('removeItem:analytics_client_id'), `${label}：不清理 legacy localStorage`);
+  assert(runtime.savePayloads.length === 1, `${label}：仅尝试一次 config.save`);
+  assert(loadCount === expectedLoadCount, `${label}：config.load 次数正确`);
+}
+
+function createReloadFailureSequence(reloadValue) {
+  let loadCount = 0;
+  return () => {
+    loadCount += 1;
+    if (loadCount === 1) {
+      return { ...serverConfig };
+    }
+    if (reloadValue instanceof Error) {
+      throw reloadValue;
+    }
+    return reloadValue;
+  };
 }
 
 (async () => {
   try {
     await runCaseSuccess();
-    await runCaseFailure();
+    await runFailureCase({
+      label: 'save false',
+      saveResult: {
+        success: false,
+        message: '模拟失败',
+      },
+      expectedLoadCount: 1,
+    });
+    await runFailureCase({
+      label: 'save reject',
+      saveResult: () => Promise.reject(new Error('模拟 save reject')),
+      expectedLoadCount: 1,
+    });
+    await runFailureCase({
+      label: 'reload reject',
+      loadSequence: createReloadFailureSequence(new Error('模拟 reload reject')),
+      saveResult: {
+        success: true,
+        message: '配置已保存',
+      },
+      expectedLoadCount: 2,
+    });
+    await runFailureCase({
+      label: 'reload 缺少 analytics_client_id',
+      loadSequence: createReloadFailureSequence({
+        analytics_created_at: serverConfig.analytics_created_at,
+      }),
+      saveResult: {
+        success: true,
+        message: '配置已保存',
+      },
+      expectedLoadCount: 2,
+    });
   } catch (error) {
     failed.push(`脚本执行异常：${error instanceof Error ? error.message : String(error)}`);
   }

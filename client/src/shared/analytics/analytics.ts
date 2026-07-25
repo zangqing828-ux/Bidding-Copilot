@@ -111,10 +111,10 @@ async function migrateLegacyClientId(config: ClientConfig) {
       }
     }
   } catch {
-    // 保存失败时保留旧 localStorage，后续启动继续尝试迁移。
+    // 保存或复读失败时保留旧 localStorage，后续启动继续尝试迁移。
   }
 
-  return migratedConfig;
+  return config;
 }
 
 export function getAnalyticsIdentity() {
