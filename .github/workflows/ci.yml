@@ -96,6 +96,9 @@ jobs:
         env:
           CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
 
+      - name: Run AI Scheduler tests
+        run: npm run test:ai-scheduler
+
       - name: Run Web AI Runtime tests
         run: npm run test:web-ai-runtime
         env:
