@@ -19,6 +19,8 @@ const bridgeContract = require('../shared/bridgeContract.cjs');
 
 const API_KEY = 'sk-web-runtime-test-key';
 const ONE_SHOT_KEY = 'sk-one-shot-runtime-key';
+const PROVIDER_A_KEY = 'sk-provider-a-runtime-key';
+const PROVIDER_B_KEY = 'sk-provider-b-runtime-key';
 const passed = [];
 const failed = [];
 let bridgeCoordinator;
@@ -269,6 +271,111 @@ async function main() {
       const oneShotRequest = mock.requests.filter((item) => item.path === '/v1/models').at(-1);
       assert.equal(oneShotRequest.headers.authorization, `Bearer ${ONE_SHOT_KEY}`);
       assertNoSecret(oneShotResult, '明文 override 返回值');
+
+      const restoredResult = await runtime.listModels({
+        api_key: '****-key',
+        base_url: mock.baseUrl,
+        model_name: 'runtime-test-model',
+      });
+      assert.equal(restoredResult.success, true);
+      const restoredRequest = mock.requests.filter((item) => item.path === '/v1/models').at(-1);
+      assert(restoredRequest.headers.authorization === `Bearer ${API_KEY}`, '明文 override 不得污染后续请求');
+      assertNoSecret(restoredResult, '恢复保存配置的返回值');
+    });
+
+    await run('provider 切换按目标 profile 回退 Key/Base URL，错误与返回值不泄露明文', async () => {
+      const providerConfig = {
+        workspaceKey: 'provider-switch-runtime',
+        text_model_provider: 'provider-a',
+        api_key: PROVIDER_A_KEY,
+        base_url: 'https://provider-a.example/v1',
+        model_name: 'provider-a-model',
+        text_model_profiles: {
+          'provider-a': {
+            api_key: PROVIDER_A_KEY,
+            base_url: 'https://provider-a.example/v1',
+            model_name: 'provider-a-model',
+          },
+          'provider-b': {
+            api_key: PROVIDER_B_KEY,
+            base_url: mock.baseUrl,
+            model_name: '',
+          },
+        },
+      };
+      const maskedOverride = {
+        text_model_provider: 'provider-b',
+        api_key: '****-key',
+        base_url: '',
+        model_name: '',
+        text_model_profiles: {
+          'provider-b': {
+            api_key: '****-key',
+            base_url: '',
+            model_name: '',
+          },
+        },
+      };
+      const providerRuntime = createRuntime({
+        config: providerConfig,
+        fetch: globalThis.fetch,
+        retryDelay: 0,
+      });
+      try {
+        const result = await providerRuntime.listModels(maskedOverride);
+        assert.equal(result.success, true);
+        const modelRequest = mock.requests.filter((item) => item.path === '/v1/models').at(-1);
+        assert(modelRequest.headers.authorization === `Bearer ${PROVIDER_B_KEY}`, '请求必须使用目标 provider 保存的 Key');
+        assertNoSecret(result, 'provider 切换返回值');
+        assert(!JSON.stringify(result).includes(PROVIDER_A_KEY), '返回值不得包含旧 provider Key');
+
+        const errorRuntime = createRuntime({
+          config: providerConfig,
+          fetch: async () => createResponse(400, {}),
+          retryDelay: 0,
+        });
+        try {
+          const errorResult = await errorRuntime.listModels(maskedOverride);
+          assert.equal(errorResult.success, false);
+          assertNoSecret(errorResult, 'provider 切换错误');
+          assert(!JSON.stringify(errorResult).includes(PROVIDER_B_KEY), '错误不得包含目标 provider Key');
+        } finally {
+          errorRuntime.close();
+        }
+      } finally {
+        providerRuntime.close();
+      }
+    });
+
+    await run('listModels 不要求模型名，chat 仍在缺模型名时失败', async () => {
+      const emptyModelRuntime = createRuntime({
+        config: {
+          workspaceKey: 'empty-model-runtime',
+          text_model_provider: 'provider-b',
+          api_key: PROVIDER_B_KEY,
+          base_url: mock.baseUrl,
+          model_name: '',
+          text_model_profiles: {
+            'provider-b': {
+              api_key: PROVIDER_B_KEY,
+              base_url: mock.baseUrl,
+              model_name: '',
+            },
+          },
+        },
+        fetch: globalThis.fetch,
+        retryDelay: 0,
+      });
+      try {
+        const result = await emptyModelRuntime.listModels();
+        assert.equal(result.success, true);
+        await assert.rejects(
+          emptyModelRuntime.chat({ messages: [{ role: 'user', content: 'missing model' }] }),
+          (error) => error.code === 'AI_CONFIG_INVALID' && error.message === '请先配置文本模型名称',
+        );
+      } finally {
+        emptyModelRuntime.close();
+      }
     });
 
     await run('两个 runtime 的 token stats 与 queue scope 相互隔离', async () => {

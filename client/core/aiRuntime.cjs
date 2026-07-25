@@ -117,15 +117,6 @@ function firstNonEmpty(...values) {
   return '';
 }
 
-function firstDefined(...values) {
-  for (const value of values) {
-    if (value !== undefined && value !== null) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
 function isMaskedApiKey(value) {
   return /^\*{4}/.test(normalizeText(value));
 }
@@ -146,28 +137,64 @@ function readTextModelConfig(source, fallbackProvider = '') {
   };
 }
 
+function readSavedTextModelConfigForProvider(source, provider) {
+  const config = source && typeof source === 'object' ? source : {};
+  const profiles = config.text_model_profiles && typeof config.text_model_profiles === 'object'
+    ? config.text_model_profiles
+    : {};
+  const profile = profiles[provider] && typeof profiles[provider] === 'object'
+    ? profiles[provider]
+    : {};
+  return readTextModelConfig({
+    text_model_provider: provider,
+    text_model_profiles: { [provider]: profile },
+  }, provider);
+}
+
+function firstPlainNonEmpty(...values) {
+  for (const value of values) {
+    if (normalizeText(value) && !isMaskedApiKey(value)) {
+      return value;
+    }
+  }
+  return '';
+}
+
 function resolveTextModelConfig(savedConfig, override) {
   const saved = readTextModelConfig(savedConfig);
   if (!override || typeof override !== 'object') {
     return saved;
   }
 
-  const candidate = readTextModelConfig(override, saved.provider);
-  const overrideApiKey = firstDefined(
+  const selectedProvider = firstNonEmpty(
+    override.text_model_provider,
+    override.provider,
+    saved.provider,
+  ) || saved.provider;
+  const candidate = readTextModelConfig(override, selectedProvider);
+  const savedSelected = readSavedTextModelConfigForProvider(savedConfig, selectedProvider);
+  const sameAsSavedProvider = selectedProvider === saved.provider;
+  const savedFallback = {
+    apiKey: firstNonEmpty(savedSelected.apiKey, sameAsSavedProvider ? saved.apiKey : ''),
+    baseUrl: firstNonEmpty(savedSelected.baseUrl, sameAsSavedProvider ? saved.baseUrl : ''),
+    modelName: firstNonEmpty(savedSelected.modelName, sameAsSavedProvider ? saved.modelName : ''),
+  };
+  const overrideApiKeyValues = [
     override.api_key,
     override.apiKey,
-    override.text_model_profiles?.[candidate.provider]?.api_key,
-    override.text_model_profiles?.[candidate.provider]?.apiKey,
-  );
-  const apiKey = isMaskedApiKey(overrideApiKey)
-    ? saved.apiKey
-    : normalizeText(overrideApiKey) ? overrideApiKey : saved.apiKey;
+    override.text_model_profiles?.[selectedProvider]?.api_key,
+    override.text_model_profiles?.[selectedProvider]?.apiKey,
+  ];
+  const plainOverrideApiKey = firstPlainNonEmpty(...overrideApiKeyValues);
+  const anyOverrideApiKey = firstNonEmpty(...overrideApiKeyValues);
+  const apiKey = plainOverrideApiKey
+    || (isMaskedApiKey(anyOverrideApiKey) ? savedFallback.apiKey : firstNonEmpty(anyOverrideApiKey, savedFallback.apiKey));
 
   return {
-    provider: candidate.provider || saved.provider,
+    provider: selectedProvider,
     apiKey,
-    baseUrl: firstNonEmpty(candidate.baseUrl, saved.baseUrl),
-    modelName: firstNonEmpty(candidate.modelName, saved.modelName),
+    baseUrl: firstNonEmpty(candidate.baseUrl, savedFallback.baseUrl),
+    modelName: firstNonEmpty(candidate.modelName, savedFallback.modelName),
   };
 }
 
@@ -572,7 +599,7 @@ function createAiRuntime(options = {}) {
     }
   }
 
-  function requireModelConfig(config, override) {
+  function requireModelConfig(config, override, { requireModelName = true } = {}) {
     const modelConfig = resolveTextModelConfig(config, override);
     if (!normalizeText(modelConfig.apiKey) || isMaskedApiKey(modelConfig.apiKey)) {
       throw createRuntimeError('请先配置文本模型 API Key', 'AI_CONFIG_INVALID');
@@ -580,7 +607,7 @@ function createAiRuntime(options = {}) {
     if (!trimBaseUrl(modelConfig.baseUrl)) {
       throw createRuntimeError('请先配置文本模型 Base URL', 'AI_CONFIG_INVALID');
     }
-    if (!normalizeText(modelConfig.modelName)) {
+    if (requireModelName && !normalizeText(modelConfig.modelName)) {
       throw createRuntimeError('请先配置文本模型名称', 'AI_CONFIG_INVALID');
     }
     return modelConfig;
@@ -636,7 +663,7 @@ function createAiRuntime(options = {}) {
     }
     let modelConfig;
     try {
-      modelConfig = requireModelConfig(config, configOverride);
+      modelConfig = requireModelConfig(config, configOverride, { requireModelName: false });
     } catch (error) {
       return {
         success: false,
