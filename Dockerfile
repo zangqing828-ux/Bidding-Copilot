@@ -30,6 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     make \
     g++ \
     curl \
+    util-linux \
     jq \
     ripgrep \
     fd-find \
