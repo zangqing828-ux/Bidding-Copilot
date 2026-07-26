@@ -198,7 +198,8 @@ async function run() {
       if (!replaced && target === replacementWorkspace.outputPath) {
         replaced = true;
         fs.unlinkSync(replacementWorkspace.outputPath);
-        fs.writeFileSync(replacementWorkspace.outputPath, '{"version":2}', 'utf8');
+        // 使用不同长度，避免 ext4 在立即重建同尺寸文件时复用 inode 导致竞态夹具失真。
+        fs.writeFileSync(replacementWorkspace.outputPath, '{"version":200}', 'utf8');
       }
       return fs.openSync(target, ...args);
     };
