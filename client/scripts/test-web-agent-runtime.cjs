@@ -21,7 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
 const dir = args[args.indexOf('--dir') + 1];
-if (args.includes('wait-forever')) setInterval(() => {}, 1000);
+if (args.some((arg) => arg.includes('wait-forever'))) setInterval(() => {}, 1000);
 fs.writeFileSync(path.join(dir, 'result.md'), 'agent generated content', 'utf8');
 process.stdout.write(JSON.stringify({ type: 'text', text: 'done' }) + '\\n');
 `);
