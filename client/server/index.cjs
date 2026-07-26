@@ -59,6 +59,7 @@ function createGracefulShutdownHandler({
 
       try {
         server.close(finish);
+        server.closeAllConnections?.();
       } catch (error) {
         finish(error);
       }

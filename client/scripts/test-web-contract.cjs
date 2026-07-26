@@ -72,6 +72,21 @@ const REQUIRED_WEB_BRIDGE_META_KEYS = [
 ];
 
 const requiredMetaFields = ['status', 'owner', 'workPackage', 'transport', 'contractRef', 'input', 'output', 'errors'];
+const IMPLEMENTED_BRIDGE_RPC_COUNT = 40;
+const COMMON_IMPLEMENTED_BRIDGE_ERRORS = [
+  'UNAUTHORIZED',
+  'INVALID_BRIDGE_ARGUMENTS',
+  'BRIDGE_DISPATCHER_MISSING',
+  'INTERNAL_ERROR',
+];
+const CONTRACT_ENUM_SOURCES = {
+  TechnicalPlanStep: 'src/features/technical-plan/types.ts',
+  TechnicalPlanWorkflowKind: 'src/features/technical-plan/types.ts',
+  BidAnalysisMode: 'src/features/technical-plan/types.ts',
+  BidSectionMode: 'src/features/technical-plan/types.ts',
+  OutlineExpansionMode: 'src/shared/types/outline.ts',
+  RejectionDocumentRole: 'src/features/rejection-check/types.ts',
+};
 
 function resolvePropertyPath(target, pathParts) {
   return pathParts.reduce((current, part) => (current && typeof current === 'object' ? current[part] : undefined), target);
@@ -239,6 +254,13 @@ function createErrorFromHttpClientPayloads(payloads, fetchIndexByCall = 0) {
     return {
       ok: response.status >= 200 && response.status < 300,
       status: response.status,
+      headers: {
+        get(name) {
+          const headers = response.headers || {};
+          const matchingKey = Object.keys(headers).find((key) => key.toLowerCase() === String(name).toLowerCase());
+          return matchingKey ? headers[matchingKey] : null;
+        },
+      },
       async json() {
         return response.payload;
       },
@@ -292,6 +314,174 @@ function normalizeTextLiteral(node) {
 
 function readSource(relativePath) {
   return fs.readFileSync(path.join(__dirname, '..', relativePath), 'utf-8');
+}
+
+function readStringUnionValues(relativePath, typeName) {
+  const source = readSource(relativePath);
+  const sourceFile = ts.createSourceFile(relativePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let values = null;
+  const visit = (node) => {
+    if (ts.isTypeAliasDeclaration(node) && node.name.text === typeName) {
+      const members = ts.isUnionTypeNode(node.type) ? node.type.types : [node.type];
+      values = members
+        .filter((member) => ts.isLiteralTypeNode(member) && ts.isStringLiteral(member.literal))
+        .map((member) => member.literal.text);
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return values;
+}
+
+function normalizeContractTypeText(value) {
+  return String(value || '')
+    .replace(/["']/g, "'")
+    .replace(/\s+/g, '');
+}
+
+function readYibiaoBridgeRpcSignatures() {
+  const relativePath = 'src/shared/types/ipc.ts';
+  const source = readSource(relativePath);
+  const sourceFile = ts.createSourceFile(relativePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const signatures = new Map();
+
+  const readPromiseOutput = (typeNode) => {
+    if (
+      ts.isTypeReferenceNode(typeNode)
+      && typeNode.typeName.getText(sourceFile) === 'Promise'
+      && typeNode.typeArguments?.length === 1
+    ) {
+      return typeNode.typeArguments[0].getText(sourceFile);
+    }
+    return typeNode.getText(sourceFile);
+  };
+
+  const walkMembers = (members, prefix = '') => {
+    for (const member of members) {
+      if (!ts.isPropertySignature(member) || !member.name || !member.type) {
+        continue;
+      }
+      const name = member.name.getText(sourceFile).replace(/^['"]|['"]$/g, '');
+      const currentPath = prefix ? `${prefix}.${name}` : name;
+      if (ts.isTypeLiteralNode(member.type)) {
+        walkMembers(member.type.members, currentPath);
+        continue;
+      }
+      if (!ts.isFunctionTypeNode(member.type) || !prefix) {
+        continue;
+      }
+      signatures.set(currentPath, {
+        input: member.type.parameters.map((parameter) => ({
+          name: parameter.name.getText(sourceFile),
+          type: parameter.type?.getText(sourceFile) || 'unknown',
+          required: !parameter.questionToken && !parameter.initializer,
+        })),
+        output: readPromiseOutput(member.type.type),
+      });
+    }
+  };
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isInterfaceDeclaration(statement) && statement.name.text === 'YibiaoBridge') {
+      walkMembers(statement.members);
+      break;
+    }
+  }
+  return signatures;
+}
+
+function collectContractDescriptors(descriptor, result = []) {
+  result.push(descriptor);
+  if (descriptor?.properties && typeof descriptor.properties === 'object') {
+    Object.values(descriptor.properties).forEach((propertyDescriptor) => {
+      collectContractDescriptors(propertyDescriptor, result);
+    });
+  }
+  return result;
+}
+
+function assertImplementedContractCompleteness(contractMap, contractEnums) {
+  const implementedBridgeEntries = Array.from(contractMap.entries()).filter(([, entry]) => (
+    entry.status === 'implemented' && entry.transport === 'bridge'
+  ));
+  assert(
+    implementedBridgeEntries.length === IMPLEMENTED_BRIDGE_RPC_COUNT,
+    `implemented Bridge RPC 数量冻结为 ${IMPLEMENTED_BRIDGE_RPC_COUNT}`,
+  );
+  const ipcSignatures = readYibiaoBridgeRpcSignatures();
+
+  for (const [contractKey, entry] of implementedBridgeEntries) {
+    assert(Array.isArray(entry.input), `${contractKey} 显式声明 input`);
+    const names = new Set();
+    let optionalSeen = false;
+    for (const descriptor of entry.input) {
+      assert(descriptor && typeof descriptor === 'object', `${contractKey} input descriptor 为对象`);
+      assert(typeof descriptor?.name === 'string' && descriptor.name.length > 0, `${contractKey} input name 有值`);
+      assert(typeof descriptor?.type === 'string' && descriptor.type.length > 0, `${contractKey} input type 有值`);
+      assert(typeof descriptor?.required === 'boolean', `${contractKey} input required 明确`);
+      assert(!names.has(descriptor?.name), `${contractKey} input name 不重复`);
+      names.add(descriptor?.name);
+      if (descriptor?.required === false) {
+        optionalSeen = true;
+      } else {
+        assert(!optionalSeen, `${contractKey} 必填参数不出现在可选参数之后`);
+      }
+
+      for (const nestedDescriptor of collectContractDescriptors(descriptor)) {
+        if (!nestedDescriptor?.enum) {
+          continue;
+        }
+        const expectedValues = contractEnums[nestedDescriptor.type];
+        assert(Array.isArray(expectedValues), `${contractKey} 枚举 ${nestedDescriptor.type} 在 manifest 顶层注册`);
+        assertSetEqual(
+          new Set(nestedDescriptor.enum),
+          new Set(expectedValues || []),
+          `${contractKey} 枚举 ${nestedDescriptor.type} 引用统一值集`,
+        );
+      }
+    }
+
+    assert(
+      entry.output && typeof entry.output.type === 'string' && entry.output.type.length > 0,
+      `${contractKey} 显式声明 output.type`,
+    );
+    assert(Array.isArray(entry.errors) && entry.errors.length > 0, `${contractKey} 显式声明 errors`);
+    assert(new Set(entry.errors).size === entry.errors.length, `${contractKey} errors 不重复`);
+    for (const errorCode of COMMON_IMPLEMENTED_BRIDGE_ERRORS) {
+      assert(entry.errors.includes(errorCode), `${contractKey} errors 包含 ${errorCode}`);
+    }
+
+    const ipcSignature = ipcSignatures.get(contractKey);
+    assert(Boolean(ipcSignature), `${contractKey} 在 YibiaoBridge 中有函数签名`);
+    assert(
+      ipcSignature?.input.length === entry.input.length,
+      `${contractKey} manifest 与 YibiaoBridge 参数数量一致`,
+    );
+    entry.input.forEach((descriptor, index) => {
+      const ipcParameter = ipcSignature?.input[index];
+      assert(descriptor.name === ipcParameter?.name, `${contractKey} 参数 ${index + 1} 名称一致`);
+      assert(descriptor.required === ipcParameter?.required, `${contractKey} 参数 ${descriptor.name} 必填性一致`);
+      assert(
+        normalizeContractTypeText(descriptor.type) === normalizeContractTypeText(ipcParameter?.type),
+        `${contractKey} 参数 ${descriptor.name} 类型一致`,
+      );
+    });
+    assert(
+      normalizeContractTypeText(entry.output.type) === normalizeContractTypeText(ipcSignature?.output),
+      `${contractKey} 返回类型与 YibiaoBridge 一致`,
+    );
+  }
+
+  for (const [enumName, relativePath] of Object.entries(CONTRACT_ENUM_SOURCES)) {
+    const sourceValues = readStringUnionValues(relativePath, enumName);
+    assert(Array.isArray(sourceValues) && sourceValues.length > 0, `${enumName} 可从 TypeScript union 读取`);
+    assertSetEqual(
+      new Set(contractEnums[enumName] || []),
+      new Set(sourceValues || []),
+      `${enumName} manifest 与 TypeScript union 一致`,
+    );
+  }
 }
 
 function parseJson(payloadText) {
@@ -558,6 +748,16 @@ function createRequest() {
   };
 }
 
+function withTimeout(promise, timeoutMs, label) {
+  let timeoutId;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(`${label} 超时`)), timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timeoutId));
+}
+
 function collectWorkspaceCloseWarnings() {
   const observed = [];
 
@@ -665,6 +865,7 @@ async function runBridgeBehavior(inject, context) {
     getWorkspaceContext,
     setWorkspaceContextResolver,
     contractVersion,
+    contractEnums,
     webBridgeRuntime,
   } = context;
   const { webBridge, fakeEventSources } = webBridgeRuntime || {};
@@ -687,6 +888,8 @@ async function runBridgeBehavior(inject, context) {
       );
     }
   }
+  assert(contractVersion === 'wp-a-contract-manifest-v2', 'Contract manifest 版本升级为 v2');
+  assertImplementedContractCompleteness(contractMap, contractEnums);
 
   const bridgeLeaves = collectBridgeLeavesFromAst();
   const expectedContractKeys = new Set();
@@ -892,6 +1095,184 @@ async function runBridgeBehavior(inject, context) {
     setWorkspaceContextResolver(previousResolver);
   }
 
+  let resolveDisconnectRequestStarted;
+  let resolveDisconnectRequestAborted;
+  const disconnectRequestStarted = new Promise((resolve) => {
+    resolveDisconnectRequestStarted = resolve;
+  });
+  const disconnectRequestAborted = new Promise((resolve) => {
+    resolveDisconnectRequestAborted = resolve;
+  });
+  const previousDisconnectResolver = setWorkspaceContextResolver(() => ({
+    aiService: {
+      listModels: (_config, options = {}) => new Promise((resolve, reject) => {
+        resolveDisconnectRequestStarted();
+        options.signal?.addEventListener('abort', () => {
+          resolveDisconnectRequestAborted();
+          const error = new Error('browser disconnected');
+          error.code = 'AI_REQUEST_ABORTED';
+          reject(error);
+        }, { once: true });
+      }),
+    },
+  }));
+  try {
+    const requestBody = JSON.stringify({
+      namespace: 'config',
+      method: 'listModels',
+      args: [{}],
+    });
+    const disconnectRequest = http.request({
+      host: '127.0.0.1',
+      port,
+      method: 'POST',
+      path: '/api/bridge',
+      headers: {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(requestBody),
+        cookie: session,
+      },
+    });
+    disconnectRequest.on('error', () => {});
+    disconnectRequest.end(requestBody);
+
+    await withTimeout(disconnectRequestStarted, 1_000, '真实 Bridge 请求启动');
+    disconnectRequest.destroy();
+    await withTimeout(disconnectRequestAborted, 1_000, '浏览器断连传播');
+    assert(true, '真实 HTTP 客户端断连会中止 Bridge 下游 AI 请求');
+  } finally {
+    setWorkspaceContextResolver(previousDisconnectResolver);
+  }
+
+  const previousConfigResolver = setWorkspaceContextResolver(() => ({
+    configStore: {
+      save: () => {
+        const error = new Error('invalid config');
+        error.code = 'CONFIG_INVALID';
+        throw error;
+      },
+    },
+  }));
+  try {
+    const invalidConfigRes = await statusPayload({ namespace: 'config', method: 'save', args: [{ api_key: {} }] });
+    assert(invalidConfigRes.response.statusCode === 400, '非法配置通过 Bridge 返回 400');
+    assert(invalidConfigRes.payload.code === 'CONFIG_INVALID', '非法配置返回 CONFIG_INVALID');
+  } finally {
+    setWorkspaceContextResolver(previousConfigResolver);
+  }
+
+  let invalidContractWorkspaceResolutions = 0;
+  const previousWorkflowResolver = setWorkspaceContextResolver(() => {
+    invalidContractWorkspaceResolutions += 1;
+    throw new Error('非法契约参数不应解析 workspace');
+  });
+  try {
+    const invalidContractCases = [
+      ['config.save', { namespace: 'config', method: 'save', args: [] }],
+      ['technicalPlan.updateStep', { namespace: 'technicalPlan', method: 'updateStep', args: ['garbage'] }],
+      ['technicalPlan.setWorkflowKind', { namespace: 'technicalPlan', method: 'setWorkflowKind', args: ['garbage'] }],
+      ['technicalPlan.switchWorkflowKind', { namespace: 'technicalPlan', method: 'switchWorkflowKind', args: ['garbage'] }],
+      ['technicalPlan.saveBidAnalysisConfig', {
+        namespace: 'technicalPlan',
+        method: 'saveBidAnalysisConfig',
+        args: [{ mode: 'garbage', selectedTaskIds: [] }],
+      }],
+      ['technicalPlan.saveOutlineConfig', {
+        namespace: 'technicalPlan',
+        method: 'saveOutlineConfig',
+        args: [{
+          referenceKnowledgeDocumentIds: [],
+          outlineExpansionMode: 'garbage',
+          wordControlOptions: {},
+        }],
+      }],
+      ['rejectionCheck.removeDocument', { namespace: 'rejectionCheck', method: 'removeDocument', args: ['garbage'] }],
+      ['templates.get', { namespace: 'templates', method: 'get', args: [123] }],
+      ['tasks.getActiveTasks', { namespace: 'tasks', method: 'getActiveTasks', args: ['extra'] }],
+    ];
+    for (const [contractKey, body] of invalidContractCases) {
+      const invalidResponse = await statusPayload(body);
+      assert(invalidResponse.response.statusCode === 400, `${contractKey} 非法参数返回 400`);
+      assert(invalidResponse.payload.code === 'INVALID_BRIDGE_ARGUMENTS', `${contractKey} 返回稳定参数错误码`);
+    }
+    assert(invalidContractWorkspaceResolutions === 0, '非法契约参数不解析 workspace 或进入 Store');
+  } finally {
+    setWorkspaceContextResolver(previousWorkflowResolver);
+  }
+
+  const previousValidEnumResolver = setWorkspaceContextResolver(() => ({
+    stores: {
+      technicalPlanStore: {
+        updateStep: () => ({}),
+        setWorkflowKind: () => ({}),
+        switchWorkflowKind: () => ({}),
+        saveBidAnalysisConfig: () => ({}),
+        saveOutlineConfig: () => ({}),
+      },
+      rejectionCheckStore: {
+        removeDocument: () => ({}),
+      },
+    },
+  }));
+  try {
+    const validContractCases = [
+      ['technicalPlan.updateStep', { namespace: 'technicalPlan', method: 'updateStep', args: ['bid-analysis'] }],
+      ['technicalPlan.setWorkflowKind', { namespace: 'technicalPlan', method: 'setWorkflowKind', args: ['technical-plan'] }],
+      ['technicalPlan.switchWorkflowKind', { namespace: 'technicalPlan', method: 'switchWorkflowKind', args: ['existing-plan-expansion'] }],
+      ['technicalPlan.saveBidAnalysisConfig', {
+        namespace: 'technicalPlan',
+        method: 'saveBidAnalysisConfig',
+        args: [{ mode: 'custom', selectedTaskIds: [], bidSectionMode: 'multiple' }],
+      }],
+      ['technicalPlan.saveOutlineConfig', {
+        namespace: 'technicalPlan',
+        method: 'saveOutlineConfig',
+        args: [{
+          referenceKnowledgeDocumentIds: [],
+          outlineExpansionMode: 'ai-complement',
+          wordControlOptions: {},
+        }],
+      }],
+      ['rejectionCheck.removeDocument', { namespace: 'rejectionCheck', method: 'removeDocument', args: ['tender'] }],
+    ];
+    for (const [contractKey, body] of validContractCases) {
+      const validResponse = await statusPayload(body);
+      assert(validResponse.response.statusCode === 200, `${contractKey} 合法枚举通过契约校验`);
+    }
+  } finally {
+    setWorkspaceContextResolver(previousValidEnumResolver);
+  }
+
+  let rejectionPatch = null;
+  const previousRejectionResolver = setWorkspaceContextResolver(() => ({
+    stores: {
+      rejectionCheckStore: {
+        updateRejectionCheck: (partial) => {
+          rejectionPatch = partial;
+          return partial;
+        },
+      },
+    },
+  }));
+  try {
+    const rejectionRes = await statusPayload({
+      namespace: 'rejectionCheck',
+      method: 'updateState',
+      args: [{
+        rejectionCheckResult: { status: 'success' },
+        tenderDocument: { content: 'browser-controlled' },
+        checkTask: { status: 'success' },
+      }],
+    });
+    assert(rejectionRes.response.statusCode === 200, '废标结果编辑通过 Bridge 返回 200');
+    assert(
+      JSON.stringify(rejectionPatch) === JSON.stringify({ rejectionCheckResult: { status: 'success' } }),
+      'rejectionCheck.updateState 只允许浏览器写入可编辑结果字段',
+    );
+  } finally {
+    setWorkspaceContextResolver(previousRejectionResolver);
+  }
+
   for (const [manifestKey, entry] of Array.from(contractMap.entries()).filter(([key]) => key.startsWith('events.'))) {
     const eventPath = manifestKey.split('.');
     let eventLeaf = resolvePropertyPath(webBridge, eventPath);
@@ -957,8 +1338,8 @@ async function runBridgeBehavior(inject, context) {
   }
 
   const httpClientRuntime = loadHttpClientRuntimeForFailureBranchCheck();
-  const testHttpClientErrors = async (status, code) => {
-    const payload = [{ status, payload: { code, message: `contract test ${code}` } }];
+  const testHttpClientErrors = async (status, code, headers = {}) => {
+    const payload = [{ status, headers, payload: { code, message: `contract test ${code}` } }];
     const fetchImpl = createErrorFromHttpClientPayloads(payload);
     const client = httpClientRuntime.loadHttpClientWithFetch(fetchImpl);
 
@@ -976,6 +1357,14 @@ async function runBridgeBehavior(inject, context) {
     const { error } = await testHttpClientErrors(501, 'WEB_CAPABILITY_PENDING');
     assert(error?.name === 'WebCapabilityPendingError', 'HTTP 501 + WEB_CAPABILITY_PENDING 返回 WebCapabilityPendingError');
     assert(extractErrorCode(error) === 'WEB_CAPABILITY_PENDING', 'HTTP 501 + WEB_CAPABILITY_PENDING 保留 code');
+    assert(error.status === 501, 'HTTP 501 + WEB_CAPABILITY_PENDING 保留 status');
+  }
+
+  {
+    const { error } = await testHttpClientErrors(429, 'AI_QUEUE_OVERLOADED', { 'Retry-After': '5' });
+    assert(error?.name === 'WebCapabilityError', 'HTTP 429 返回 WebCapabilityError');
+    assert(error.status === 429, 'HTTP 429 保留 status');
+    assert(error.retryAfterSeconds === 5, 'HTTP 429 保留 Retry-After 秒数');
   }
 
   {
@@ -1342,6 +1731,7 @@ async function closeServer() {
       getWorkspaceContext,
       setWorkspaceContextResolver,
       contractVersion,
+      contractEnums: contractModule.enums,
       webBridgeRuntime,
     });
   } catch (error) {

@@ -77,10 +77,86 @@ function createStoreBinding(storeName, storeMethod, contractRef) {
   });
 }
 
+function pickEditableRejectionState(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const editable = {};
+  for (const field of ['rejectionCheckResult', 'typoCheckResult', 'logicCheckResult']) {
+    if (hasOwnProperty(source, field)) {
+      editable[field] = source[field];
+    }
+  }
+  return editable;
+}
+
+function executeWorkspaceStore(ctx, targetName, method, args, fallback) {
+  if (ctx.storeExecutor && typeof ctx.storeExecutor.execute === 'function') {
+    return ctx.storeExecutor.execute(targetName, method, args);
+  }
+  return fallback();
+}
+
+function matchesContractType(value, descriptor) {
+  if (Array.isArray(descriptor.enum)) {
+    return descriptor.enum.includes(value);
+  }
+  if (descriptor.type === 'string') {
+    return typeof value === 'string';
+  }
+  if (descriptor.type === 'number') {
+    return typeof value === 'number' && Number.isFinite(value);
+  }
+  if (descriptor.type === 'boolean') {
+    return typeof value === 'boolean';
+  }
+  if (descriptor.type === 'object') {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+  }
+  if (typeof descriptor.type === 'string' && descriptor.type.endsWith('[]')) {
+    return Array.isArray(value);
+  }
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validateContractValue(value, descriptor) {
+  if (value === undefined || value === null) {
+    return descriptor.required === false;
+  }
+  if (!matchesContractType(value, descriptor)) {
+    return false;
+  }
+  if (descriptor.properties && typeof descriptor.properties === 'object') {
+    for (const [propertyName, propertyDescriptor] of Object.entries(descriptor.properties)) {
+      if (!validateContractValue(value[propertyName], propertyDescriptor)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function validateContractArguments(contract, args) {
+  if (!Array.isArray(contract.input) || args.length > contract.input.length) {
+    return false;
+  }
+  return contract.input.every((descriptor, index) => (
+    descriptor
+    && typeof descriptor === 'object'
+    && typeof descriptor.name === 'string'
+    && typeof descriptor.type === 'string'
+    && validateContractValue(args[index], descriptor)
+  ));
+}
+
 const bridgeBindingMetadata = Object.freeze({
   config: Object.freeze({
-    load: createDirectBinding((ctx) => ctx.configStore.load(), 'config.load'),
-    save: createDirectBinding((ctx, args) => ctx.configStore.save(args[0]), 'config.save'),
+    load: createDirectBinding(
+      (ctx) => executeWorkspaceStore(ctx, 'configStore', 'load', [], () => ctx.configStore.load()),
+      'config.load',
+    ),
+    save: createDirectBinding(
+      (ctx, args) => executeWorkspaceStore(ctx, 'configStore', 'save', [args[0]], () => ctx.configStore.save(args[0])),
+      'config.save',
+    ),
     listModels: createDirectBinding((ctx, args, options) => ctx.aiService.listModels(args[0], options), 'config.listModels'),
   }),
 
@@ -122,7 +198,19 @@ const bridgeBindingMetadata = Object.freeze({
     loadState: createStoreBinding('rejectionCheckStore', 'loadRejectionCheck', 'rejectionCheck.loadState'),
     removeDocument: createStoreBinding('rejectionCheckStore', 'removeDocument', 'rejectionCheck.removeDocument'),
     saveUiState: createStoreBinding('rejectionCheckStore', 'saveUiState', 'rejectionCheck.saveUiState'),
-    updateState: createStoreBinding('rejectionCheckStore', 'updateRejectionCheck', 'rejectionCheck.updateState'),
+    updateState: createDirectBinding(
+      (ctx, args) => {
+        const partial = pickEditableRejectionState(args[0]);
+        return executeWorkspaceStore(
+          ctx,
+          'rejectionCheckStore',
+          'updateRejectionCheck',
+          [partial],
+          () => ctx.stores.rejectionCheckStore.updateRejectionCheck(partial),
+        );
+      },
+      'rejectionCheck.updateState',
+    ),
     clear: createStoreBinding('rejectionCheckStore', 'clearRejectionCheck', 'rejectionCheck.clear'),
     importTenderFromTechnicalPlan: createStoreBinding('rejectionCheckStore', 'importTenderFromTechnicalPlan', 'rejectionCheck.importTenderFromTechnicalPlan'),
   }),
@@ -155,6 +243,9 @@ function buildDispatchers(meta) {
 
       if (spec.type === 'store') {
         namespaceDispatchers[method] = (ctx, args) => {
+          if (ctx.storeExecutor && typeof ctx.storeExecutor.execute === 'function') {
+            return ctx.storeExecutor.execute(spec.storeName, spec.storeMethod, args);
+          }
           const store = ctx.stores[spec.storeName];
           if (!store || typeof store[spec.storeMethod] !== 'function') {
             throw new Error(`${spec.storeName}.${spec.storeMethod} 不可用`);
@@ -265,6 +356,9 @@ router.post('/bridge', (req, res) => {
   if (contract.status !== 'implemented') {
     return res.status(500).json(createErrorPayload('BRIDGE_CONTRACT_MISMATCH', '桥接能力配置异常'));
   }
+  if (!validateContractArguments(contract, args)) {
+    return res.status(400).json(createErrorPayload('INVALID_BRIDGE_ARGUMENTS', 'Bridge 参数与契约不匹配'));
+  }
 
   let ctx;
   try {
@@ -298,6 +392,20 @@ router.post('/bridge', (req, res) => {
   });
 
   function sendExecutionError(err) {
+    if (err?.code === 'INVALID_BRIDGE_ARGUMENTS') {
+      return res.status(400).json({
+        code: 'INVALID_BRIDGE_ARGUMENTS',
+        message: 'Bridge 参数无效',
+        retryable: false,
+      });
+    }
+    if (err?.code === 'CONFIG_INVALID') {
+      return res.status(400).json({
+        code: 'CONFIG_INVALID',
+        message: '配置格式无效',
+        retryable: false,
+      });
+    }
     if (err?.code === 'AI_QUEUE_OVERLOADED') {
       return res.status(429)
         .set('Retry-After', '5')
@@ -315,9 +423,15 @@ router.post('/bridge', (req, res) => {
     const result = nsDispatcher[method](ctx, args, { signal: requestController.signal });
     Promise.resolve(result).then((data) => {
       completed = true;
+      if (requestController.signal.aborted || res.destroyed) {
+        return;
+      }
       res.json({ code: 'OK', data });
     }).catch((err) => {
       completed = true;
+      if (requestController.signal.aborted || res.destroyed) {
+        return;
+      }
       sendExecutionError(err);
     });
   } catch (err) {

@@ -66,6 +66,21 @@ async function testDefaultLimits() {
   const defaultStatus = defaultCoordinator.getStatus();
   assert(defaultStatus.text.limit === 30, '默认协调器 text limit = 30');
   assert(defaultStatus.image.limit === 6, '默认协调器 image limit = 6');
+  assert(defaultStatus.text.maxQueued === 120, '默认协调器 text maxQueued = 120');
+  assert(defaultStatus.image.maxQueued === 24, '默认协调器 image maxQueued = 24');
+  assert(defaultStatus.text.maxQueuedPerWorkspace === 20, '默认协调器 text 单 workspace maxQueued = 20');
+  assert(defaultStatus.image.maxQueuedPerWorkspace === 4, '默认协调器 image 单 workspace maxQueued = 4');
+
+  const defaultQueue = createAiRequestQueue({
+    coordinator: defaultCoordinator,
+    workspaceKey: 'default-limit-check',
+  });
+  const defaultQueueStatus = defaultQueue.getStatus();
+  assert(defaultQueueStatus.text.limit === 10, '默认本地队列 text limit = 10');
+  assert(defaultQueueStatus.image.limit === 2, '默认本地队列 image limit = 2');
+  assert(defaultQueueStatus.text.maxQueued === 20, '默认本地队列 text maxQueued = 20');
+  assert(defaultQueueStatus.image.maxQueued === 4, '默认本地队列 image maxQueued = 4');
+  defaultQueue.close();
 
   const configured = createAiFairCoordinator({ textLimit: 3, imageLimit: 1 });
   const configuredStatus = configured.getStatus();
@@ -327,6 +342,35 @@ async function testQueueCapacityLimits() {
   await Promise.all([localRunning, localQueued]);
 }
 
+async function testQueuedAbortListenerCleanup() {
+  const coordinator = createAiFairCoordinator({ textLimit: 1 });
+  const queue = createAiRequestQueue({
+    coordinator,
+    workspaceKey: 'listener-cleanup',
+    textLimit: 1,
+  });
+  const hold = createDeferred();
+  const running = queue.enqueue('text', async () => hold.promise);
+  const listeners = new Set();
+  const signal = {
+    aborted: false,
+    addEventListener(_event, listener) {
+      listeners.add(listener);
+    },
+    removeEventListener(_event, listener) {
+      listeners.delete(listener);
+    },
+  };
+  const queued = queue.enqueue('text', async () => 'queued', { signal });
+  const queuedOutcome = queued.catch((error) => error);
+  queued.cancel();
+  const error = await queuedOutcome;
+  assert(error?.code === 'AI_REQUEST_ABORTED', '本地排队任务取消返回稳定错误码');
+  assert(listeners.size === 0, '本地排队任务取消后清理 AbortSignal listener');
+  hold.resolve('running');
+  await running;
+}
+
 async function testTextTokenStatsIsolation() {
   const first = createTextTokenStatsStore();
   const second = createTextTokenStatsStore();
@@ -400,6 +444,7 @@ async function run() {
   await testCloseIsolation();
   await testDelegatedGlobalWaitClose();
   await testQueueCapacityLimits();
+  await testQueuedAbortListenerCleanup();
   await testTextTokenStatsIsolation();
   testCoreFilesNoElectronRequire();
 

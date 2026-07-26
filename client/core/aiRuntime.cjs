@@ -528,6 +528,14 @@ async function cancelResponseBody(response) {
   }
 }
 
+function parseJsonText(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw createRuntimeError('AI 上游响应格式无效', 'AI_RESPONSE_PARSE_ERROR');
+  }
+}
+
 async function readJsonResponse(response, requestControl) {
   const contentLength = getContentLength(response);
   if (contentLength !== null && contentLength > MAX_JSON_RESPONSE_BYTES) {
@@ -553,7 +561,7 @@ async function readJsonResponse(response, requestControl) {
         }
         chunks.push(chunk);
       }
-      return JSON.parse(Buffer.concat(chunks, total).toString('utf8'));
+      return parseJsonText(Buffer.concat(chunks, total).toString('utf8'));
     } catch (error) {
       await cancelResponseBody(response);
       throw error;
@@ -561,13 +569,20 @@ async function readJsonResponse(response, requestControl) {
   }
 
   if (typeof response?.json === 'function') {
-    return requestControl.race(response.json());
+    try {
+      return await requestControl.race(response.json());
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw createRuntimeError('AI 上游响应格式无效', 'AI_RESPONSE_PARSE_ERROR');
+      }
+      throw error;
+    }
   }
   const text = typeof response?.text === 'function' ? await requestControl.race(response.text()) : '';
   if (Buffer.byteLength(text, 'utf8') > MAX_JSON_RESPONSE_BYTES) {
     throw createRuntimeError('AI 上游响应过大', 'AI_RESPONSE_PARSE_ERROR');
   }
-  return JSON.parse(text);
+  return parseJsonText(text);
 }
 
 function createAiRuntime(options = {}) {

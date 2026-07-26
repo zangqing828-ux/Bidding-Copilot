@@ -71,7 +71,7 @@ function createConfig(baseUrl, apiKey = API_KEY) {
   };
 }
 
-function createRuntime({ config, coordinator, fetch, trackRequest, timeouts, retryDelay } = {}) {
+function createRuntime({ config, coordinator, fetch, trackRequest, timeouts, retryDelay, endpointPolicy } = {}) {
   return createAiRuntime({
     workspaceKey: config?.workspaceKey || `runtime-${Math.random()}`,
     loadConfig: () => config || createConfig('http://127.0.0.1:1/v1'),
@@ -80,6 +80,7 @@ function createRuntime({ config, coordinator, fetch, trackRequest, timeouts, ret
     trackRequest,
     timeouts,
     retryDelay,
+    endpointPolicy,
     version: '0.1.0-test',
   });
 }
@@ -353,6 +354,63 @@ async function main() {
       assert.equal(request.headers.authorization, `Bearer ${API_KEY}`);
     });
 
+    await run('configStore 拒绝非字符串敏感字段且不持久化损坏配置', async () => {
+      const invalidConfigPath = path.join(tempDir, 'invalid-config.enc.json');
+      const invalidStore = createEncryptedConfigStore({ configPath: invalidConfigPath });
+      assert.throws(
+        () => invalidStore.save({ api_key: { nested: 'invalid' } }),
+        (error) => error.code === 'CONFIG_INVALID',
+      );
+      const raw = JSON.parse(fs.readFileSync(invalidConfigPath, 'utf8'));
+      assert.equal(typeof raw.api_key, 'string');
+      assert.doesNotThrow(() => invalidStore.load());
+    });
+
+    await run('configStore 的 profile-only 更新不会被旧扁平字段覆盖', async () => {
+      const profileConfigPath = path.join(tempDir, 'profile-update.enc.json');
+      const profileStore = createEncryptedConfigStore({ configPath: profileConfigPath });
+      profileStore.save({
+        text_model_provider: 'custom',
+        api_key: 'text-old-key',
+        base_url: mock.baseUrl,
+        model_name: 'text-old-model',
+        image_model: {
+          provider: 'custom',
+          api_key: 'image-old-key',
+          base_url: mock.baseUrl,
+          model_name: 'image-old-model',
+          image_size: '1K',
+          request_mode: 'normal',
+          concurrency_limit: 1,
+        },
+      });
+      profileStore.save({
+        text_model_profiles: {
+          custom: {
+            api_key: 'text-new-key',
+            model_name: 'text-new-model',
+          },
+        },
+        image_model_profiles: {
+          custom: {
+            api_key: 'image-new-key',
+            model_name: 'image-new-model',
+          },
+        },
+      });
+
+      const decrypted = profileStore.loadDecrypted();
+      assert.equal(decrypted.api_key, 'text-new-key');
+      assert.equal(decrypted.model_name, 'text-new-model');
+      assert.equal(decrypted.text_model_profiles.custom.api_key, 'text-new-key');
+      assert.equal(decrypted.image_model.api_key, 'image-new-key');
+      assert.equal(decrypted.image_model.model_name, 'image-new-model');
+      assert.equal(decrypted.image_model_profiles.custom.api_key, 'image-new-key');
+      const rawConfig = fs.readFileSync(profileConfigPath, 'utf8');
+      assert(!rawConfig.includes('text-new-key'));
+      assert(!rawConfig.includes('image-new-key'));
+    });
+
     await run('listModels 对脱敏 override 使用保存的明文，明文 override 仅本次生效', async () => {
       const maskedResult = await runtime.listModels({
         api_key: '****-key',
@@ -573,6 +631,62 @@ async function main() {
       }
     });
 
+    await run('总 deadline 覆盖 endpoint policy、响应体读取和 retry delay', async () => {
+      const policyRuntime = createRuntime({
+        config: createConfig('http://policy-timeout.test/v1'),
+        endpointPolicy: {
+          assertAllowed: async () => new Promise(() => {}),
+          close: async () => undefined,
+        },
+        fetch: async () => {
+          throw new Error('endpoint policy 超时前不应发起 fetch');
+        },
+        timeouts: { text: 5 },
+        retryDelay: 0,
+      });
+      const bodyRuntime = createRuntime({
+        config: createConfig('http://body-timeout.test/v1'),
+        fetch: async () => ({
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          body: {
+            getReader: () => ({
+              read: async () => new Promise(() => {}),
+              cancel: async () => undefined,
+            }),
+            cancel: async () => undefined,
+          },
+        }),
+        timeouts: { text: 5 },
+        retryDelay: 0,
+      });
+      const retryRuntime = createRuntime({
+        config: createConfig('http://retry-delay-timeout.test/v1'),
+        fetch: async () => createResponse(503, {}),
+        timeouts: { text: 5 },
+        retryDelay: async () => new Promise(() => {}),
+      });
+      try {
+        await assert.rejects(
+          policyRuntime.chat({ messages: [{ role: 'user', content: 'policy timeout' }] }),
+          (error) => error.code === 'AI_REQUEST_TIMEOUT',
+        );
+        await assert.rejects(
+          bodyRuntime.chat({ messages: [{ role: 'user', content: 'body timeout' }] }),
+          (error) => error.code === 'AI_REQUEST_TIMEOUT',
+        );
+        await assert.rejects(
+          retryRuntime.chat({ messages: [{ role: 'user', content: 'retry timeout' }] }),
+          (error) => error.code === 'AI_REQUEST_TIMEOUT',
+        );
+      } finally {
+        await policyRuntime.close();
+        await bodyRuntime.close();
+        await retryRuntime.close();
+      }
+    });
+
     await run('响应体超过 8 MiB 时取消上游响应并安全失败', async () => {
       let cancelled = false;
       const oversizedRuntime = createRuntime({
@@ -593,6 +707,70 @@ async function main() {
         assert.equal(cancelled, true);
       } finally {
         await oversizedRuntime.close();
+      }
+    });
+
+    await run('无 Content-Length 的 chunked 响应超限时取消 reader', async () => {
+      let readCount = 0;
+      let readerCancelled = false;
+      const chunk = Buffer.alloc(5 * 1024 * 1024, 0x61);
+      const chunkedRuntime = createRuntime({
+        config: createConfig('http://chunked-oversized.test/v1'),
+        fetch: async () => ({
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          body: {
+            getReader: () => ({
+              async read() {
+                readCount += 1;
+                return { done: false, value: chunk };
+              },
+              async cancel() {
+                readerCancelled = true;
+              },
+            }),
+            cancel: async () => undefined,
+          },
+        }),
+        retryDelay: 0,
+      });
+      try {
+        await assert.rejects(
+          chunkedRuntime.chat({ messages: [{ role: 'user', content: 'chunked oversized' }] }),
+          (error) => error.code === 'AI_RESPONSE_PARSE_ERROR',
+        );
+        assert.equal(readCount, 2);
+        assert.equal(readerCancelled, true);
+      } finally {
+        await chunkedRuntime.close();
+      }
+    });
+
+    await run('畸形 JSON 响应不重试并返回稳定解析错误', async () => {
+      let attempts = 0;
+      const malformedRuntime = createRuntime({
+        config: createConfig('http://malformed.test/v1'),
+        fetch: async () => {
+          attempts += 1;
+          return {
+            ok: true,
+            status: 200,
+            async json() {
+              throw new SyntaxError('Unexpected token');
+            },
+          };
+        },
+        retryDelay: 0,
+      });
+      try {
+        await assert.rejects(
+          malformedRuntime.chat({ messages: [{ role: 'user', content: 'malformed' }] }),
+          (error) => error.code === 'AI_RESPONSE_PARSE_ERROR',
+        );
+        assert.equal(attempts, 1, '不可重试的解析错误不应重复请求上游');
+      } finally {
+        await malformedRuntime.close();
       }
     });
 

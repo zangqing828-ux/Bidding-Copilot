@@ -42,6 +42,7 @@ function collectFallbackCloseCandidates(runtime) {
   return [
     getCloseCandidate(runtime.taskEvents, 'runtime.taskEvents'),
     getCloseCandidate(runtime.taskService, 'runtime.taskService'),
+    getCloseCandidate(runtime.storeExecutor, 'runtime.storeExecutor'),
     getCloseCandidate(runtime.aiService || (runtime.ports && runtime.ports.ai), 'runtime.aiService/runtime.ports.ai'),
     getCloseCandidate((runtime.ports && runtime.ports.agent) || runtime.agent, 'runtime.ports.agent/runtime.agent'),
     getCloseCandidate(runtime.sqliteDatabase, 'runtime.sqliteDatabase'),
@@ -135,13 +136,19 @@ function createActivitySnapshot(runtime) {
     const activeTaskCount = readTaskCount();
     const text = readQueueStatus('getTextQueueStatus');
     const image = readQueueStatus('getImageQueueStatus');
+    const store = runtime.storeExecutor && typeof runtime.storeExecutor.getStatus === 'function'
+      ? runtime.storeExecutor.getStatus()
+      : {};
     const aiActiveCount = text.active + image.active;
     const aiQueuedCount = text.queued + image.queued;
+    const storeActiveCount = Math.max(0, Number(store?.active) || 0)
+      + Math.max(0, Number(store?.queued) || 0);
     return {
       activeTaskCount,
       aiActiveCount,
       aiQueuedCount,
-      active: activeTaskCount > 0 || aiActiveCount > 0 || aiQueuedCount > 0,
+      storeActiveCount,
+      active: activeTaskCount > 0 || aiActiveCount > 0 || aiQueuedCount > 0 || storeActiveCount > 0,
       unknown: false,
     };
   } catch {
@@ -150,6 +157,7 @@ function createActivitySnapshot(runtime) {
       activeTaskCount: 0,
       aiActiveCount: 0,
       aiQueuedCount: 0,
+      storeActiveCount: 0,
       active: true,
       unknown: true,
     };
@@ -220,6 +228,7 @@ function createWorkspaceContext({
     db: runtime.db,
     sqliteDatabase: runtime.sqliteDatabase,
     configStore: runtime.configStore,
+    storeExecutor: runtime.storeExecutor,
     aiService: runtime.aiService || (runtime.ports && runtime.ports.ai),
     stores: runtime.stores,
     taskService: runtime.taskService,

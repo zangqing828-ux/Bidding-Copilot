@@ -74,6 +74,11 @@ function normalizeRelativePath(value) {
   return String(value || '').replace(/\\/g, '/');
 }
 
+function isPathWithinRoot(rootPath, targetPath) {
+  const relative = path.relative(rootPath, targetPath);
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+}
+
 function getContentCharCount(text) {
   return String(text || '').replace(/\s+/g, '').length;
 }
@@ -169,7 +174,30 @@ function createKnowledgeBaseStore({ db, workspaceRoot }) {
   function resolvePath(relativeOrAbsolutePath) {
     const value = String(relativeOrAbsolutePath || '').trim();
     if (!value) return baseDir;
-    return path.isAbsolute(value) ? value : path.join(baseDir, value);
+    const rootPath = path.resolve(baseDir);
+    const targetPath = path.resolve(rootPath, value);
+    if (!isPathWithinRoot(rootPath, targetPath)) {
+      const error = new Error('知识库路径超出 workspace');
+      error.code = 'KNOWLEDGE_PATH_OUTSIDE_WORKSPACE';
+      throw error;
+    }
+
+    const canonicalRoot = fs.realpathSync.native(rootPath);
+    let existingAncestor = targetPath;
+    while (!fs.existsSync(existingAncestor)) {
+      const parent = path.dirname(existingAncestor);
+      if (parent === existingAncestor) {
+        break;
+      }
+      existingAncestor = parent;
+    }
+    const canonicalAncestor = fs.realpathSync.native(existingAncestor);
+    if (!isPathWithinRoot(canonicalRoot, canonicalAncestor)) {
+      const error = new Error('知识库路径通过符号链接超出 workspace');
+      error.code = 'KNOWLEDGE_PATH_OUTSIDE_WORKSPACE';
+      throw error;
+    }
+    return targetPath;
   }
 
   function documentFromRow(row) {

@@ -177,6 +177,43 @@ async function runTests() {
     assert.deepEqual(exit.calls, [1]);
   });
 
+  await run('真实普通长请求在关闭时主动断开并继续释放 workspace', async () => {
+    let closeAllCalls = 0;
+    const app = express();
+    app.get('/slow', (_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.write('started');
+    });
+    const server = http.createServer(app);
+    const port = await listen(server);
+    const response = await new Promise((resolve, reject) => {
+      const request = http.get({ host: '127.0.0.1', port, path: '/slow', agent: false }, resolve);
+      request.once('error', reject);
+    });
+    await once(response, 'data');
+    const responseClosed = new Promise((resolve) => {
+      response.once('close', resolve);
+      response.once('end', resolve);
+    });
+
+    const exit = createExitSpy();
+    const gracefulShutdown = createGracefulShutdownHandler({
+      server,
+      closeAllFn: async () => {
+        closeAllCalls += 1;
+        return { closed: 1, failed: 0 };
+      },
+      logger: createLogger(),
+      exit: exit.exit,
+      timeoutMs: 500,
+    });
+
+    await gracefulShutdown('SIGTERM');
+    await responseClosed;
+    assert.equal(closeAllCalls, 1);
+    assert.deepEqual(exit.calls, [0]);
+  });
+
   await run('真实 SSE 连接在关闭前主动释放订阅和 workspace lease', async () => {
     const registry = createSseConnectionRegistry();
     let subscriptions = 0;

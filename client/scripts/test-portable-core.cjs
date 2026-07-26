@@ -58,6 +58,11 @@ function expectThrow(fn, message) {
   return thrownError;
 }
 
+function expectThrowCode(fn, expectedCode, message) {
+  const error = expectThrow(fn, message);
+  assert(error?.code === expectedCode, `${message}（错误码）`);
+}
+
 function skip(message) {
   skipped.push(message);
   console.log(`  SKIP: ${message}`);
@@ -528,6 +533,37 @@ function runPortableStoreChecks(tmpDir) {
     assert(Array.isArray(knowledgeBaseStore.list().folders), 'core Store smoke: knowledge base load');
     const folder = knowledgeBaseStore.createFolder('portable-folder');
     assert(knowledgeBaseStore.list().folders.some((item) => item.id === folder.id), 'core Store smoke: knowledge base 轻量更新');
+    assert(
+      knowledgeBaseStore.resolvePath('folders/document/content.md').startsWith(workspaceRoot),
+      'core Store smoke: knowledge base 允许 workspace 内相对路径',
+    );
+    expectThrowCode(
+      () => knowledgeBaseStore.resolvePath('../../outside.md'),
+      'KNOWLEDGE_PATH_OUTSIDE_WORKSPACE',
+      'core Store smoke: knowledge base 拒绝目录穿越',
+    );
+    expectThrowCode(
+      () => knowledgeBaseStore.resolvePath(path.join(tmpDir, 'outside.md')),
+      'KNOWLEDGE_PATH_OUTSIDE_WORKSPACE',
+      'core Store smoke: knowledge base 拒绝 workspace 外绝对路径',
+    );
+    const knowledgeBaseDir = coreWorkspacePaths.resolveWorkspacePaths(workspaceRoot).knowledgeBaseDir;
+    const outsideKnowledgeDir = path.join(tmpDir, 'knowledge-outside');
+    const linkedKnowledgeDir = path.join(knowledgeBaseDir, 'linked-outside');
+    fs.mkdirSync(outsideKnowledgeDir, { recursive: true });
+    try {
+      fs.symlinkSync(outsideKnowledgeDir, linkedKnowledgeDir, 'dir');
+      expectThrowCode(
+        () => knowledgeBaseStore.resolvePath('linked-outside/content.md'),
+        'KNOWLEDGE_PATH_OUTSIDE_WORKSPACE',
+        'core Store smoke: knowledge base 拒绝符号链接逃逸',
+      );
+    } catch (error) {
+      if (!['EPERM', 'EACCES', 'ENOTSUP'].includes(error?.code)) {
+        throw error;
+      }
+      skip(`knowledge base symlink 边界用例：当前平台不支持目录 symlink (${error.code})`);
+    }
 
     assert(duplicateCheckStore.loadDuplicateCheck().step === 'upload', 'core Store smoke: duplicate check load');
     const duplicateState = duplicateCheckStore.saveUiState({ step: 'analysis', activeAnalysisTab: 'metadata' });

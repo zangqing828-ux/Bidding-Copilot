@@ -26,6 +26,66 @@ function createContractEntry(options) {
   };
 }
 
+const COMMON_IMPLEMENTED_BRIDGE_ERRORS = Object.freeze([
+  'UNAUTHORIZED',
+  'INVALID_BRIDGE_ARGUMENTS',
+  'BRIDGE_DISPATCHER_MISSING',
+  'INTERNAL_ERROR',
+]);
+
+const contractEnums = Object.freeze({
+  TechnicalPlanStep: Object.freeze([
+    'document-analysis',
+    'bid-analysis',
+    'outline-generation',
+    'global-facts',
+    'content-edit',
+    'expand',
+  ]),
+  TechnicalPlanWorkflowKind: Object.freeze([
+    'technical-plan',
+    'existing-plan-expansion',
+  ]),
+  BidAnalysisMode: Object.freeze(['key', 'full', 'custom']),
+  BidSectionMode: Object.freeze(['single', 'multiple']),
+  OutlineExpansionMode: Object.freeze(['original-only', 'ai-complement']),
+  RejectionDocumentRole: Object.freeze(['tender', 'bid']),
+});
+
+function contractArg(name, type, options = {}) {
+  const descriptor = {
+    name,
+    type,
+    required: options.required !== false,
+  };
+  if (Array.isArray(options.enum)) {
+    descriptor.enum = [...options.enum];
+  }
+  if (options.properties && typeof options.properties === 'object') {
+    descriptor.properties = options.properties;
+  }
+  return descriptor;
+}
+
+function implementedBridgeContract({
+  owner,
+  workPackage,
+  contractRef,
+  input,
+  output,
+  errors = [],
+}) {
+  return createContractEntry({
+    status: 'implemented',
+    owner,
+    workPackage,
+    contractRef,
+    input,
+    output: { type: output },
+    errors: [...COMMON_IMPLEMENTED_BRIDGE_ERRORS, ...errors],
+  });
+}
+
 function isLeafCandidate(entry) {
   return entry !== null
     && typeof entry === 'object'
@@ -309,9 +369,41 @@ const rawMethods = {
     getStatus: createContractEntry({ status: 'pending', owner: 'runtime', workPackage: 'WP-G', contractRef: 'requiredOnlineServices.getStatus' }),
   },
   config: {
-    load: createContractEntry({ status: 'implemented', owner: 'settings', workPackage: 'WP-A', contractRef: 'config.load' }),
-    save: createContractEntry({ status: 'implemented', owner: 'settings', workPackage: 'WP-A', contractRef: 'config.save' }),
-    listModels: createContractEntry({ status: 'implemented', owner: 'settings', workPackage: 'WP-C', contractRef: 'config.listModels' }),
+    load: implementedBridgeContract({
+      owner: 'settings',
+      workPackage: 'WP-A',
+      contractRef: 'config.load',
+      input: [],
+      output: 'ClientConfig',
+      errors: ['CONFIG_INVALID'],
+    }),
+    save: implementedBridgeContract({
+      owner: 'settings',
+      workPackage: 'WP-A',
+      contractRef: 'config.save',
+      input: [contractArg('config', 'ClientConfig')],
+      output: 'ConfigSaveResult',
+      errors: ['CONFIG_INVALID'],
+    }),
+    listModels: implementedBridgeContract({
+      owner: 'settings',
+      workPackage: 'WP-C',
+      contractRef: 'config.listModels',
+      input: [contractArg('config', 'ClientConfig', { required: false })],
+      output: 'ModelListResult',
+      errors: [
+        'CONFIG_INVALID',
+        'AI_CONFIG_INVALID',
+        'AI_CONFIG_LOAD_FAILED',
+        'AI_ENDPOINT_NOT_ALLOWED',
+        'AI_QUEUE_OVERLOADED',
+        'AI_REQUEST_ABORTED',
+        'AI_REQUEST_TIMEOUT',
+        'AI_NETWORK_ERROR',
+        'AI_RESPONSE_PARSE_ERROR',
+        'AI_REQUEST_FAILED',
+      ],
+    }),
     openConfigFolder: createContractEntry({
       status: 'removed',
       owner: 'desktop',
@@ -360,11 +452,34 @@ const rawMethods = {
     selectDuplicateCheckFiles: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-D', contractRef: 'file.selectDuplicateCheckFiles' }),
   },
   knowledgeBase: {
-    getMigrationStatus: createContractEntry({ status: 'implemented', owner: 'knowledge', workPackage: 'WP-A', contractRef: 'knowledgeBase.getMigrationStatus' }),
-    migrateLegacy: createContractEntry({ status: 'implemented', owner: 'knowledge', workPackage: 'WP-A', contractRef: 'knowledgeBase.migrateLegacy' }),
+    getMigrationStatus: implementedBridgeContract({
+      owner: 'knowledge',
+      workPackage: 'WP-A',
+      contractRef: 'knowledgeBase.getMigrationStatus',
+      input: [],
+      output: 'KnowledgeBaseMigrationStatus',
+      errors: ['KNOWLEDGE_PATH_OUTSIDE_WORKSPACE'],
+    }),
+    migrateLegacy: implementedBridgeContract({
+      owner: 'knowledge',
+      workPackage: 'WP-A',
+      contractRef: 'knowledgeBase.migrateLegacy',
+      input: [],
+      output: 'KnowledgeBaseMigrationResult',
+      errors: ['KNOWLEDGE_PATH_OUTSIDE_WORKSPACE'],
+    }),
     list: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.list' }),
     createFolder: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.createFolder' }),
-    renameFolder: createContractEntry({ status: 'implemented', owner: 'knowledge', workPackage: 'WP-A', contractRef: 'knowledgeBase.renameFolder' }),
+    renameFolder: implementedBridgeContract({
+      owner: 'knowledge',
+      workPackage: 'WP-A',
+      contractRef: 'knowledgeBase.renameFolder',
+      input: [
+        contractArg('folderId', 'string'),
+        contractArg('name', 'string'),
+      ],
+      output: 'KnowledgeFolder',
+    }),
     reorderFolder: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.reorderFolder' }),
     deleteFolder: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.deleteFolder' }),
     deleteDocument: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.deleteDocument' }),
@@ -372,52 +487,275 @@ const rawMethods = {
     uploadDocuments: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-D', contractRef: 'knowledgeBase.uploadDocuments' }),
     retryDocument: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.retryDocument' }),
     startMatching: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.startMatching' }),
-    readMarkdown: createContractEntry({ status: 'implemented', owner: 'knowledge', workPackage: 'WP-A', contractRef: 'knowledgeBase.readMarkdown' }),
-    readItems: createContractEntry({ status: 'implemented', owner: 'knowledge', workPackage: 'WP-A', contractRef: 'knowledgeBase.readItems' }),
-    readAnalysis: createContractEntry({ status: 'implemented', owner: 'knowledge', workPackage: 'WP-A', contractRef: 'knowledgeBase.readAnalysis' }),
+    readMarkdown: implementedBridgeContract({
+      owner: 'knowledge',
+      workPackage: 'WP-A',
+      contractRef: 'knowledgeBase.readMarkdown',
+      input: [contractArg('documentId', 'string')],
+      output: 'string',
+      errors: ['KNOWLEDGE_PATH_OUTSIDE_WORKSPACE'],
+    }),
+    readItems: implementedBridgeContract({
+      owner: 'knowledge',
+      workPackage: 'WP-A',
+      contractRef: 'knowledgeBase.readItems',
+      input: [contractArg('documentId', 'string')],
+      output: 'KnowledgeItem[]',
+    }),
+    readAnalysis: implementedBridgeContract({
+      owner: 'knowledge',
+      workPackage: 'WP-A',
+      contractRef: 'knowledgeBase.readAnalysis',
+      input: [contractArg('documentId', 'string')],
+      output: 'KnowledgeAnalysisSnapshot',
+      errors: ['KNOWLEDGE_PATH_OUTSIDE_WORKSPACE'],
+    }),
   },
   technicalPlan: {
-    loadState: createContractEntry({ status: 'implemented', owner: 'technical-plan', workPackage: 'WP-A', contractRef: 'technicalPlan.loadState' }),
+    loadState: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-A',
+      contractRef: 'technicalPlan.loadState',
+      input: [],
+      output: 'TechnicalPlanState',
+    }),
     importTenderDocument: createContractEntry({ status: 'pending', owner: 'technical-plan', workPackage: 'WP-D', contractRef: 'technicalPlan.importTenderDocument' }),
     importOriginalPlanDocument: createContractEntry({ status: 'pending', owner: 'technical-plan', workPackage: 'WP-D', contractRef: 'technicalPlan.importOriginalPlanDocument' }),
-    checkBidSections: createContractEntry({ status: 'implemented', owner: 'technical-plan', workPackage: 'WP-A', contractRef: 'technicalPlan.checkBidSections' }),
-    selectBidSection: createContractEntry({ status: 'implemented', owner: 'technical-plan', workPackage: 'WP-A', contractRef: 'technicalPlan.selectBidSection' }),
-    readTenderMarkdown: createContractEntry({ status: 'implemented', owner: 'technical-plan', workPackage: 'WP-A', contractRef: 'technicalPlan.readTenderMarkdown' }),
-    readTenderSourceMarkdown: createContractEntry({ status: 'implemented', owner: 'technical-plan', workPackage: 'WP-A', contractRef: 'technicalPlan.readTenderSourceMarkdown' }),
-    readOriginalPlanMarkdown: createContractEntry({ status: 'implemented', owner: 'technical-plan', workPackage: 'WP-A', contractRef: 'technicalPlan.readOriginalPlanMarkdown' }),
-    updateStep: createContractEntry({ status: 'implemented', owner: 'technical-plan', workPackage: 'WP-A', contractRef: 'technicalPlan.updateStep' }),
-    setWorkflowKind: createContractEntry({ status: 'implemented', owner: 'technical-plan', workPackage: 'WP-A', contractRef: 'technicalPlan.setWorkflowKind' }),
-    switchWorkflowKind: createContractEntry({ status: 'implemented', owner: 'technical-plan', workPackage: 'WP-A', contractRef: 'technicalPlan.switchWorkflowKind' }),
-    saveBidAnalysisConfig: createContractEntry({ status: 'implemented', owner: 'technical-plan', workPackage: 'WP-A', contractRef: 'technicalPlan.saveBidAnalysisConfig' }),
-    saveOutlineConfig: createContractEntry({ status: 'implemented', owner: 'technical-plan', workPackage: 'WP-A', contractRef: 'technicalPlan.saveOutlineConfig' }),
-    saveOutline: createContractEntry({ status: 'implemented', owner: 'technical-plan', workPackage: 'WP-A', contractRef: 'technicalPlan.saveOutline' }),
-    saveGlobalFacts: createContractEntry({ status: 'implemented', owner: 'technical-plan', workPackage: 'WP-A', contractRef: 'technicalPlan.saveGlobalFacts' }),
-    saveContentGenerationOptions: createContractEntry({ status: 'implemented', owner: 'technical-plan', workPackage: 'WP-A', contractRef: 'technicalPlan.saveContentGenerationOptions' }),
-    saveChapterContent: createContractEntry({ status: 'implemented', owner: 'technical-plan', workPackage: 'WP-A', contractRef: 'technicalPlan.saveChapterContent' }),
-    clear: createContractEntry({ status: 'implemented', owner: 'technical-plan', workPackage: 'WP-A', contractRef: 'technicalPlan.clear' }),
+    checkBidSections: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-A',
+      contractRef: 'technicalPlan.checkBidSections',
+      input: [],
+      output: '{ hasMultiple: boolean; totalDeclared?: number | null }',
+    }),
+    selectBidSection: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-A',
+      contractRef: 'technicalPlan.selectBidSection',
+      input: [contractArg('selectedSection', 'DetectedBidSection')],
+      output: '{ success: boolean; message?: string; state: TechnicalPlanState; markdown: string }',
+    }),
+    readTenderMarkdown: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-A',
+      contractRef: 'technicalPlan.readTenderMarkdown',
+      input: [],
+      output: 'string',
+    }),
+    readTenderSourceMarkdown: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-A',
+      contractRef: 'technicalPlan.readTenderSourceMarkdown',
+      input: [contractArg('sourceId', 'string')],
+      output: 'string',
+    }),
+    readOriginalPlanMarkdown: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-A',
+      contractRef: 'technicalPlan.readOriginalPlanMarkdown',
+      input: [],
+      output: 'string',
+    }),
+    updateStep: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-A',
+      contractRef: 'technicalPlan.updateStep',
+      input: [contractArg('step', 'TechnicalPlanStep', { enum: contractEnums.TechnicalPlanStep })],
+      output: 'TechnicalPlanState',
+    }),
+    setWorkflowKind: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-A',
+      contractRef: 'technicalPlan.setWorkflowKind',
+      input: [contractArg('workflowKind', 'TechnicalPlanWorkflowKind', { enum: contractEnums.TechnicalPlanWorkflowKind })],
+      output: 'TechnicalPlanState',
+    }),
+    switchWorkflowKind: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-A',
+      contractRef: 'technicalPlan.switchWorkflowKind',
+      input: [contractArg('workflowKind', 'TechnicalPlanWorkflowKind', { enum: contractEnums.TechnicalPlanWorkflowKind })],
+      output: 'TechnicalPlanState',
+    }),
+    saveBidAnalysisConfig: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-A',
+      contractRef: 'technicalPlan.saveBidAnalysisConfig',
+      input: [contractArg('payload', '{ mode: BidAnalysisMode; selectedTaskIds: string[]; bidSectionMode?: BidSectionMode }', {
+        properties: {
+          mode: { type: 'BidAnalysisMode', required: true, enum: contractEnums.BidAnalysisMode },
+          selectedTaskIds: { type: 'string[]', required: true },
+          bidSectionMode: { type: 'BidSectionMode', required: false, enum: contractEnums.BidSectionMode },
+        },
+      })],
+      output: 'TechnicalPlanState',
+    }),
+    saveOutlineConfig: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-A',
+      contractRef: 'technicalPlan.saveOutlineConfig',
+      input: [contractArg('payload', '{ referenceKnowledgeDocumentIds: string[]; outlineExpansionMode?: OutlineExpansionMode; wordControlOptions: OutlineWordControlOptions }', {
+        properties: {
+          referenceKnowledgeDocumentIds: { type: 'string[]', required: true },
+          outlineExpansionMode: { type: 'OutlineExpansionMode', required: false, enum: contractEnums.OutlineExpansionMode },
+          wordControlOptions: { type: 'OutlineWordControlOptions', required: true },
+        },
+      })],
+      output: 'TechnicalPlanState',
+    }),
+    saveOutline: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-A',
+      contractRef: 'technicalPlan.saveOutline',
+      input: [contractArg('payload', 'SaveOutlineRequest')],
+      output: 'TechnicalPlanState',
+    }),
+    saveGlobalFacts: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-A',
+      contractRef: 'technicalPlan.saveGlobalFacts',
+      input: [contractArg('globalFacts', 'GlobalFactGroupState[]')],
+      output: 'TechnicalPlanState',
+    }),
+    saveContentGenerationOptions: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-A',
+      contractRef: 'technicalPlan.saveContentGenerationOptions',
+      input: [contractArg('options', 'ContentGenerationOptions')],
+      output: 'TechnicalPlanState',
+    }),
+    saveChapterContent: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-A',
+      contractRef: 'technicalPlan.saveChapterContent',
+      input: [contractArg('payload', '{ nodeId: string; content: string }', {
+        properties: {
+          nodeId: { type: 'string', required: true },
+          content: { type: 'string', required: true },
+        },
+      })],
+      output: 'TechnicalPlanState',
+    }),
+    clear: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-A',
+      contractRef: 'technicalPlan.clear',
+      input: [],
+      output: '{ success: boolean; message?: string; state: TechnicalPlanState }',
+    }),
   },
   duplicateCheck: {
-    loadState: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'duplicateCheck.loadState' }),
+    loadState: implementedBridgeContract({
+      owner: 'workflow',
+      workPackage: 'WP-A',
+      contractRef: 'duplicateCheck.loadState',
+      input: [],
+      output: 'DuplicateCheckWorkspaceState',
+    }),
     saveFiles: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-D', contractRef: 'duplicateCheck.saveFiles' }),
-    saveUiState: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'duplicateCheck.saveUiState' }),
+    saveUiState: implementedBridgeContract({
+      owner: 'workflow',
+      workPackage: 'WP-A',
+      contractRef: 'duplicateCheck.saveUiState',
+      input: [contractArg('payload', 'Partial<Pick<DuplicateCheckWorkspaceState, "step" | "activeAnalysisTab">>')],
+      output: 'DuplicateCheckWorkspaceState',
+    }),
     updateState: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-D', contractRef: 'duplicateCheck.updateState' }),
-    clear: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'duplicateCheck.clear' }),
+    clear: implementedBridgeContract({
+      owner: 'workflow',
+      workPackage: 'WP-A',
+      contractRef: 'duplicateCheck.clear',
+      input: [],
+      output: '{ success: boolean; message?: string; state: DuplicateCheckWorkspaceState }',
+    }),
   },
   rejectionCheck: {
-    loadState: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'rejectionCheck.loadState' }),
+    loadState: implementedBridgeContract({
+      owner: 'workflow',
+      workPackage: 'WP-A',
+      contractRef: 'rejectionCheck.loadState',
+      input: [],
+      output: 'RejectionCheckWorkspaceState',
+    }),
     importDocument: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-D', contractRef: 'rejectionCheck.importDocument' }),
-    importTenderFromTechnicalPlan: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'rejectionCheck.importTenderFromTechnicalPlan' }),
-    removeDocument: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'rejectionCheck.removeDocument' }),
-    saveUiState: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'rejectionCheck.saveUiState' }),
-    updateState: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'rejectionCheck.updateState' }),
-    clear: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'rejectionCheck.clear' }),
+    importTenderFromTechnicalPlan: implementedBridgeContract({
+      owner: 'workflow',
+      workPackage: 'WP-A',
+      contractRef: 'rejectionCheck.importTenderFromTechnicalPlan',
+      input: [],
+      output: '{ success: boolean; message?: string; state: RejectionCheckWorkspaceState }',
+    }),
+    removeDocument: implementedBridgeContract({
+      owner: 'workflow',
+      workPackage: 'WP-A',
+      contractRef: 'rejectionCheck.removeDocument',
+      input: [
+        contractArg('role', 'RejectionDocumentRole', { enum: contractEnums.RejectionDocumentRole }),
+        contractArg('documentId', 'string', { required: false }),
+      ],
+      output: 'RejectionCheckWorkspaceState',
+    }),
+    saveUiState: implementedBridgeContract({
+      owner: 'workflow',
+      workPackage: 'WP-A',
+      contractRef: 'rejectionCheck.saveUiState',
+      input: [contractArg('payload', 'Partial<Pick<RejectionCheckWorkspaceState, "step" | "activeDocumentTab" | "activeResultTab" | "activeCheckResultTab" | "customCheckItems" | "checkOptions">>')],
+      output: 'RejectionCheckWorkspaceState',
+    }),
+    updateState: implementedBridgeContract({
+      owner: 'workflow',
+      workPackage: 'WP-A',
+      contractRef: 'rejectionCheck.updateState',
+      input: [contractArg('partial', 'Partial<Pick<RejectionCheckWorkspaceState, "rejectionCheckResult" | "typoCheckResult" | "logicCheckResult">>')],
+      output: 'RejectionCheckWorkspaceState',
+    }),
+    clear: implementedBridgeContract({
+      owner: 'workflow',
+      workPackage: 'WP-A',
+      contractRef: 'rejectionCheck.clear',
+      input: [],
+      output: '{ success: boolean; message?: string; state: RejectionCheckWorkspaceState }',
+    }),
   },
   templates: {
-    list: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'templates.list' }),
-    get: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'templates.get' }),
-    create: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'templates.create' }),
-    update: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'templates.update' }),
-    delete: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'templates.delete' }),
+    list: implementedBridgeContract({
+      owner: 'workflow',
+      workPackage: 'WP-A',
+      contractRef: 'templates.list',
+      input: [],
+      output: 'ExportTemplateRecord[]',
+    }),
+    get: implementedBridgeContract({
+      owner: 'workflow',
+      workPackage: 'WP-A',
+      contractRef: 'templates.get',
+      input: [contractArg('templateId', 'string')],
+      output: 'ExportTemplateRecord | null',
+    }),
+    create: implementedBridgeContract({
+      owner: 'workflow',
+      workPackage: 'WP-A',
+      contractRef: 'templates.create',
+      input: [contractArg('config', 'ExportFormatConfig')],
+      output: 'ExportTemplateRecord',
+    }),
+    update: implementedBridgeContract({
+      owner: 'workflow',
+      workPackage: 'WP-A',
+      contractRef: 'templates.update',
+      input: [
+        contractArg('templateId', 'string'),
+        contractArg('config', 'ExportFormatConfig'),
+      ],
+      output: 'ExportTemplateRecord',
+    }),
+    delete: implementedBridgeContract({
+      owner: 'workflow',
+      workPackage: 'WP-A',
+      contractRef: 'templates.delete',
+      input: [contractArg('templateId', 'string')],
+      output: '{ success: boolean; message: string }',
+    }),
   },
   tasks: {
     startBidSectionExtraction: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startBidSectionExtraction' }),
@@ -429,7 +767,13 @@ const rawMethods = {
     startRejectionItemsExtraction: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startRejectionItemsExtraction' }),
     startRejectionCheck: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startRejectionCheck' }),
     startDuplicateAnalysis: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startDuplicateAnalysis' }),
-    getActiveTasks: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'tasks.getActiveTasks' }),
+    getActiveTasks: implementedBridgeContract({
+      owner: 'workflow',
+      workPackage: 'WP-A',
+      contractRef: 'tasks.getActiveTasks',
+      input: [],
+      output: 'unknown[]',
+    }),
   },
   export: {
     exportWord: createContractEntry({ status: 'pending', owner: 'export', workPackage: 'WP-F', contractRef: 'export.exportWord' }),
@@ -487,6 +831,7 @@ for (const [namespace, defs] of Object.entries(rawMethods)) {
 }
 
 module.exports = {
-  version: 'wp-a-contract-manifest-v1',
+  version: 'wp-a-contract-manifest-v2',
+  enums: contractEnums,
   methods: Object.freeze(methods),
 };

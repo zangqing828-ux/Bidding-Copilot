@@ -17,8 +17,8 @@ function throwWebBridgeEventError(code: string, message: string) {
   };
 }
 
-// 通用 invoke 包装：透传 namespace.method 调用，未实现的由服务端返回 501。
-// 返回 Promise<unknown>；Sprint 02 所有调用最终走 501 reject，运行时不会返回不匹配类型的值。
+// 通用 invoke 包装：透传 namespace.method 调用，pending 能力由服务端返回 501。
+// 返回 Promise<unknown>；实际状态与错误口径以 bridge contract manifest 为准。
 // 对象用 as YibiaoBridge 断言，因为 httpClient.invoke 的返回类型无法从接口方法签名反向推断。
 function bridgeMethod(namespace: string, method: string) {
   return (...args: unknown[]) => httpClient.invoke(namespace, method, args);

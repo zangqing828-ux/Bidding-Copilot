@@ -126,6 +126,12 @@ function createAiRequestQueue(options = {}) {
     throw new Error('createAiRequestQueue 需要共享 createAiFairCoordinator 实例');
   }
 
+  function settleJob(job, method, value) {
+    job.removeAbortListener?.();
+    job.removeAbortListener = null;
+    job[method](value);
+  }
+
   function isScopePaused(scopeId) {
     return scopeId && this.pausedScopes.has(scopeId);
   }
@@ -134,7 +140,7 @@ function createAiRequestQueue(options = {}) {
     if (!isScopePaused.call(state, job.scopeId)) {
       return false;
     }
-    job.reject(createQueueScopePausedError());
+    settleJob(job, 'reject', createQueueScopePausedError());
     return true;
   }
 
@@ -143,7 +149,7 @@ function createAiRequestQueue(options = {}) {
     try {
       delegated = coordinator.enqueue(lane, workspaceKey, () => job.runner(job.signal));
     } catch (error) {
-      job.reject(error);
+      settleJob(job, 'reject', error);
       return Promise.resolve().then(() => {
         state.activeCount -= 1;
         pumpLane(lane);
@@ -154,12 +160,11 @@ function createAiRequestQueue(options = {}) {
     state.delegatedJobs.add(job);
     return Promise.resolve(delegated)
       .then((value) => {
-        job.resolve(value);
+        settleJob(job, 'resolve', value);
       }, (error) => {
-        job.reject(error);
+        settleJob(job, 'reject', error);
       })
       .finally(() => {
-        job.removeAbortListener?.();
         state.delegatedJobs.delete(job);
         state.activeCount -= 1;
         pumpLane(lane);
@@ -190,7 +195,7 @@ function createAiRequestQueue(options = {}) {
   function rejectQueuedJobs(state) {
     while (state.queue.length) {
       const job = state.queue.shift();
-      job.reject(createQueueClosedError());
+      settleJob(job, 'reject', createQueueClosedError());
     }
   }
 
@@ -223,6 +228,9 @@ function createAiRequestQueue(options = {}) {
     if (options.signal?.aborted) {
       return Promise.reject(createQueueAbortedError());
     }
+    if (scopeId && state.pausedScopes.has(scopeId)) {
+      return Promise.reject(createQueueScopePausedError());
+    }
     if (getQueuedCount(state) >= state.maxQueued) {
       return Promise.reject(createQueueOverloadedError());
     }
@@ -238,11 +246,6 @@ function createAiRequestQueue(options = {}) {
     const promise = new Promise((resolve, reject) => {
       job.resolve = resolve;
       job.reject = reject;
-      if (scopeId && state.pausedScopes.has(scopeId)) {
-        job.reject(createQueueScopePausedError());
-        return;
-      }
-
       state.queue.push(job);
       pumpLane(normalizedLane);
     });
@@ -250,7 +253,7 @@ function createAiRequestQueue(options = {}) {
       const queuedIndex = state.queue.indexOf(job);
       if (queuedIndex >= 0) {
         state.queue.splice(queuedIndex, 1);
-        job.reject(reason);
+        settleJob(job, 'reject', reason);
         return true;
       }
       if (job.delegated && typeof job.delegated.cancel === 'function') {
@@ -282,7 +285,7 @@ function createAiRequestQueue(options = {}) {
       for (let i = 0; i < state.queue.length; i += 1) {
         const job = state.queue[i];
         if (job.scopeId === normalizedScopeId) {
-          job.reject(createQueueScopePausedError());
+          settleJob(job, 'reject', createQueueScopePausedError());
           dropped += 1;
         } else {
           remaining.push(job);

@@ -5,6 +5,7 @@ const BRIDGE_ENDPOINT = '/api/bridge';
 
 export class WebCapabilityPendingError extends Error {
   readonly code = 'WEB_CAPABILITY_PENDING';
+  readonly status = 501;
 
   constructor(message: string) {
     super(message);
@@ -15,12 +16,14 @@ export class WebCapabilityPendingError extends Error {
 class WebCapabilityError extends Error {
   readonly code: string;
   readonly status: number;
+  readonly retryAfterSeconds: number | null;
 
-  constructor(code: string, message: string, status: number) {
+  constructor(code: string, message: string, status: number, retryAfterSeconds: number | null) {
     super(message);
     this.name = 'WebCapabilityError';
     this.code = code;
     this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -55,7 +58,14 @@ async function invoke<T = unknown>(namespace: string, method: string, args: unkn
 
   if (!response.ok) {
     const errorCode = typeof payload.code === 'string' ? payload.code : `HTTP_${response.status}`;
-    throw new WebCapabilityError(errorCode, payload.message || `Web 请求错误（HTTP ${response.status}）`, response.status);
+    const retryAfter = Number(response.headers.get('Retry-After'));
+    const retryAfterSeconds = Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : null;
+    throw new WebCapabilityError(
+      errorCode,
+      payload.message || `Web 请求错误（HTTP ${response.status}）`,
+      response.status,
+      retryAfterSeconds,
+    );
   }
 
   return (payload.data ?? payload) as T;

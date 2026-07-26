@@ -10,6 +10,7 @@ const { createAiRuntime } = require('../../core/aiRuntime.cjs');
 const { getGlobalAiCoordinator } = require('../ai/globalAiCoordinator.cjs');
 const { createAiAnalyticsTracker } = require('../ai/aiAnalytics.cjs');
 const { createWebEndpointPolicy } = require('../ai/webEndpointPolicy.cjs');
+const { createWorkspaceStoreExecutor } = require('./storeBridgeExecutor.cjs');
 
 function createCloseHandler(target) {
   if (!target || typeof target.close !== 'function') {
@@ -172,6 +173,13 @@ function createWebWorkspaceRuntime({
     const duplicateCheckStore = createDuplicateCheckStore({ db: sqliteDatabase.db, workspaceRoot });
     const rejectionCheckStore = createRejectionCheckStore({ db: sqliteDatabase.db, workspaceRoot, technicalPlanStore });
     const templateStore = createTemplateStore({ db: sqliteDatabase.db });
+    const storeExecutor = createWorkspaceStoreExecutor({
+      workspaceId,
+      workspaceRoot,
+      databasePath,
+      configPath,
+    });
+    pushCloseHandler(closeHandlers, createCloseHandler(storeExecutor), 'storeExecutor');
 
     const resolvedCoordinator = sharedCoordinator || getGlobalAiCoordinator();
     const runtimeAiOptions = {
@@ -211,6 +219,7 @@ function createWebWorkspaceRuntime({
       db: sqliteDatabase.db,
       sqliteDatabase,
       configStore,
+      storeExecutor,
       aiService,
       taskService,
       taskEvents,

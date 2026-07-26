@@ -486,7 +486,7 @@ export interface YibiaoBridge {
     importTenderFromTechnicalPlan: () => Promise<{ success: boolean; message?: string; state: RejectionCheckWorkspaceState }>;
     removeDocument: (role: RejectionDocumentRole, documentId?: string) => Promise<RejectionCheckWorkspaceState>;
     saveUiState: (payload: Partial<Pick<RejectionCheckWorkspaceState, 'step' | 'activeDocumentTab' | 'activeResultTab' | 'activeCheckResultTab' | 'customCheckItems' | 'checkOptions'>>) => Promise<RejectionCheckWorkspaceState>;
-    updateState: (partial: Partial<RejectionCheckWorkspaceState>) => Promise<RejectionCheckWorkspaceState>;
+    updateState: (partial: Partial<Pick<RejectionCheckWorkspaceState, 'rejectionCheckResult' | 'typoCheckResult' | 'logicCheckResult'>>) => Promise<RejectionCheckWorkspaceState>;
     clear: () => Promise<{ success: boolean; message?: string; state: RejectionCheckWorkspaceState }>;
   };
   templates: {

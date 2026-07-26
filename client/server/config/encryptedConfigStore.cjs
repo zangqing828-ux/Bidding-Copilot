@@ -12,6 +12,14 @@ const ENCRYPTED_FIELDS = [
   'api_key',
   'components.file_parser.mineru_token',
 ];
+const TEXT_MODEL_FLAT_FIELDS = [
+  'api_key',
+  'base_url',
+  'model_name',
+  'context_length_limit',
+  'concurrency_limit',
+  'request_mode',
+];
 
 // 从 text_model_profiles 和 image_model_profiles 中提取需要加密的字段路径
 function getSensitiveFieldPaths(config) {
@@ -47,6 +55,17 @@ function hasPlaintextSensitiveValue(config) {
   });
 }
 
+function assertSensitiveFieldTypes(config) {
+  for (const fieldPath of getSensitiveFieldPaths(config || {})) {
+    const value = getValueByPath(config, fieldPath);
+    if (value !== null && value !== undefined && typeof value !== 'string') {
+      const error = new Error(`配置字段 ${fieldPath} 必须为字符串`);
+      error.code = 'CONFIG_INVALID';
+      throw error;
+    }
+  }
+}
+
 function getValueByPath(obj, fieldPath) {
   return fieldPath.split('.').reduce((acc, key) => acc?.[key], obj);
 }
@@ -59,6 +78,17 @@ function setValueByPath(obj, fieldPath, value) {
     return acc[key];
   }, obj);
   target[lastKey] = value;
+}
+
+function mergeProfileMap(currentProfiles, incomingProfiles) {
+  const merged = { ...(currentProfiles || {}) };
+  for (const [provider, profile] of Object.entries(incomingProfiles || {})) {
+    merged[provider] = {
+      ...(currentProfiles?.[provider] || {}),
+      ...(profile && typeof profile === 'object' ? profile : {}),
+    };
+  }
+  return merged;
 }
 
 function getEncryptionKey() {
@@ -136,6 +166,7 @@ function createEncryptedConfigStore({ configPath }) {
   }
 
   function writeEncryptedConfig(config) {
+    assertSensitiveFieldTypes(config);
     const persisted = cloneConfig(config);
     const sensitivePaths = getSensitiveFieldPaths(persisted);
     for (const fieldPath of sensitivePaths) {
@@ -150,6 +181,7 @@ function createEncryptedConfigStore({ configPath }) {
   function loadDecrypted() {
     const raw = readRaw();
     const config = normalizeConfig(raw || {});
+    assertSensitiveFieldTypes(config);
     // 解密敏感字段
     const sensitivePaths = getSensitiveFieldPaths(config);
     for (const fieldPath of sensitivePaths) {
@@ -182,17 +214,29 @@ function createEncryptedConfigStore({ configPath }) {
   function save(newConfig) {
     const current = loadDecrypted();
     const incoming = newConfig && typeof newConfig === 'object' ? newConfig : {};
+    const textModelProfiles = mergeProfileMap(current.text_model_profiles, incoming.text_model_profiles);
+    const imageModelProfiles = mergeProfileMap(current.image_model_profiles, incoming.image_model_profiles);
+    const textModelProvider = incoming.text_model_provider || current.text_model_provider;
+    const hasIncomingTextFlatFields = TEXT_MODEL_FLAT_FIELDS.some((field) => (
+      Object.prototype.hasOwnProperty.call(incoming, field)
+    ));
+    const activeTextProfile = textModelProfiles[textModelProvider] || {};
+    const textFlatFields = Object.fromEntries(TEXT_MODEL_FLAT_FIELDS.map((field) => [
+      field,
+      hasIncomingTextFlatFields ? incoming[field] : activeTextProfile[field],
+    ]));
+    const imageModel = Object.prototype.hasOwnProperty.call(incoming, 'image_model')
+      ? { ...(current.image_model || {}), ...(incoming.image_model || {}) }
+      : imageModelProfiles[current.image_model?.provider] || current.image_model;
+
     const merged = normalizeConfig({
       ...current,
       ...incoming,
-      text_model_profiles: {
-        ...current.text_model_profiles,
-        ...(incoming.text_model_profiles || {}),
-      },
-      image_model_profiles: {
-        ...current.image_model_profiles,
-        ...(incoming.image_model_profiles || {}),
-      },
+      ...textFlatFields,
+      text_model_provider: textModelProvider,
+      text_model_profiles: textModelProfiles,
+      image_model: imageModel,
+      image_model_profiles: imageModelProfiles,
       agent_mode_scenarios: {
         ...current.agent_mode_scenarios,
         ...(incoming.agent_mode_scenarios || {}),
