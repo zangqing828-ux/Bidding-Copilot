@@ -19,6 +19,8 @@
 - `client/src/shared/runtime/installRuntimeBridge.ts` 可在浏览器安装 Web Bridge。
 - 每个账号映射到随机 workspace ID，工作区下创建独立 SQLite、文件目录和加密配置。
 - Docker 与 CI 能构建并启动 Web 容器。
+- 当前 contract manifest 冻结 40 个 `status = implemented` 且 `transport = bridge` 的 RPC，并为每个 RPC 定义输入、输出、错误码和枚举约束。
+- CI 已加入 Docker development mock 登录后的 `technicalPlan.loadState` Store smoke、production MainQuest OAuth 启动 smoke，以及 Electron `--no-sandbox` native smoke。production smoke 只证明生产配置、OAuth 跳转和 Secure state Cookie 可启动，不代表真实 MainQuest 环境联调完成。
 - 资源下载、投标机会和插件管理已从产品侧菜单、路由和页面删除。
 
 ### 2.2 阻断真实交付的问题

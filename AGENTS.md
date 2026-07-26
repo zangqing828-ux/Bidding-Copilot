@@ -66,8 +66,9 @@
 - TypeScript/Renderer：`npm run build`。
 - Web 聚焦测试：`npm run test:web`。占位错误测试不能替代真实业务成功路径和失败路径测试。
 - CommonJS：`find electron scripts server -name '*.cjs' -print0 | xargs -0 -n1 node --check`。
-- Docker：从仓库根执行 `docker build -t bidding-copilot-web:local .`，并实际启动容器检查 `/api/health`、`/api/readiness` 和关键业务 smoke。
-- 改 Web native 依赖后，验证 Node ABI；保留 Electron 兼容时还要恢复 Electron ABI 并运行 `npm run smoke:electron-native`。
+- Docker development smoke：从仓库根执行 `docker build -t bidding-copilot-web:local .`，以 mock OAuth 启动容器，检查 `/api/health`、`/api/readiness`，登录后调用 `technicalPlan.loadState` 验证 Store Worker 链路。
+- Docker production smoke：以 `NODE_ENV=production`、`OAUTH_MODE=mainquest` 启动容器，检查 readiness、OAuth authorize 跳转和 Secure state Cookie；该 smoke 不替代真实 MainQuest 环境联调。
+- 改 Web native 依赖后，验证 Node ABI；保留 Electron 兼容时还要恢复 Electron ABI 并运行 `npm run smoke:electron-native`。该脚本在 Linux CI 使用 Electron `--no-sandbox`。
 - 改依赖后运行 `npm audit --omit=dev --audit-level=critical`；不能把已知关键漏洞当作普通警告。
 - 完成标准必须包含真实成功链路、边界/失败链路、账号隔离和持久化验证。测试如果只证明 `500/501` 可解释，只能说明占位受控。
 
