@@ -21,6 +21,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
 const dir = args[args.indexOf('--dir') + 1];
+const config = JSON.parse(fs.readFileSync(process.env.OPENCODE_CONFIG, 'utf8'));
+if (config.permission?.['*'] !== 'deny'
+  || config.permission?.bash !== 'deny'
+  || config.permission?.webfetch !== 'deny'
+  || config.permission?.websearch !== 'deny'
+  || config.permission?.edit?.['result.md'] !== 'allow') {
+  throw new Error('generated OpenCode permission config is unsafe');
+}
 if (args.some((arg) => arg.includes('wait-forever'))) setInterval(() => {}, 1000);
 fs.writeFileSync(path.join(dir, 'result.md'), 'agent generated content', 'utf8');
 process.stdout.write(JSON.stringify({ type: 'text', text: 'done' }) + '\\n');
@@ -45,6 +53,7 @@ async function run() {
     files: [{ path: 'input/tender.md', content: '# 招标文件' }],
   });
   check(result.success === true, 'Agent 成功执行');
+  check(result.success === true, 'Agent 子进程读取并验证实际生成的 OpenCode 权限配置');
   check(result.output_content === 'agent generated content', 'Agent 读取受控输出文件');
   check(!fs.existsSync(path.join(workspaceRoot, '.agent-tasks', 'plan-1')), '任务结束后清理临时工作区');
   check(service.getStatus().active_task === null, '任务结束后状态恢复空闲');

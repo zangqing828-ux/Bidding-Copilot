@@ -58,13 +58,16 @@ COPY client/scripts/opencode-checksums.json ./client/scripts/opencode-checksums.
 COPY client/package.json ./client/
 
 # 构建期固定下载指定版本的 Linux OpenCode binary；不依赖容器启动时联网。
+ARG OPENCODE_ASSET_SHA256
 RUN case "${TARGETARCH:-amd64}" in \
       amd64) agent_arch=x64 ;; \
       arm64) agent_arch=arm64 ;; \
       *) echo "unsupported Docker architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
     && cd client \
-    && OPENCODE_VERSION="${OPENCODE_VERSION}" node scripts/prepare-opencode-binary.cjs --platform linux --arch "${agent_arch}"
+    && OPENCODE_VERSION="${OPENCODE_VERSION}" \
+       OPENCODE_ASSET_SHA256="${OPENCODE_ASSET_SHA256}" \
+       node scripts/prepare-opencode-binary.cjs --platform linux --arch "${agent_arch}"
 
 # 创建非 root 用户
 RUN useradd -r -s /bin/false yibiao && \

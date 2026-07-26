@@ -274,6 +274,38 @@ async function runTests() {
     assert(context.uploadRegistry.resolve(retryPayload.fileId).fileName === '事务合法文件.txt', '重新上传的 file ID 可正常解析');
   }
 
+  // 0g. 历史 Workspace 重建后清理 duplicate state 中的服务器路径。
+  {
+    const { getSystemDb } = require('../server/database/systemDatabase.cjs');
+    const { closeWorkspaceContext, getWorkspaceContext } = require('../server/workspace/workspaceRegistry.cjs');
+    const account = getSystemDb().prepare('SELECT workspace_id FROM accounts WHERE email = ?').get('files@test.com');
+    const legacyFileId = '11111111-1111-4111-8111-111111111111';
+    const legacyFilePath = `/data/users/${account.workspace_id}/workspace/uploads/legacy.txt`;
+    const legacyContentPath = `/data/users/${account.workspace_id}/workspace/duplicate-check/content/legacy.md`;
+    const context = getWorkspaceContext(account.workspace_id);
+    const timestamp = new Date().toISOString();
+    context.db.prepare(`
+      INSERT OR REPLACE INTO duplicate_check_files (
+        file_id, role, file_name, file_path, extension, size, modified_at, sort_order, content_hash, created_at, updated_at
+      ) VALUES (?, 'bid', '历史投标文件.txt', ?, '.txt', 10, ?, 999, NULL, ?, ?)
+    `).run(legacyFileId, legacyFilePath, timestamp, timestamp, timestamp);
+    context.db.prepare(`
+      INSERT OR REPLACE INTO duplicate_check_content_files (
+        file_id, status, content_path, content_length, parser_label, error, updated_at
+      ) VALUES (?, 'success', ?, 10, '历史解析器', NULL, ?)
+    `).run(legacyFileId, legacyContentPath, timestamp);
+
+    await closeWorkspaceContext(account.workspace_id, { force: true });
+    const recreated = getWorkspaceContext(account.workspace_id);
+    const migratedState = recreated.stores.duplicateCheckStore.loadDuplicateCheck();
+    const migratedPayload = JSON.stringify(migratedState);
+    assert(migratedPayload.includes(`upload:${legacyFileId}`), '历史 file_path 在 Runtime 重建时迁移为 upload 引用');
+    assert(!migratedPayload.includes(legacyFilePath) && !migratedPayload.includes(legacyContentPath), '历史 loadState 不再返回服务器路径');
+    const migratedContent = recreated.db.prepare('SELECT content_path FROM duplicate_check_content_files WHERE file_id = ?').get(legacyFileId);
+    assert(migratedContent?.content_path === null, '历史 content_path 在 Runtime 重建时清空');
+    recreated.db.prepare('DELETE FROM duplicate_check_files WHERE file_id = ?').run(legacyFileId);
+  }
+
   // 0e. 另一账号无法借用 file ID，也不能提交路径替代 file ID。
   {
     const otherCookie = await loginMock('files-other@test.com', 'F2');

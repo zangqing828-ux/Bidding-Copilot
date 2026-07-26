@@ -105,6 +105,20 @@ jobs:
         working-directory: .
         run: docker build -t bidding-copilot-web:ci .
 
+      - name: Reject invalid OpenCode checksum
+        working-directory: .
+        run: |
+          set +e
+          docker build \
+            --build-arg OPENCODE_ASSET_SHA256=0000000000000000000000000000000000000000000000000000000000000000 \
+            -t bidding-copilot-web:invalid-checksum . \
+            > /tmp/yibiao-invalid-checksum-build.log 2>&1
+          build_status="$?"
+          set -e
+          cat /tmp/yibiao-invalid-checksum-build.log
+          test "$build_status" -ne 0
+          grep -q 'checksum 校验失败' /tmp/yibiao-invalid-checksum-build.log
+
       - name: Docker Web business smoke
         working-directory: .
         run: |
