@@ -85,6 +85,8 @@ function createWebAgentService({
   const activeChildren = new Set();
   let closing = false;
   let activeTask = null;
+  let activeRunController = null;
+  let activeRunCompletion = null;
 
   function getStatus() {
     return {
@@ -164,6 +166,14 @@ function createWebAgentService({
     const taskWorkspace = createOpenCodeTaskWorkspace({ workspaceRoot, runId, inputs });
     let proxy = null;
     let primaryError = null;
+    const runController = new AbortController();
+    const forwardAbort = () => runController.abort(options.signal?.reason || createProcessError('Agent 请求已取消', 'AGENT_ABORTED'));
+    if (options.signal?.aborted) forwardAbort();
+    else options.signal?.addEventListener?.('abort', forwardAbort, { once: true });
+    let resolveRunCompletion;
+    const runCompletion = new Promise((resolve) => { resolveRunCompletion = resolve; });
+    activeRunController = runController;
+    activeRunCompletion = runCompletion;
     activeTask = { task_id: taskId, title, stage: 'running', progress_text: 'OpenCode 正在生成', started_at: nowIso(), last_activity_at: nowIso(), elapsed_seconds: 0, idle_seconds: 0 };
     try {
       const modelSnapshot = aiService.captureTextModelSnapshot();
@@ -175,7 +185,7 @@ function createWebAgentService({
         proxyToken: proxy.token,
         prompt: `${task}\n\n仅可读取 input/，并将最终结构化结果写入 ${OUTPUT_FILE}。`,
         timeoutMs: payload.timeout_ms,
-        signal: options.signal,
+        signal: runController.signal,
         onChild(child, completedChild) {
           if (child) activeChildren.add(child);
           if (completedChild) activeChildren.delete(completedChild);
@@ -204,6 +214,11 @@ function createWebAgentService({
         taskWorkspace.cleanup();
       } catch (cleanupError) {
         if (!primaryError) throw createProcessError(`Agent 临时目录清理失败：${cleanupError.message}`, 'AGENT_CLEANUP_FAILED');
+      } finally {
+        options.signal?.removeEventListener?.('abort', forwardAbort);
+        if (activeRunController === runController) activeRunController = null;
+        if (activeRunCompletion === runCompletion) activeRunCompletion = null;
+        resolveRunCompletion();
       }
     }
   }
@@ -226,8 +241,10 @@ function createWebAgentService({
       if (typeof agentWorkspaceLease?.close === 'function') await agentWorkspaceLease.close();
       else if (typeof agentCoordinator?.closeWorkspace === 'function') await agentCoordinator.closeWorkspace(workspaceId);
       else if (typeof agentCoordinator?.cancelWorkspace === 'function') agentCoordinator.cancelWorkspace(workspaceId);
+      activeRunController?.abort(createProcessError('Workspace 正在关闭，Agent 任务已取消', 'AGENT_CANCELLED'));
       const children = Array.from(activeChildren);
       children.forEach(terminateProcessGroup);
+      await activeRunCompletion?.catch(() => undefined);
       await Promise.all(children.map((child) => waitForProcessExit(child)));
       activeChildren.clear();
     },

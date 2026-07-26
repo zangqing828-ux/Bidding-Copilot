@@ -2,9 +2,9 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-
 const { buildOpenCodeConfig, createWebAgentService, safeRelativePath } = require('../server/agent/webAgentService.cjs');
-const { OUTPUT_FILE, createOpenCodeTaskWorkspace } = require('../server/agent/openCodeTaskWorkspace.cjs');
+const { MAX_OUTPUT_BYTES, OUTPUT_FILE, createOpenCodeTaskWorkspace } = require('../server/agent/openCodeTaskWorkspace.cjs');
+const { STDERR_RING_BYTES, STDOUT_RING_BYTES, createRingBuffer } = require('../server/agent/webOpenCodeRunner.cjs');
 const { createAgentOpenAiProxy } = require('../server/agent/agentOpenAiProxy.cjs');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-web-agent-'));
@@ -34,7 +34,10 @@ if (config.permission?.['*'] !== 'deny'
   throw new Error('generated OpenCode permission config is unsafe');
 }
 if (args.some((arg) => arg.includes('wait-forever'))) setInterval(() => {}, 1000);
-if (args.some((arg) => arg.includes('unsafe-symlink'))) fs.symlinkSync(path.join(dir, 'input', 'tender.md'), path.join(dir, 'result.json'));
+if (args.some((arg) => arg.includes('mutate-input'))) fs.writeFileSync(path.join(dir, 'input', 'tender.md'), 'tampered', 'utf8');
+else if (args.some((arg) => arg.includes('unsafe-symlink'))) fs.symlinkSync(path.join(dir, 'input', 'tender.md'), path.join(dir, 'result.json'));
+else if (args.some((arg) => arg.includes('unsafe-fifo'))) require('node:child_process').execFileSync('mkfifo', [path.join(dir, 'result.json')]);
+else if (args.some((arg) => arg.includes('oversize-output'))) fs.writeFileSync(path.join(dir, 'result.json'), Buffer.alloc(${MAX_OUTPUT_BYTES + 1}, 0x61));
 else if (args.some((arg) => arg.includes('extra-output'))) {
   fs.writeFileSync(path.join(dir, 'result.json'), '{"ok":true}', 'utf8');
   fs.writeFileSync(path.join(dir, 'extra.txt'), 'undeclared', 'utf8');
@@ -91,6 +94,13 @@ async function run() {
   check(config.permission?.read?.['input/**'] === 'allow' && config.permission?.read?.['*'] === 'deny', 'Agent 只允许读取 input 目录');
   check(config.permission?.edit?.[OUTPUT_FILE] === 'allow', 'Agent 只允许写入约定输出文件');
 
+  const stdoutRing = createRingBuffer(STDOUT_RING_BYTES);
+  stdoutRing.append(Buffer.alloc(STDOUT_RING_BYTES + 128, 0x61));
+  check(Buffer.byteLength(stdoutRing.toString()) === STDOUT_RING_BYTES, 'stdout 使用固定上限 ring buffer');
+  const stderrRing = createRingBuffer(STDERR_RING_BYTES);
+  stderrRing.append(Buffer.alloc(STDERR_RING_BYTES + 128, 0x62));
+  check(Buffer.byteLength(stderrRing.toString()) === STDERR_RING_BYTES, 'stderr 使用固定上限 ring buffer');
+
   let forwardedStream = null;
   const protocolProxy = await createAgentOpenAiProxy({
     scopeId: 'proxy-test',
@@ -128,12 +138,36 @@ async function run() {
     (error) => error?.code === 'AGENT_TIMEOUT',
   );
   check(true, '超时时终止 Agent 进程');
+  check(fs.readdirSync(path.join(workspaceRoot, '.agent-tasks')).length === 0, '超时后清理 Agent 临时工作区');
+
+  const abortController = new AbortController();
+  const cancelledTask = service.runTask({ task: 'wait-forever' }, { signal: abortController.signal });
+  setTimeout(() => abortController.abort(Object.assign(new Error('请求取消'), { code: 'AGENT_ABORTED' })), 25).unref();
+  await assert.rejects(cancelledTask, (error) => error?.code === 'AGENT_ABORTED');
+  check(true, '取消后等待 Agent 进程退出并返回取消终态');
+  check(fs.readdirSync(path.join(workspaceRoot, '.agent-tasks')).length === 0, '取消后清理 Agent 临时工作区');
+
+  await assert.rejects(
+    service.runTask({ task: 'mutate-input', files: [{ path: 'input/tender.md', content: '# 招标文件' }] }),
+    (error) => error?.code === 'AGENT_RUNTIME_FAILED',
+  );
+  check(true, 'Agent 无法篡改只读输入文件');
 
   await assert.rejects(
     service.runTask({ task: 'unsafe-symlink', files: [{ path: 'input/tender.md', content: '# 招标文件' }] }),
     (error) => error?.code === 'AGENT_OUTPUT_UNSAFE',
   );
   check(true, '拒绝符号链接输出');
+  await assert.rejects(
+    service.runTask({ task: 'unsafe-fifo', files: [{ path: 'input/tender.md', content: '# 招标文件' }] }),
+    (error) => error?.code === 'AGENT_OUTPUT_UNSAFE',
+  );
+  check(true, '拒绝 FIFO 输出');
+  await assert.rejects(
+    service.runTask({ task: 'oversize-output', files: [{ path: 'input/tender.md', content: '# 招标文件' }] }),
+    (error) => error?.code === 'AGENT_OUTPUT_TOO_LARGE',
+  );
+  check(true, '拒绝超出上限的输出');
   await assert.rejects(
     service.runTask({ task: 'extra-output', files: [{ path: 'input/tender.md', content: '# 招标文件' }] }),
     (error) => error?.code === 'AGENT_OUTPUT_UNDECLARED',
@@ -153,6 +187,62 @@ async function run() {
   } finally {
     unsafeWorkspace.cleanup();
   }
+
+  const replacementWorkspace = createOpenCodeTaskWorkspace({ workspaceRoot, runId: 'unsafe-replacement', inputs: { 'input/source.json': '{}' } });
+  try {
+    fs.writeFileSync(replacementWorkspace.outputPath, '{"version":1}', 'utf8');
+    const realOpenSync = fs.openSync;
+    let replaced = false;
+    fs.openSync = function guardedOpen(target, ...args) {
+      if (!replaced && target === replacementWorkspace.outputPath) {
+        replaced = true;
+        fs.unlinkSync(replacementWorkspace.outputPath);
+        fs.writeFileSync(replacementWorkspace.outputPath, '{"version":2}', 'utf8');
+      }
+      return realOpenSync.call(this, target, ...args);
+    };
+    try {
+      assert.throws(() => replacementWorkspace.readOutput(), (error) => error?.code === 'AGENT_OUTPUT_UNSAFE');
+      check(true, '拒绝读取前被替换的输出文件');
+    } finally {
+      fs.openSync = realOpenSync;
+    }
+  } finally {
+    replacementWorkspace.cleanup();
+  }
+
+  const missingPrlimitService = createWebAgentService({
+    workspaceId: 'account-prlimit',
+    workspaceRoot,
+    env: { YIBIAO_WEB_OPENCODE_BIN: binaryPath, YIBIAO_WEB_PRLIMIT_BIN: path.join(root, 'missing-prlimit'), YIBIAO_WEB_AGENT_TOOLS: '' },
+    aiService: {
+      captureTextModelSnapshot: () => ({ provider: 'test', baseUrl: 'http://127.0.0.1:1/v1', modelName: 'test-model', apiKey: 'test-key' }),
+      chatCompletionsRaw: async () => ({}),
+      withQueueScope() { return this; },
+    },
+  });
+  await assert.rejects(missingPrlimitService.runTask({ task: 'prlimit-missing' }), (error) => error?.code === 'AGENT_PRLIMIT_UNAVAILABLE');
+  const missingPrlimitCheck = await missingPrlimitService.selfCheck();
+  check(missingPrlimitCheck.success === false, '缺少 prlimit 时 Runtime 自检失败');
+  await missingPrlimitService.close();
+
+  const shutdownService = createWebAgentService({
+    workspaceId: 'account-shutdown',
+    workspaceRoot,
+    env: { YIBIAO_WEB_OPENCODE_BIN: binaryPath, YIBIAO_WEB_PRLIMIT_BIN: prlimitPath, YIBIAO_WEB_AGENT_TOOLS: '' },
+    aiService: {
+      captureTextModelSnapshot: () => ({ provider: 'test', baseUrl: 'http://127.0.0.1:1/v1', modelName: 'test-model', apiKey: 'test-key' }),
+      chatCompletionsRaw: async () => ({}),
+      withQueueScope() { return this; },
+    },
+  });
+  const shutdownTask = shutdownService.runTask({ task: 'wait-forever' });
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const shutdownOutcome = assert.rejects(shutdownTask, (error) => error?.code === 'AGENT_CANCELLED');
+  await shutdownService.close();
+  await shutdownOutcome;
+  check(true, 'Workspace 关闭等待 Agent 任务以取消终态完成');
+  check(fs.readdirSync(path.join(workspaceRoot, '.agent-tasks')).length === 0, 'Workspace 关闭后无 Agent 临时目录泄漏');
 
   await service.close();
 
