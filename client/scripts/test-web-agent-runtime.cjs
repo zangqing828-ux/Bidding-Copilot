@@ -30,7 +30,8 @@ if (config.permission?.['*'] !== 'deny'
   || config.permission?.webfetch !== 'deny'
   || config.permission?.websearch !== 'deny'
   || config.permission?.read?.['input/**'] !== 'allow'
-  || config.permission?.edit?.['result.json'] !== 'allow') {
+  || config.permission?.edit?.['*'] !== 'allow'
+  || config.permission?.write?.['*'] !== 'allow') {
   throw new Error('generated OpenCode permission config is unsafe');
 }
 if (args.some((arg) => arg.includes('wait-forever'))) setInterval(() => {}, 1000);
@@ -92,7 +93,8 @@ async function run() {
   check(config.permission?.bash === 'deny', 'Agent 禁止 Bash');
   check(config.permission?.webfetch === 'deny' && config.permission?.websearch === 'deny', 'Agent 禁止网络工具');
   check(config.permission?.read?.['input/**'] === 'allow' && config.permission?.read?.['*'] === 'deny', 'Agent 只允许读取 input 目录');
-  check(config.permission?.edit?.[OUTPUT_FILE] === 'allow', 'Agent 只允许写入约定输出文件');
+  check(config.permission?.edit?.['*'] === 'allow', 'Agent 工作区写入由只读输入和唯一输出校验约束');
+  check(config.permission?.write?.['*'] === 'allow', 'Agent 工作区允许创建结果文件');
 
   const stdoutRing = createRingBuffer(STDOUT_RING_BYTES);
   stdoutRing.append(Buffer.alloc(STDOUT_RING_BYTES + 128, 0x61));

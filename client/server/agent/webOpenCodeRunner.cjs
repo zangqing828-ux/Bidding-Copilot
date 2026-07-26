@@ -113,7 +113,9 @@ function createWebOpenCodeRunner({ env = process.env } = {}) {
       `--nproc=${limits.processes}:${limits.processes}`,
       `--cpu=${limits.cpuSeconds}:${limits.cpuSeconds}`,
       '--', binary, 'run', '--format', 'json',
-      ...(env.YIBIAO_WEB_OPENCODE_LOG_LEVEL ? ['--log-level', String(env.YIBIAO_WEB_OPENCODE_LOG_LEVEL)] : []),
+      ...(env.YIBIAO_WEB_OPENCODE_LOG_LEVEL
+        ? ['--print-logs', '--log-level', String(env.YIBIAO_WEB_OPENCODE_LOG_LEVEL)]
+        : []),
       '--dir', taskWorkspace.workDir, prompt,
     ];
     return new Promise((resolve, reject) => {
@@ -173,7 +175,11 @@ function createWebOpenCodeRunner({ env = process.env } = {}) {
       child.stderr.on('data', (chunk) => stderr.append(chunk));
       child.once('error', (error) => finish(reject)(createRunnerError(`OpenCode 启动失败：${error.message}`, 'AGENT_RUNTIME_START_FAILED')));
       child.once('exit', (code, exitSignal) => {
-        if (terminationError) return finish(reject)(terminationError);
+        if (terminationError) {
+          const tail = stderr.toString().slice(-2_000);
+          if (tail) terminationError.message = `${terminationError.message}：${tail}`;
+          return finish(reject)(terminationError);
+        }
         if (code === 0) return finish(resolve)({ stdout: stdout.toString(), stderr: stderr.toString() });
         return finish(reject)(createRunnerError(`OpenCode 执行失败（code=${code ?? 'null'} signal=${exitSignal || 'null'}）：${stderr.toString().slice(-1000)}`, 'AGENT_RUNTIME_FAILED'));
       });

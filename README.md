@@ -1,6 +1,6 @@
 # Bidding-Copilot（Web 架构收敛中）
 
-> 当前 `main` 的 PR #3 仅提供 Web 运行基线。WP-I PR I-1 的 Draft PR #7 正在修复与复审“招标文件解析”Web 任务链，尚未取得完整 CI 门禁证据；其他业务任务、浏览器 Agent、Headless 渲染、真实 MainQuest OAuth 联调仍需按架构 Spec 完成。
+> 当前 `main` 已具备 Web Runtime 与 Agent Execution Foundation。独立 Docker E2E 已使用真实 OpenCode 验证两轮 tool-call、安全结果读取和清理；浏览器 Agent、其他业务任务、Headless 渲染与真实 MainQuest OAuth 联调仍按架构 Spec 推进。
 
 ## 已锁定的项目方向
 

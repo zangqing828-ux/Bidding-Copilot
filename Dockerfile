@@ -93,3 +93,13 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # 启动
 WORKDIR /app/client
 CMD ["node", "server/index.cjs"]
+
+# === Agent Foundation E2E ===
+# 测试 harness 仅存在于该 target；最终 runtime 镜像不包含。
+FROM runtime AS agent-e2e
+USER root
+COPY client/scripts/test-web-agent-docker.cjs ./scripts/test-web-agent-docker.cjs
+RUN chown yibiao:yibiao ./scripts/test-web-agent-docker.cjs
+USER yibiao
+ENV NODE_ENV=test
+CMD ["node", "scripts/test-web-agent-docker.cjs"]

@@ -36,10 +36,12 @@ function getRuntimeTools(env) {
 }
 
 function buildOpenCodeConfig(proxyBaseUrl) {
+  const outputPermissions = { '*': 'allow' };
   return {
     $schema: 'https://opencode.ai/config.json',
     autoupdate: false,
     plugin: [],
+    enabled_providers: ['openai'],
     mcp: {},
     instructions: [],
     permission: {
@@ -47,7 +49,8 @@ function buildOpenCodeConfig(proxyBaseUrl) {
       read: { '*': 'deny', 'input/**': 'allow' },
       glob: { '*': 'deny', 'input/**': 'allow' },
       grep: { '*': 'deny', 'input/**': 'allow' },
-      edit: { '*': 'deny', [OUTPUT_FILE]: 'allow' },
+      edit: outputPermissions,
+      write: outputPermissions,
       bash: 'deny',
       webfetch: 'deny',
       websearch: 'deny',
@@ -57,18 +60,18 @@ function buildOpenCodeConfig(proxyBaseUrl) {
       question: 'deny',
       external_directory: 'deny',
     },
-    model: 'yibiao/default',
-    small_model: 'yibiao/default',
+    // 使用 OpenCode 内置 OpenAI Provider，避免任务进程在运行期下载 npm Provider 包。
+    model: 'openai/bidmaster-proxy',
+    small_model: 'openai/bidmaster-proxy',
     provider: {
-      yibiao: {
-        npm: '@ai-sdk/openai-compatible',
-        name: 'Yibiao AI Proxy',
+      openai: {
+        name: 'BidMaster AI Proxy',
         options: {
           baseURL: `${proxyBaseUrl}/v1`,
           apiKey: '{env:YIBIAO_WEB_AGENT_PROXY_TOKEN}',
         },
         models: {
-          default: {
+          'bidmaster-proxy': {
             name: 'Yibiao Current Text Model',
             // 自定义 Provider 没有 Models.dev 目录项，明确限额以避免 OpenCode 在启动期额外探测模型元数据。
             limit: { context: 128_000, output: 8_192 },
