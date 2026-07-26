@@ -92,6 +92,9 @@ jobs:
         env:
           CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
 
+      - name: Run Electron native smoke
+        run: xvfb-run -a npm run smoke:electron-native
+
       - name: Docker build
         working-directory: .
         run: docker build -t bidding-copilot-web:ci .
