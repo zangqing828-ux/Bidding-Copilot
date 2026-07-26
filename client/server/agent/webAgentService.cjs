@@ -67,7 +67,13 @@ function buildOpenCodeConfig(proxyBaseUrl) {
           baseURL: `${proxyBaseUrl}/v1`,
           apiKey: '{env:YIBIAO_WEB_AGENT_PROXY_TOKEN}',
         },
-        models: { default: { name: 'Yibiao Current Text Model' } },
+        models: {
+          default: {
+            name: 'Yibiao Current Text Model',
+            // 自定义 Provider 没有 Models.dev 目录项，明确限额以避免 OpenCode 在启动期额外探测模型元数据。
+            limit: { context: 128_000, output: 8_192 },
+          },
+        },
       },
     },
   };

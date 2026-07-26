@@ -112,7 +112,9 @@ function createWebOpenCodeRunner({ env = process.env } = {}) {
       `--nofile=${limits.openFiles}:${limits.openFiles}`,
       `--nproc=${limits.processes}:${limits.processes}`,
       `--cpu=${limits.cpuSeconds}:${limits.cpuSeconds}`,
-      '--', binary, 'run', '--format', 'json', '--dir', taskWorkspace.workDir, prompt,
+      '--', binary, 'run', '--format', 'json',
+      ...(env.YIBIAO_WEB_OPENCODE_LOG_LEVEL ? ['--log-level', String(env.YIBIAO_WEB_OPENCODE_LOG_LEVEL)] : []),
+      '--dir', taskWorkspace.workDir, prompt,
     ];
     return new Promise((resolve, reject) => {
       const child = spawn(prlimit, args, {
