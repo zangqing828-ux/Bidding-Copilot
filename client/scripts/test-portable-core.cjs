@@ -833,7 +833,7 @@ function runWorkspaceRollbackCheck(tmpDir) {
     }],
     [require.resolve('../server/workspace/webServices.cjs'), {
       ...webServices,
-      createWebTaskServiceStub() {
+      createWebBidAnalysisTaskService() {
         throw expectedError;
       },
     }],

@@ -72,7 +72,7 @@ const REQUIRED_WEB_BRIDGE_META_KEYS = [
 ];
 
 const requiredMetaFields = ['status', 'owner', 'workPackage', 'transport', 'contractRef', 'input', 'output', 'errors'];
-const IMPLEMENTED_BRIDGE_RPC_COUNT = 52;
+const IMPLEMENTED_BRIDGE_RPC_COUNT = 53;
 const COMMON_IMPLEMENTED_BRIDGE_ERRORS = [
   'UNAUTHORIZED',
   'INVALID_BRIDGE_ARGUMENTS',

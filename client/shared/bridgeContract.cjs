@@ -762,8 +762,7 @@ const rawMethods = {
   },
   tasks: {
     startBidSectionExtraction: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startBidSectionExtraction' }),
-    startBidAnalysis: createContractEntry({
-      status: 'pending',
+    startBidAnalysis: implementedBridgeContract({
       owner: 'workflow',
       workPackage: 'WP-I',
       contractRef: 'tasks.startBidAnalysis',
@@ -775,8 +774,8 @@ const rawMethods = {
           force_rerun: { type: 'boolean', required: false },
         },
       })],
-      output: { type: 'BackgroundTaskState' },
-      errors: ['WEB_CAPABILITY_PENDING', 'TASK_INVALID_INPUT', 'TASK_ITEM_NOT_FOUND'],
+      output: 'BackgroundTaskState',
+      errors: ['TASK_INVALID_INPUT', 'TASK_ITEM_NOT_FOUND', 'TASK_INPUT_CHANGED'],
     }),
     startOutlineGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startOutlineGeneration' }),
     startGlobalFactsGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startGlobalFactsGeneration' }),

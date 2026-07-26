@@ -132,27 +132,64 @@ function createTaskOrchestrator({
     };
 
     const previousState = stateAdapter.load(definition) || {};
-    const acceptedState = stateAdapter.persist(definition, { ...initialPartial, [definition.field]: currentTask });
-    emit(currentTask, stateAdapter.snapshot(definition, acceptedState, currentTask));
-    const runnerContext = createRunnerContext({ definition, type, payload, queueScopeId, updateTask, taskControl, previousState });
+    const attachRunner = (acceptedState) => {
+      emit(currentTask, stateAdapter.snapshot(definition, acceptedState, currentTask));
+      const runnerContext = createRunnerContext({
+        definition,
+        type,
+        payload,
+        queueScopeId,
+        updateTask,
+        taskControl,
+        previousState,
+        emitTask(task, workspaceState, eventPatch) {
+          emit(task, stateAdapter.snapshot(definition, workspaceState, task, eventPatch));
+        },
+      });
 
-    let runnerPromise;
+      let runnerPromise;
+      try {
+        runnerPromise = Promise.resolve(runner(runnerContext));
+      } catch (error) {
+        runnerPromise = Promise.reject(error);
+      }
+      runnerPromise.catch((error) => {
+        const failedTask = updateTask({
+          status: 'error',
+          error: error?.message || '任务执行失败',
+          error_code: error?.code,
+          retryable: error?.retryable === true,
+        });
+        if (error?.code === 'TASK_INPUT_CHANGED') {
+          emit(failedTask, snapshotFor(failedTask));
+          return;
+        }
+        return Promise.resolve(stateAdapter.persist(definition, { [definition.field]: failedTask }))
+          .then((failedState) => emit(failedTask, stateAdapter.snapshot(definition, failedState, failedTask)));
+      }).finally(() => {
+        releaseRunnerContext(runnerContext);
+        activeTasks.delete(type);
+        activeTaskControls.delete(type);
+      });
+      return currentTask;
+    };
+
+    let acceptedState;
     try {
-      runnerPromise = Promise.resolve(runner(runnerContext));
+      acceptedState = stateAdapter.persist(definition, { ...initialPartial, [definition.field]: currentTask });
     } catch (error) {
-      runnerPromise = Promise.reject(error);
-    }
-    runnerPromise.catch((error) => {
-      const failedTask = updateTask({ status: 'error', error: error?.message || '任务执行失败' });
-      const failedState = stateAdapter.persist(definition, { [definition.field]: failedTask });
-      emit(failedTask, stateAdapter.snapshot(definition, failedState, failedTask));
-    }).finally(() => {
-      releaseRunnerContext(runnerContext);
       activeTasks.delete(type);
       activeTaskControls.delete(type);
-    });
-
-    return currentTask;
+      throw error;
+    }
+    if (acceptedState && typeof acceptedState.then === 'function') {
+      return acceptedState.then(attachRunner, (error) => {
+        activeTasks.delete(type);
+        activeTaskControls.delete(type);
+        throw error;
+      });
+    }
+    return attachRunner(acceptedState);
   }
 
   return Object.freeze({

@@ -11,6 +11,7 @@ const { getGlobalAiCoordinator } = require('../ai/globalAiCoordinator.cjs');
 const { createAiAnalyticsTracker } = require('../ai/aiAnalytics.cjs');
 const { createWebEndpointPolicy } = require('../ai/webEndpointPolicy.cjs');
 const { createWorkspaceStoreExecutor } = require('./storeBridgeExecutor.cjs');
+const { createWorkspaceMutationExecutor } = require('./workspaceMutationExecutor.cjs');
 const { createUploadRegistry } = require('./uploadRegistry.cjs');
 const { createWebFileService } = require('./webFileService.cjs');
 
@@ -157,7 +158,7 @@ function createWebWorkspaceRuntime({
   try {
     const { createSqliteDatabase } = require('../../core/sqliteDatabase.cjs');
     const {
-      createWebTaskServiceStub,
+      createWebBidAnalysisTaskService,
       createWebKnowledgeBaseService,
       createWebDuplicateCheckServiceStub,
     } = require('./webServices.cjs');
@@ -196,6 +197,8 @@ function createWebWorkspaceRuntime({
       configPath,
     });
     pushCloseHandler(closeHandlers, createCloseHandler(storeExecutor), 'storeExecutor');
+    const mutationExecutor = createWorkspaceMutationExecutor();
+    pushCloseHandler(closeHandlers, createCloseHandler(mutationExecutor), 'mutationExecutor');
 
     const resolvedCoordinator = sharedCoordinator || getGlobalAiCoordinator();
     const runtimeAiOptions = {
@@ -228,7 +231,11 @@ function createWebWorkspaceRuntime({
 
     const knowledgeBaseService = createWebKnowledgeBaseService({ knowledgeBaseStore, fileService });
     const duplicateCheckService = createWebDuplicateCheckServiceStub({ duplicateCheckStore });
-    const taskService = createWebTaskServiceStub();
+    const taskService = createWebBidAnalysisTaskService({
+      aiService,
+      technicalPlanStore,
+      mutationExecutor,
+    });
     pushCloseHandler(closeHandlers, createCloseHandler(taskService), 'taskService');
 
     const taskEvents = createTaskEventPortAndTrack(taskService, closeHandlers);
@@ -240,6 +247,7 @@ function createWebWorkspaceRuntime({
       uploadRegistry,
       fileService,
       storeExecutor,
+      mutationExecutor,
       aiService,
       agentService,
       exportService,

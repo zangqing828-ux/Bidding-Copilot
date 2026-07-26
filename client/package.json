@@ -42,6 +42,9 @@
     "test:bid-analysis-contract": "node scripts/test-bid-analysis-contract.cjs",
     "test:electron-task-characterization": "node scripts/test-electron-task-characterization.cjs",
     "test:task-orchestrator": "node scripts/test-task-orchestrator.cjs",
+    "test:workspace-mutation-executor": "node scripts/test-workspace-mutation-executor.cjs",
+    "test:bid-analysis-cas": "node scripts/test-bid-analysis-cas.cjs",
+    "test:web-bid-analysis": "node scripts/test-web-bid-analysis.cjs",
     "test:ai-scheduler": "node scripts/test-ai-scheduler.cjs",
     "test:web-endpoint-policy": "node scripts/test-web-endpoint-policy.cjs",
     "test:web-ai-runtime": "node scripts/test-web-ai-runtime.cjs",
@@ -51,7 +54,7 @@
     "test:workspace-lifecycle": "node scripts/test-workspace-lifecycle.cjs",
     "test:web-workspace-registry": "node scripts/test-web-workspace-registry.cjs",
     "test:web-store-executor": "node scripts/test-web-store-executor.cjs",
-    "test:web": "npm run test:portable-core && npm run test:ai-scheduler && npm run test:web-endpoint-policy && npm run test:web-ai-runtime && npm run test:web-analytics-identity && npm run test:web-analytics-identity-retirement && npm run test:web-store-executor && npm run test:workspace-lifecycle && npm run test:web-workspace-registry && npm run test:web-graceful-shutdown && npm run test:web-auth && npm run test:web-workspace && npm run test:web-contract && npm run test:web-contract:strict-guard && npm run test:web-tasks && npm run test:web-files && npm run test:web-export && npm run test:web-agent-runtime && npm run test:opencode-checksum && npm run test:document-parser-limits"
+    "test:web": "npm run test:portable-core && npm run test:ai-scheduler && npm run test:web-endpoint-policy && npm run test:web-ai-runtime && npm run test:web-analytics-identity && npm run test:web-analytics-identity-retirement && npm run test:web-store-executor && npm run test:workspace-lifecycle && npm run test:web-workspace-registry && npm run test:web-graceful-shutdown && npm run test:web-auth && npm run test:web-workspace && npm run test:web-contract && npm run test:web-contract:strict-guard && npm run test:web-tasks && npm run test:web-bid-analysis && npm run test:web-files && npm run test:web-export && npm run test:web-agent-runtime && npm run test:opencode-checksum && npm run test:document-parser-limits"
   },
   "build": {
     "appId": "com.yibiao.openbidkit",

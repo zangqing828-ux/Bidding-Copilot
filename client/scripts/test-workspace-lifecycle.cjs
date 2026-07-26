@@ -586,7 +586,7 @@ await run('workspaceRuntimeFactory: 依赖失败需回滚并保留原始错误',
           if (path.resolve(resolved) === webServicesPath) {
             return {
               ...realWebServices,
-              createWebTaskServiceStub() {
+              createWebBidAnalysisTaskService() {
                 throw expectedError;
               },
             };
@@ -620,7 +620,7 @@ await run('workspaceRuntimeFactory: 依赖失败需回滚并保留原始错误',
         if (resolved && path.resolve(resolved) === webServicesPath) {
           return {
             ...realWebServices,
-            createWebTaskServiceStub() {
+            createWebBidAnalysisTaskService() {
               throw expectedError;
             },
           };
@@ -684,7 +684,7 @@ await run('workspaceRuntimeFactory: close 按顺序关闭并聚合失败', async
         if (resolved && path.resolve(resolved) === webServicesPath) {
           return {
             ...realWebServices,
-            createWebTaskServiceStub() {
+            createWebBidAnalysisTaskService() {
               return {
                 getActiveTasks() { return []; },
                 subscribeCallback() { return () => {}; },
@@ -810,7 +810,7 @@ await run('workspaceRuntimeFactory: close 重试会保留失败 handler，成功
         if (resolved && path.resolve(resolved) === webServicesPath) {
           return {
             ...realWebServices,
-            createWebTaskServiceStub() {
+            createWebBidAnalysisTaskService() {
               return {
                 getActiveTasks() { return []; },
                 subscribeCallback() { return () => {}; },

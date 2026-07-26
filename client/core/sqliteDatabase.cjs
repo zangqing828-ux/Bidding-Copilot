@@ -3,7 +3,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 
 
-const schemaVersion = 20;
+const schemaVersion = 21;
 
 function createInitialSchema(db) {
   db.exec(`
@@ -35,6 +35,7 @@ function createInitialSchema(db) {
       pending_tender_created_at TEXT,
       bid_analysis_mode TEXT NOT NULL DEFAULT 'key',
       bid_analysis_selected_task_ids_json TEXT,
+      input_revision INTEGER NOT NULL DEFAULT 0,
       bid_section_mode TEXT NOT NULL DEFAULT 'single',
       bid_sections_json TEXT,
       bid_section_extraction_status TEXT NOT NULL DEFAULT 'idle',
@@ -65,6 +66,7 @@ function createInitialSchema(db) {
       error TEXT,
       error_code TEXT,
       retryable INTEGER NOT NULL DEFAULT 0,
+      input_revision INTEGER,
       pause_requested INTEGER NOT NULL DEFAULT 0,
       started_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -76,6 +78,8 @@ function createInitialSchema(db) {
       status TEXT NOT NULL,
       content TEXT NOT NULL DEFAULT '',
       error TEXT,
+      error_code TEXT,
+      retryable INTEGER NOT NULL DEFAULT 0,
       sort_order INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL
     );
@@ -186,6 +190,13 @@ function createUploadRegistrySchema(db) {
 function addTechnicalPlanTaskRecoveryFields(db) {
   addColumnIfMissing(db, 'technical_plan_tasks', 'error_code', 'TEXT');
   addColumnIfMissing(db, 'technical_plan_tasks', 'retryable', 'INTEGER NOT NULL DEFAULT 0');
+}
+
+function addTechnicalPlanInputVersioning(db) {
+  addColumnIfMissing(db, 'technical_plan_meta', 'input_revision', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'technical_plan_bid_items', 'error_code', 'TEXT');
+  addColumnIfMissing(db, 'technical_plan_bid_items', 'retryable', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'technical_plan_tasks', 'input_revision', 'INTEGER');
 }
 
 function addTechnicalPlanBidSectionV6Compat(db) {
@@ -1179,6 +1190,22 @@ const schemaHealthColumnGroups = [
     columns: {
       error_code: 'TEXT',
       retryable: 'INTEGER NOT NULL DEFAULT 0',
+      input_revision: 'INTEGER',
+    },
+  },
+  {
+    version: 21,
+    table: 'technical_plan_meta',
+    columns: {
+      input_revision: 'INTEGER NOT NULL DEFAULT 0',
+    },
+  },
+  {
+    version: 21,
+    table: 'technical_plan_bid_items',
+    columns: {
+      error_code: 'TEXT',
+      retryable: 'INTEGER NOT NULL DEFAULT 0',
     },
   },
 ];
@@ -1344,6 +1371,11 @@ const migrations = [
     version: 20,
     description: '技术方案任务新增重启恢复错误字段',
     up: addTechnicalPlanTaskRecoveryFields,
+  },
+  {
+    version: 21,
+    description: '技术方案输入版本与解析项错误字段',
+    up: addTechnicalPlanInputVersioning,
   },
 ];
 
