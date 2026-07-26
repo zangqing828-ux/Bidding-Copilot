@@ -33,6 +33,15 @@ function createDeferred() {
   return { promise, resolve, reject };
 }
 
+async function assertRejectedWithCode(promise, code, label) {
+  try {
+    await promise;
+    assert(false, label);
+  } catch (error) {
+    assert(error?.code === code, label);
+  }
+}
+
 function runWithLimitCounter(counterRef, fn, label, delayMs = 10) {
   return async () => {
     counterRef.running += 1;
@@ -275,6 +284,49 @@ async function testDelegatedGlobalWaitClose() {
   await aQueuedOutcome;
 }
 
+async function testQueueCapacityLimits() {
+  const coordinator = createAiFairCoordinator({
+    textLimit: 1,
+    maxQueued: { text: 2 },
+    maxQueuedPerWorkspace: { text: 1 },
+  });
+  const hold = createDeferred();
+  const running = coordinator.enqueue('text', 'account-a', async () => hold.promise);
+  const accountAQueued = coordinator.enqueue('text', 'account-a', async () => 'account-a-queued');
+  await assertRejectedWithCode(
+    coordinator.enqueue('text', 'account-a', async () => 'overloaded'),
+    'AI_QUEUE_OVERLOADED',
+    '单账号 coordinator 队列上限生效',
+  );
+  const accountBQueued = coordinator.enqueue('text', 'account-b', async () => 'account-b-queued');
+  await assertRejectedWithCode(
+    coordinator.enqueue('text', 'account-c', async () => 'global-overloaded'),
+    'AI_QUEUE_OVERLOADED',
+    '全局 coordinator 队列上限生效',
+  );
+  assert(coordinator.getStatus().text.queued === 2, '全局 coordinator 队列上限按总量生效');
+  hold.resolve('running');
+  await Promise.all([running, accountAQueued, accountBQueued]);
+
+  const localCoordinator = createAiFairCoordinator({ textLimit: 1 });
+  const localQueue = createAiRequestQueue({
+    coordinator: localCoordinator,
+    workspaceKey: 'local-capacity',
+    textLimit: 1,
+    maxQueued: { text: 1 },
+  });
+  const localHold = createDeferred();
+  const localRunning = localQueue.enqueue('text', async () => localHold.promise);
+  const localQueued = localQueue.enqueue('text', async () => 'local-queued');
+  await assertRejectedWithCode(
+    localQueue.enqueue('text', async () => 'local-overloaded'),
+    'AI_QUEUE_OVERLOADED',
+    '单账号本地队列上限生效',
+  );
+  localHold.resolve('local-running');
+  await Promise.all([localRunning, localQueued]);
+}
+
 async function testTextTokenStatsIsolation() {
   const first = createTextTokenStatsStore();
   const second = createTextTokenStatsStore();
@@ -347,6 +399,7 @@ async function run() {
   await testDelegatedGlobalWaitPause();
   await testCloseIsolation();
   await testDelegatedGlobalWaitClose();
+  await testQueueCapacityLimits();
   await testTextTokenStatsIsolation();
   testCoreFilesNoElectronRequire();
 

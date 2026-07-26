@@ -564,12 +564,64 @@ async function main() {
           timeoutRuntime.chat({ messages: [{ role: 'user', content: 'timeout' }] }),
           (error) => error.code === 'AI_REQUEST_TIMEOUT',
         );
-        assert.equal(attempts, 3);
+        assert.equal(attempts, 1, '总 deadline 用尽后不应再开始新的重试');
       } catch (error) {
         assertNoSecret(error.message, 'timeout 错误');
         throw error;
       } finally {
         await timeoutRuntime.close();
+      }
+    });
+
+    await run('响应体超过 8 MiB 时取消上游响应并安全失败', async () => {
+      let cancelled = false;
+      const oversizedRuntime = createRuntime({
+        config: createConfig('http://oversized.test/v1'),
+        fetch: async () => ({
+          ok: true,
+          status: 200,
+          headers: { get: (name) => (name === 'content-length' ? String(8 * 1024 * 1024 + 1) : null) },
+          body: { cancel: async () => { cancelled = true; } },
+        }),
+        retryDelay: 0,
+      });
+      try {
+        await assert.rejects(
+          oversizedRuntime.chat({ messages: [{ role: 'user', content: 'oversized' }] }),
+          (error) => error.code === 'AI_RESPONSE_PARSE_ERROR',
+        );
+        assert.equal(cancelled, true);
+      } finally {
+        await oversizedRuntime.close();
+      }
+    });
+
+    await run('浏览器断连信号会中止已开始的上游 AI 请求', async () => {
+      let upstreamAborted = false;
+      const abortedRuntime = createRuntime({
+        config: createConfig('http://abort.test/v1'),
+        fetch: async (_url, options) => new Promise((_resolve, reject) => {
+          options.signal.addEventListener('abort', () => {
+            upstreamAborted = true;
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          }, { once: true });
+        }),
+        retryDelay: 0,
+      });
+      const controller = new AbortController();
+      try {
+        const request = abortedRuntime.chat(
+          { messages: [{ role: 'user', content: 'abort' }] },
+          { signal: controller.signal },
+        );
+        await new Promise((resolve) => setImmediate(resolve));
+        controller.abort();
+        await assert.rejects(request, (error) => error.code === 'AI_REQUEST_ABORTED');
+        assert.equal(upstreamAborted, true);
+      } finally {
+        await abortedRuntime.close();
       }
     });
 
@@ -590,12 +642,12 @@ async function main() {
         assert.equal(await analyticsRuntime.chat({ messages: [{ role: 'user', content: 'secret prompt' }] }), 'analytics ok');
         assert.equal(payloads.length, 1);
         const allowed = new Set([
-          'ai_request_type', 'ai_model_provider', 'ai_model_base_url', 'ai_model_name',
-          'text_model_name', 'prompt_tokens', 'completion_tokens', 'total_tokens',
+          'ai_request_type', 'ai_model_provider', 'prompt_tokens', 'completion_tokens', 'total_tokens',
           'version', 'platform', 'arch', 'client_id', 'client_created_at',
         ]);
         assert.deepEqual(Object.keys(payloads[0]).filter((key) => !allowed.has(key)), []);
-        assert.equal(payloads[0].ai_model_base_url, 'api.example.test');
+        assert.equal('ai_model_base_url' in payloads[0], false);
+        assert.equal('ai_model_name' in payloads[0], false);
         assertNoSecret(payloads[0], 'analytics payload');
         assert(!JSON.stringify(payloads[0]).includes('secret-workspace-id'), 'analytics 不得包含 workspace ID');
       } finally {

@@ -1,6 +1,5 @@
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { fetch: undiciFetch } = require('undici');
 
 const { createAiFairCoordinator } = require('../core/aiFairCoordinator.cjs');
 const { createAiRuntime } = require('../core/aiRuntime.cjs');
@@ -210,7 +209,7 @@ async function main() {
     }
   });
 
-  await run('真实 Undici 请求在连接期命中 127.0.0.1 时拒绝且本机服务零命中', async () => {
+  await run('生产默认 globalThis.fetch 在连接期命中 127.0.0.1 时拒绝且本机服务零命中', async () => {
     let lookupCalls = 0;
     let serverHits = 0;
     const server = http.createServer(() => {
@@ -231,7 +230,7 @@ async function main() {
       const requestOptions = await policy.assertAllowed(`http://rebind.test:${port}/v1`);
       assert.equal(lookupCalls, 1, '预检只使用公网解析结果');
       await assert.rejects(
-        undiciFetch(`http://rebind.test:${port}/v1`, {
+        globalThis.fetch(`http://rebind.test:${port}/v1`, {
           ...requestOptions,
           redirect: 'manual',
           signal: AbortSignal.any([
@@ -241,7 +240,7 @@ async function main() {
         }),
       );
       assert.equal(serverHits, 0, '连接期私网解析不得触达本机 HTTP 服务');
-      assert(lookupCalls >= 2, 'Undici 连接阶段应再次执行 lookup');
+      assert(lookupCalls >= 2, '生产默认 fetch 的连接阶段应再次执行 lookup');
     } finally {
       requestAbortController.abort();
       await policy.close();

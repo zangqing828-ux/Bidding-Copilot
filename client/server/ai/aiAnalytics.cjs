@@ -3,20 +3,6 @@ const pkg = require('../../package.json');
 const DEFAULT_ANALYTICS_ENDPOINT = 'https://analytics.agnet.top/track';
 const PROJECT_NAME = 'yibiao-client';
 
-function normalizeEndpointHost(value) {
-  const rawValue = String(value || '').trim();
-  if (!rawValue) {
-    return '';
-  }
-
-  try {
-    const candidate = rawValue.includes('://') ? rawValue : `https://${rawValue}`;
-    return new URL(candidate).hostname.toLowerCase();
-  } catch {
-    return '';
-  }
-}
-
 function normalizeTokenNumber(value) {
   const number = Number(value || 0);
   return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
@@ -46,27 +32,27 @@ function createAiAnalyticsTracker(options = {}) {
       client_created_at: String(payload.client_created_at || '').trim(),
       ai_request_type: String(payload.ai_request_type || 'text').trim(),
       ai_model_provider: String(payload.ai_model_provider || '').trim(),
-      ai_model_base_url: normalizeEndpointHost(payload.ai_model_base_url || payload.endpoint_host),
-      ai_model_name: String(payload.ai_model_name || '').trim(),
       prompt_tokens: normalizeTokenNumber(payload.prompt_tokens),
       completion_tokens: normalizeTokenNumber(payload.completion_tokens),
       total_tokens: normalizeTokenNumber(payload.total_tokens),
-      text_model_name: String(payload.text_model_name || '').trim(),
-      image_model_name: String(payload.image_model_name || '').trim(),
     };
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    timeout.unref?.();
     return Promise.resolve()
       .then(() => fetchImpl(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: controller.signal,
       }))
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => clearTimeout(timeout));
   };
 }
 
 module.exports = {
   DEFAULT_ANALYTICS_ENDPOINT,
   createAiAnalyticsTracker,
-  normalizeEndpointHost,
 };

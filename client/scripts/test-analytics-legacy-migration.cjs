@@ -141,105 +141,40 @@ function runCaseSuccess() {
 
   return runtime.analytics.getAnalyticsIdentity()
     .then((identity) => {
-      assert(identity.clientId === 'server-stable-id', '成功迁移返回服务端 id');
-      assert(runtime.events.includes('removeItem:analytics_client_id'), '成功迁移后移除 legacy localStorage');
-      assert(loadCount === 2, '成功迁移触发两次 config.load（迁移前与迁移后）');
-      const saveIndex = runtime.events.indexOf('save');
-      const reloadIndex = saveIndex >= 0
-        ? runtime.events.indexOf('load:before-save', saveIndex + 1)
-        : -1;
-      const clearIndex = runtime.events.indexOf('removeItem:analytics_client_id');
-      assert(
-        saveIndex >= 0 && reloadIndex > saveIndex && clearIndex > reloadIndex,
-        '成功迁移顺序为 save 后 reload，再清理 legacy localStorage',
-      );
-      assert(runtime.storage.analytics_client_id === undefined, 'legacy 清理后 localStorage 不再持有 analytics_client_id');
-      assert(runtime.savePayloads.length === 1, '成功迁移流程触发一次 config.save');
-      assert(
-        runtime.savePayloads[0]?.analytics_client_id !== undefined,
-        '保存 payload 包含 analytics_client_id 字段',
-      );
-      assert(loadCount >= 2, '成功迁移会再次读取最新服务端身份');
+      assert(identity.clientId === 'server-stable-id', '服务端身份接管后返回 server id');
+      assert(runtime.events.includes('removeItem:analytics_client_id'), '服务端身份接管后清理 legacy localStorage');
+      assert(loadCount === 1, 'identity retirement 只读取一次服务端配置');
+      assert(!runtime.events.includes('save'), 'identity retirement 不回写浏览器 legacy id');
+      assert(runtime.storage.analytics_client_id === undefined, 'retirement 后 localStorage 不再持有 analytics_client_id');
+      assert(runtime.savePayloads.length === 0, 'identity retirement 不触发 config.save');
       return true;
     });
 }
 
-async function runFailureCase({
-  label,
-  loadSequence = () => ({ ...serverConfig }),
-  saveResult,
-  expectedLoadCount,
-}) {
+async function runNoServerIdentityCase() {
   const runtime = createAnalyticsRuntime({
-    loadSequence,
-    saveResult,
+    loadSequence: { analytics_created_at: serverConfig.analytics_created_at },
+    saveResult: { success: true },
   });
 
   const identity = await runtime.analytics.getAnalyticsIdentity();
   const loadCount = runtime.events.filter((event) => event === 'load:before-save').length;
-  assert(identity.clientId === serverConfig.analytics_client_id, `${label}：当前运行使用 server id`);
-  assert(identity.clientCreatedAt === serverConfig.analytics_created_at, `${label}：当前运行使用 server created_at`);
-  assert(runtime.storage.analytics_client_id === 'legacy-for-renderer-migration', `${label}：legacy localStorage 保留`);
-  assert(!runtime.events.includes('removeItem:analytics_client_id'), `${label}：不清理 legacy localStorage`);
-  assert(runtime.savePayloads.length === 1, `${label}：仅尝试一次 config.save`);
-  assert(loadCount === expectedLoadCount, `${label}：config.load 次数正确`);
-}
-
-function createReloadFailureSequence(reloadValue) {
-  let loadCount = 0;
-  return () => {
-    loadCount += 1;
-    if (loadCount === 1) {
-      return { ...serverConfig };
-    }
-    if (reloadValue instanceof Error) {
-      throw reloadValue;
-    }
-    return reloadValue;
-  };
+  assert(identity.clientId === '', '服务端身份缺失时不伪造 legacy identity');
+  assert(runtime.storage.analytics_client_id === 'legacy-for-renderer-migration', '服务端身份缺失时保留 legacy localStorage');
+  assert(!runtime.events.includes('removeItem:analytics_client_id'), '服务端身份缺失时不清理 legacy localStorage');
+  assert(runtime.savePayloads.length === 0, '服务端身份缺失时也不回写 legacy id');
+  assert(loadCount === 1, '服务端身份缺失时只读取一次配置');
 }
 
 (async () => {
   try {
     await runCaseSuccess();
-    await runFailureCase({
-      label: 'save false',
-      saveResult: {
-        success: false,
-        message: '模拟失败',
-      },
-      expectedLoadCount: 1,
-    });
-    await runFailureCase({
-      label: 'save reject',
-      saveResult: () => Promise.reject(new Error('模拟 save reject')),
-      expectedLoadCount: 1,
-    });
-    await runFailureCase({
-      label: 'reload reject',
-      loadSequence: createReloadFailureSequence(new Error('模拟 reload reject')),
-      saveResult: {
-        success: true,
-        message: '配置已保存',
-      },
-      expectedLoadCount: 2,
-    });
-    await runFailureCase({
-      label: 'reload 缺少 analytics_client_id',
-      loadSequence: createReloadFailureSequence({
-        analytics_created_at: serverConfig.analytics_created_at,
-      }),
-      saveResult: {
-        success: true,
-        message: '配置已保存',
-      },
-      expectedLoadCount: 2,
-    });
+    await runNoServerIdentityCase();
   } catch (error) {
     failed.push(`脚本执行异常：${error instanceof Error ? error.message : String(error)}`);
   }
 
-  console.log(`\n=== Analytics Migration Renderer 测试结果 ===`);
+  console.log(`\n=== Analytics Identity Retirement Renderer 测试结果 ===`);
   console.log(`通过: ${passed.length}`);
   console.log(`失败: ${failed.length}`);
   if (failed.length > 0) {

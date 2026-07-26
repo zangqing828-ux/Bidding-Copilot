@@ -2,6 +2,14 @@ const DEFAULT_LANE_LIMITS = Object.freeze({
   text: 30,
   image: 6,
 });
+const DEFAULT_MAX_QUEUED = Object.freeze({
+  text: 120,
+  image: 24,
+});
+const DEFAULT_MAX_QUEUED_PER_WORKSPACE = Object.freeze({
+  text: 20,
+  image: 4,
+});
 
 function normalizePositiveInteger(value, fallback) {
   const number = Number(value);
@@ -36,6 +44,13 @@ function createQueueClosedError() {
   return error;
 }
 
+function createQueueOverloadedError() {
+  const error = new Error('AI 请求队列繁忙，请稍后重试');
+  error.code = 'AI_QUEUE_OVERLOADED';
+  error.retryable = true;
+  return error;
+}
+
 function getLaneLimit(options, lane) {
   if (options && typeof options === 'object') {
     const directLimits = options.laneLimits || options.limits || {};
@@ -52,9 +67,20 @@ function getLaneLimit(options, lane) {
   return DEFAULT_LANE_LIMITS[lane];
 }
 
-function createLaneState(limit) {
+function getQueuedLimit(options, lane, key, fallback) {
+  const source = options && typeof options === 'object' ? options : {};
+  const nested = source[key] && typeof source[key] === 'object' ? source[key] : {};
+  return normalizePositiveInteger(
+    nested[lane] ?? source[`${lane}${key === 'maxQueuedPerWorkspace' ? 'MaxQueuedPerWorkspace' : 'MaxQueued'}`],
+    fallback[lane],
+  );
+}
+
+function createLaneState(limit, maxQueued, maxQueuedPerWorkspace) {
   return {
     limit,
+    maxQueued,
+    maxQueuedPerWorkspace,
     activeCount: 0,
     queues: new Map(),
     lastScheduledWorkspace: null,
@@ -100,8 +126,16 @@ function pickNextWorkspaceKey(laneState) {
 function createAiFairCoordinator(options = {}) {
   let isClosed = false;
   const lanes = Object.freeze({
-    text: createLaneState(getLaneLimit(options, 'text')),
-    image: createLaneState(getLaneLimit(options, 'image')),
+    text: createLaneState(
+      getLaneLimit(options, 'text'),
+      getQueuedLimit(options, 'text', 'maxQueued', DEFAULT_MAX_QUEUED),
+      getQueuedLimit(options, 'text', 'maxQueuedPerWorkspace', DEFAULT_MAX_QUEUED_PER_WORKSPACE),
+    ),
+    image: createLaneState(
+      getLaneLimit(options, 'image'),
+      getQueuedLimit(options, 'image', 'maxQueued', DEFAULT_MAX_QUEUED),
+      getQueuedLimit(options, 'image', 'maxQueuedPerWorkspace', DEFAULT_MAX_QUEUED_PER_WORKSPACE),
+    ),
   });
 
   async function runJob(laneState, lane, laneKey, job) {
@@ -143,6 +177,7 @@ function createAiFairCoordinator(options = {}) {
 
       laneState.activeCount += 1;
       job.started = true;
+      job.promise.isStarted = true;
       void runJob(laneState, lane, lane, job);
     }
   }
@@ -201,6 +236,12 @@ function createAiFairCoordinator(options = {}) {
 
     const laneState = lanes[normalizedLane];
     let queue = laneState.queues.get(key);
+    if (getQueuedCount(laneState) >= laneState.maxQueued) {
+      return Promise.reject(createQueueOverloadedError());
+    }
+    if (queue && queue.length >= laneState.maxQueuedPerWorkspace) {
+      return Promise.reject(createQueueOverloadedError());
+    }
     if (!queue) {
       queue = [];
       laneState.queues.set(key, queue);
@@ -216,11 +257,13 @@ function createAiFairCoordinator(options = {}) {
     const promise = new Promise((resolve, reject) => {
       job.resolve = resolve;
       job.reject = reject;
-      queue.push(job);
-      pumpLane(normalizedLane);
     });
 
+    job.promise = promise;
+    promise.isStarted = false;
     promise.cancel = (reason) => cancelQueuedJob(normalizedLane, key, job, reason);
+    queue.push(job);
+    pumpLane(normalizedLane);
     return promise;
   }
 
@@ -229,6 +272,8 @@ function createAiFairCoordinator(options = {}) {
       active: laneState.activeCount,
       queued: getQueuedCount(laneState),
       limit: laneState.limit,
+      maxQueued: laneState.maxQueued,
+      maxQueuedPerWorkspace: laneState.maxQueuedPerWorkspace,
     };
   }
 
@@ -257,5 +302,8 @@ function createAiFairCoordinator(options = {}) {
 }
 
 module.exports = {
+  DEFAULT_MAX_QUEUED,
+  DEFAULT_MAX_QUEUED_PER_WORKSPACE,
+  createQueueOverloadedError,
   createAiFairCoordinator,
 };

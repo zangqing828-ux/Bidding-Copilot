@@ -81,7 +81,7 @@ const bridgeBindingMetadata = Object.freeze({
   config: Object.freeze({
     load: createDirectBinding((ctx) => ctx.configStore.load(), 'config.load'),
     save: createDirectBinding((ctx, args) => ctx.configStore.save(args[0]), 'config.save'),
-    listModels: createDirectBinding((ctx, args) => ctx.aiService.listModels(args[0]), 'config.listModels'),
+    listModels: createDirectBinding((ctx, args, options) => ctx.aiService.listModels(args[0], options), 'config.listModels'),
   }),
 
   technicalPlan: Object.freeze({
@@ -114,9 +114,7 @@ const bridgeBindingMetadata = Object.freeze({
 
   duplicateCheck: Object.freeze({
     loadState: createStoreBinding('duplicateCheckStore', 'loadDuplicateCheck', 'duplicateCheck.loadState'),
-    saveFiles: createStoreBinding('duplicateCheckStore', 'saveFiles', 'duplicateCheck.saveFiles'),
     saveUiState: createStoreBinding('duplicateCheckStore', 'saveUiState', 'duplicateCheck.saveUiState'),
-    updateState: createStoreBinding('duplicateCheckStore', 'updateDuplicateCheck', 'duplicateCheck.updateState'),
     clear: createStoreBinding('duplicateCheckStore', 'clearDuplicateCheck', 'duplicateCheck.clear'),
   }),
 
@@ -166,7 +164,7 @@ function buildDispatchers(meta) {
       }
 
       if (spec.type === 'direct' && typeof spec.handler === 'function') {
-        namespaceDispatchers[method] = (ctx, args) => spec.handler(ctx, args);
+        namespaceDispatchers[method] = (ctx, args, options) => spec.handler(ctx, args, options);
       }
     }
 
@@ -291,17 +289,40 @@ router.post('/bridge', (req, res) => {
     return res.status(500).json(createErrorPayload('BRIDGE_DISPATCHER_MISSING', '桥接能力未正确注册'));
   }
 
+  const requestController = new AbortController();
+  let completed = false;
+  res.once('close', () => {
+    if (!completed) {
+      requestController.abort();
+    }
+  });
+
+  function sendExecutionError(err) {
+    if (err?.code === 'AI_QUEUE_OVERLOADED') {
+      return res.status(429)
+        .set('Retry-After', '5')
+        .json({
+          code: 'AI_QUEUE_OVERLOADED',
+          message: 'AI 请求队列繁忙，请稍后重试',
+          retryable: true,
+        });
+    }
+    console.error(`[bridge] ${namespace}.${method} 执行失败`, err?.message || String(err));
+    return res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });
+  }
+
   try {
-    const result = nsDispatcher[method](ctx, args);
+    const result = nsDispatcher[method](ctx, args, { signal: requestController.signal });
     Promise.resolve(result).then((data) => {
+      completed = true;
       res.json({ code: 'OK', data });
     }).catch((err) => {
-      console.error(`[bridge] ${namespace}.${method} 执行失败`, err?.message || String(err));
-      res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });
+      completed = true;
+      sendExecutionError(err);
     });
   } catch (err) {
-    console.error(`[bridge] ${namespace}.${method} 执行失败`, err?.message || String(err));
-    res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });
+    completed = true;
+    sendExecutionError(err);
   }
 });
 

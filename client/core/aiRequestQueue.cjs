@@ -5,6 +5,10 @@ const DEFAULT_QUEUE_LIMITS = Object.freeze({
   text: 10,
   image: 2,
 });
+const DEFAULT_MAX_QUEUED = Object.freeze({
+  text: 20,
+  image: 4,
+});
 
 function normalizePositiveInteger(value, fallback) {
   const number = Number(value);
@@ -45,6 +49,15 @@ function getQueueLimit(options, lane) {
   return DEFAULT_QUEUE_LIMITS[lane];
 }
 
+function getMaxQueued(options, lane) {
+  const source = options && typeof options === 'object' ? options : {};
+  const limits = source.maxQueued || source.queueLimits || {};
+  return normalizePositiveInteger(
+    limits[lane] ?? source[`${lane}MaxQueued`],
+    DEFAULT_MAX_QUEUED[lane],
+  );
+}
+
 function createQueueScopePausedError() {
   const error = new Error('AI 请求队列已暂停');
   error.code = AI_QUEUE_SCOPE_PAUSED;
@@ -57,8 +70,23 @@ function createQueueClosedError() {
   return error;
 }
 
+function createQueueOverloadedError() {
+  const error = new Error('AI 请求队列繁忙，请稍后重试');
+  error.code = 'AI_QUEUE_OVERLOADED';
+  error.retryable = true;
+  return error;
+}
+
+function createQueueAbortedError() {
+  const error = new Error('AI 请求已取消');
+  error.code = 'AI_REQUEST_ABORTED';
+  return error;
+}
+
 function getQueuedCount(state) {
-  return state.queue.length;
+  return state.queue.length + [...state.delegatedJobs]
+    .filter((job) => job.delegated && !job.delegated.isStarted)
+    .length;
 }
 
 function normalizeWorkspaceKey(workspaceKey) {
@@ -79,6 +107,7 @@ function createAiRequestQueue(options = {}) {
       queue: [],
       activeCount: 0,
       limit: textLimit,
+      maxQueued: getMaxQueued(options, 'text'),
       pausedScopes: new Set(),
       delegatedJobs: new Set(),
     },
@@ -86,6 +115,7 @@ function createAiRequestQueue(options = {}) {
       queue: [],
       activeCount: 0,
       limit: imageLimit,
+      maxQueued: getMaxQueued(options, 'image'),
       pausedScopes: new Set(),
       delegatedJobs: new Set(),
     },
@@ -111,7 +141,7 @@ function createAiRequestQueue(options = {}) {
   function createRunnerJob(lane, state, job) {
     let delegated;
     try {
-      delegated = coordinator.enqueue(lane, workspaceKey, job.runner);
+      delegated = coordinator.enqueue(lane, workspaceKey, () => job.runner(job.signal));
     } catch (error) {
       job.reject(error);
       return Promise.resolve().then(() => {
@@ -129,6 +159,7 @@ function createAiRequestQueue(options = {}) {
         job.reject(error);
       })
       .finally(() => {
+        job.removeAbortListener?.();
         state.delegatedJobs.delete(job);
         state.activeCount -= 1;
         pumpLane(lane);
@@ -189,14 +220,22 @@ function createAiRequestQueue(options = {}) {
       return Promise.reject(new Error('runner 必须是函数'));
     }
 
+    if (options.signal?.aborted) {
+      return Promise.reject(createQueueAbortedError());
+    }
+    if (getQueuedCount(state) >= state.maxQueued) {
+      return Promise.reject(createQueueOverloadedError());
+    }
+
     const job = {
       runner,
       scopeId,
+      signal: options.signal,
       resolve: null,
       reject: null,
     };
 
-    return new Promise((resolve, reject) => {
+    const promise = new Promise((resolve, reject) => {
       job.resolve = resolve;
       job.reject = reject;
       if (scopeId && state.pausedScopes.has(scopeId)) {
@@ -207,6 +246,25 @@ function createAiRequestQueue(options = {}) {
       state.queue.push(job);
       pumpLane(normalizedLane);
     });
+    const cancel = (reason = createQueueAbortedError()) => {
+      const queuedIndex = state.queue.indexOf(job);
+      if (queuedIndex >= 0) {
+        state.queue.splice(queuedIndex, 1);
+        job.reject(reason);
+        return true;
+      }
+      if (job.delegated && typeof job.delegated.cancel === 'function') {
+        return job.delegated.cancel(reason);
+      }
+      return false;
+    };
+    promise.cancel = cancel;
+    if (job.signal) {
+      const abortHandler = () => cancel(createQueueAbortedError());
+      job.signal.addEventListener('abort', abortHandler, { once: true });
+      job.removeAbortListener = () => job.signal.removeEventListener('abort', abortHandler);
+    }
+    return promise;
   }
 
   function pauseScope(scopeId) {
@@ -261,6 +319,7 @@ function createAiRequestQueue(options = {}) {
         active: state.activeCount,
         queued: getQueuedCount(state),
         limit: state.limit,
+        maxQueued: state.maxQueued,
       };
     });
     return status;
@@ -291,6 +350,9 @@ function createAiRequestQueue(options = {}) {
 
 module.exports = {
   AI_QUEUE_SCOPE_PAUSED,
+  AI_QUEUE_OVERLOADED: 'AI_QUEUE_OVERLOADED',
   createAiRequestQueue,
+  createQueueAbortedError,
+  createQueueOverloadedError,
   createQueueScopePausedError,
 };

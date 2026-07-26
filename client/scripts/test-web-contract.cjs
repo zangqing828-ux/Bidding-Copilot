@@ -873,6 +873,25 @@ async function runBridgeBehavior(inject, context) {
   assert(implementedRes.response.statusCode === 200, 'implemented 方法返回 200');
   assert(implementedRes.payload.code === 'OK', 'implemented 方法返回 OK');
 
+  const previousResolver = setWorkspaceContextResolver(() => ({
+    aiService: {
+      listModels: () => {
+        const error = new Error('queue overloaded');
+        error.code = 'AI_QUEUE_OVERLOADED';
+        error.retryable = true;
+        return Promise.reject(error);
+      },
+    },
+  }));
+  try {
+    const overloadedRes = await statusPayload({ namespace: 'config', method: 'listModels', args: [{}] });
+    assert(overloadedRes.response.statusCode === 429, 'AI 队列过载通过 Bridge 返回 429');
+    assert(overloadedRes.payload.code === 'AI_QUEUE_OVERLOADED', 'AI 队列过载返回 AI_QUEUE_OVERLOADED');
+    assert(overloadedRes.response.headers['retry-after'] === '5', 'AI 队列过载返回 Retry-After: 5');
+  } finally {
+    setWorkspaceContextResolver(previousResolver);
+  }
+
   for (const [manifestKey, entry] of Array.from(contractMap.entries()).filter(([key]) => key.startsWith('events.'))) {
     const eventPath = manifestKey.split('.');
     let eventLeaf = resolvePropertyPath(webBridge, eventPath);
@@ -984,6 +1003,19 @@ async function runBridgeBehavior(inject, context) {
   assert(pendingRes.response.statusCode === 501, 'pending 方法返回 501');
   assert(pendingRes.payload.code === 'WEB_CAPABILITY_PENDING', 'pending 方法返回 WEB_CAPABILITY_PENDING');
 
+  for (const method of ['saveFiles', 'updateState']) {
+    const contractKey = `duplicateCheck.${method}`;
+    const pendingDuplicateCheckRes = await statusPayload({ namespace: 'duplicateCheck', method, args: [{ file_path: '/outside/workspace.txt', content_path: '/outside/content.txt' }] });
+    assert(pendingDuplicateCheckRes.response.statusCode === 501, `${contractKey} 返回 501`);
+    assert(pendingDuplicateCheckRes.payload.code === 'WEB_CAPABILITY_PENDING', `${contractKey} code 为 WEB_CAPABILITY_PENDING`);
+    const bindingSpec = bindingMetadata.get(contractKey);
+    assert(!bindingSpec, `${contractKey} 无 binding spec`);
+    assert(
+      !routeDispatchers?.duplicateCheck || typeof routeDispatchers.duplicateCheck[method] !== 'function',
+      `${contractKey} 无 route dispatcher`
+    );
+  }
+
   for (const method of KB_PENDING_METHODS) {
     const contractKey = `knowledgeBase.${method}`;
     const pendingKnowledgeRes = await statusPayload({ namespace: 'knowledgeBase', method, args: [] });
@@ -1065,6 +1097,12 @@ async function runBridgeBehavior(inject, context) {
     const wsPendingRes = await statusPayload({ namespace: 'tasks', method: 'startBidSectionExtraction', args: [] });
     assert(wsPendingRes.response.statusCode === 501, 'pending 能力返回 501，且不触发 workspace');
     assert(workspaceResolved === 0, 'pending 能力未初始化 workspace');
+
+    for (const method of ['saveFiles', 'updateState']) {
+      const wsDuplicateCheckPendingRes = await statusPayload({ namespace: 'duplicateCheck', method, args: [{ file_path: '/outside/workspace.txt', content_path: '/outside/content.txt' }] });
+      assert(wsDuplicateCheckPendingRes.response.statusCode === 501, `duplicateCheck.${method} 返回 501 且不触发 workspace`);
+      assert(workspaceResolved === 0, `duplicateCheck.${method} 不初始化 workspace`);
+    }
 
     for (const method of KB_PENDING_METHODS) {
       const wsKnowledgePendingRes = await statusPayload({ namespace: 'knowledgeBase', method, args: [] });

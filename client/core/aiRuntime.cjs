@@ -6,6 +6,7 @@ const DEFAULT_TIMEOUTS = Object.freeze({
   listModels: 600000,
 });
 const MAX_ATTEMPTS = 3;
+const MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024;
 const RETRYABLE_STATUS_CODES = new Set([408, 429]);
 const SAFE_ERROR_CODES = new Set([
   'AI_CONFIG_LOAD_FAILED',
@@ -16,6 +17,8 @@ const SAFE_ERROR_CODES = new Set([
   'AI_NETWORK_ERROR',
   'AI_REQUEST_FAILED',
   'AI_REQUEST_TIMEOUT',
+  'AI_REQUEST_ABORTED',
+  'AI_QUEUE_OVERLOADED',
   'AI_RESPONSE_INVALID',
   'AI_RESPONSE_PARSE_ERROR',
   'AI_ENDPOINT_NOT_ALLOWED',
@@ -211,6 +214,9 @@ function createRuntimeError(message, code, options = {}) {
 
 function sanitizeRuntimeError(error, fallbackMessage = 'AI 请求失败') {
   if (error && SAFE_ERROR_CODES.has(error.code) && error.message && error instanceof Error) {
+    return error;
+  }
+  if (error?.code === 'AI_REQUEST_ABORTED') {
     return error;
   }
   if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') {
@@ -459,6 +465,111 @@ function createRetryWaiter(retryDelay) {
   };
 }
 
+function createRequestControl(timeoutMs, externalSignal) {
+  const controller = new AbortController();
+  let timedOut = false;
+  let aborted = false;
+  let rejectControl;
+  const controlPromise = new Promise((_resolve, reject) => {
+    rejectControl = reject;
+  });
+  const abortWithError = (error) => {
+    controller.abort();
+    rejectControl(error);
+  };
+  const timer = setTimeout(() => {
+    timedOut = true;
+    abortWithError(createRuntimeError('AI 请求超时', 'AI_REQUEST_TIMEOUT', { retryable: true }));
+  }, timeoutMs);
+  timer.unref?.();
+  const onAbort = () => {
+    aborted = true;
+    abortWithError(createRuntimeError('AI 请求已取消', 'AI_REQUEST_ABORTED'));
+  };
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      onAbort();
+    } else {
+      externalSignal.addEventListener('abort', onAbort, { once: true });
+    }
+  }
+  return {
+    signal: controller.signal,
+    race: (promise) => Promise.race([Promise.resolve(promise), controlPromise]),
+    finish() {
+      clearTimeout(timer);
+      externalSignal?.removeEventListener('abort', onAbort);
+    },
+    getError(error) {
+      if (timedOut) {
+        return createRuntimeError('AI 请求超时', 'AI_REQUEST_TIMEOUT', { retryable: true });
+      }
+      if (aborted) {
+        return createRuntimeError('AI 请求已取消', 'AI_REQUEST_ABORTED');
+      }
+      return error;
+    },
+  };
+}
+
+function getContentLength(response) {
+  const raw = response?.headers?.get?.('content-length')
+    ?? response?.headers?.['content-length']
+    ?? response?.headers?.['Content-Length'];
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+async function cancelResponseBody(response) {
+  try {
+    await response?.body?.cancel?.();
+  } catch {
+    // 取消响应体失败不影响主错误返回。
+  }
+}
+
+async function readJsonResponse(response, requestControl) {
+  const contentLength = getContentLength(response);
+  if (contentLength !== null && contentLength > MAX_JSON_RESPONSE_BYTES) {
+    await cancelResponseBody(response);
+    throw createRuntimeError('AI 上游响应过大', 'AI_RESPONSE_PARSE_ERROR');
+  }
+
+  if (response?.body && typeof response.body.getReader === 'function') {
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await requestControl.race(reader.read());
+        if (done) {
+          break;
+        }
+        const chunk = Buffer.from(value);
+        total += chunk.length;
+        if (total > MAX_JSON_RESPONSE_BYTES) {
+          await reader.cancel();
+          throw createRuntimeError('AI 上游响应过大', 'AI_RESPONSE_PARSE_ERROR');
+        }
+        chunks.push(chunk);
+      }
+      return JSON.parse(Buffer.concat(chunks, total).toString('utf8'));
+    } catch (error) {
+      await cancelResponseBody(response);
+      throw error;
+    }
+  }
+
+  if (typeof response?.json === 'function') {
+    return requestControl.race(response.json());
+  }
+  const text = typeof response?.text === 'function' ? await requestControl.race(response.text()) : '';
+  if (Buffer.byteLength(text, 'utf8') > MAX_JSON_RESPONSE_BYTES) {
+    throw createRuntimeError('AI 上游响应过大', 'AI_RESPONSE_PARSE_ERROR');
+  }
+  return JSON.parse(text);
+}
+
 function createAiRuntime(options = {}) {
   const workspaceKey = normalizeWorkspaceKey(options.workspaceKey);
   const loadConfig = options.loadConfig;
@@ -514,9 +625,6 @@ function createAiRuntime(options = {}) {
     return {
       ai_request_type: 'text',
       ai_model_provider: normalizeText(modelConfig.provider),
-      ai_model_base_url: normalizeEndpointHost(modelConfig.baseUrl),
-      ai_model_name: normalizeText(modelConfig.modelName),
-      text_model_name: normalizeText(modelConfig.modelName),
       prompt_tokens: tokenUsage.prompt_tokens,
       completion_tokens: tokenUsage.completion_tokens,
       total_tokens: tokenUsage.total_tokens,
@@ -599,72 +707,69 @@ function createAiRuntime(options = {}) {
     return attempt;
   }
 
-  async function fetchWithTimeout(url, requestOptions, timeoutMs) {
-    const controller = new AbortController();
-    let timedOut = false;
-    let timer = null;
-    const fetchPromise = Promise.resolve().then(() => fetchImpl(url, {
-      ...requestOptions,
-      redirect: 'manual',
-      signal: controller.signal,
-    }));
-    const timeoutPromise = new Promise((_resolve, reject) => {
-      timer = setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-        reject(createRuntimeError('AI 请求超时', 'AI_REQUEST_TIMEOUT', { retryable: true }));
-      }, timeoutMs);
-    });
-
-    try {
-      return await Promise.race([fetchPromise, timeoutPromise]);
-    } catch (error) {
-      if (timedOut) {
-        throw createRuntimeError('AI 请求超时', 'AI_REQUEST_TIMEOUT', { retryable: true });
-      }
-      throw sanitizeRuntimeError(error, 'AI 请求网络失败');
-    } finally {
-      if (timer) {
-        clearTimeout(timer);
-      }
-    }
-  }
-
-  async function runWithRetry(operation) {
+  async function runWithRetry(operation, timeoutMs, executionOptions = {}) {
     let lastError = null;
+    const deadlineAt = Date.now() + timeoutMs;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
       try {
-        return await operation();
+        const remainingMs = deadlineAt - Date.now();
+        if (remainingMs <= 0) {
+          throw createRuntimeError('AI 请求超时', 'AI_REQUEST_TIMEOUT', { retryable: true });
+        }
+        return await operation({
+          timeoutMs: remainingMs,
+          signal: executionOptions.signal,
+        });
       } catch (error) {
         lastError = sanitizeRuntimeError(error);
         if (!lastError.retryable || attempt >= MAX_ATTEMPTS) {
           throw lastError;
         }
-        await waitBeforeRetry(attempt, lastError);
+        const remainingMs = deadlineAt - Date.now();
+        if (remainingMs <= 0) {
+          throw createRuntimeError('AI 请求超时', 'AI_REQUEST_TIMEOUT', { retryable: true });
+        }
+        const retryControl = createRequestControl(remainingMs, executionOptions.signal);
+        try {
+          await retryControl.race(waitBeforeRetry(attempt, lastError));
+        } catch (retryError) {
+          throw sanitizeRuntimeError(retryControl.getError(retryError));
+        } finally {
+          retryControl.finish();
+        }
       }
     }
     throw lastError || createRuntimeError('AI 请求失败', 'AI_REQUEST_FAILED');
   }
 
-  async function requestJsonBody(url, requestOptions, timeoutMs, operation) {
-    const endpointRequestOptions = await resolveEndpointRequestOptions(url, operation);
-    const mergedRequestOptions = {
-      ...endpointRequestOptions,
-      ...requestOptions,
-    };
-
-    const response = await fetchWithTimeout(url, mergedRequestOptions, timeoutMs);
-    if (!isResponseOk(response)) {
-      throw createHttpError(response?.status);
-    }
+  async function requestJsonBody(url, requestOptions, timeoutMs, operation, executionOptions = {}) {
+    const requestControl = createRequestControl(timeoutMs, executionOptions.signal);
     try {
-      if (typeof response.json === 'function') {
-        return await response.json();
+      const endpointRequestOptions = await requestControl.race(
+        resolveEndpointRequestOptions(url, operation),
+      );
+      const response = await requestControl.race(Promise.resolve().then(() => fetchImpl(url, {
+        ...endpointRequestOptions,
+        ...requestOptions,
+        redirect: 'manual',
+        signal: requestControl.signal,
+      })));
+      if (!isResponseOk(response)) {
+        await cancelResponseBody(response);
+        throw createHttpError(response?.status);
       }
-      const text = typeof response.text === 'function' ? await response.text() : '';
-      return JSON.parse(text);
-    } catch {
-      throw createRuntimeError('AI 上游响应格式无效', 'AI_RESPONSE_PARSE_ERROR');
+      return await readJsonResponse(response, requestControl);
+    } catch (error) {
+      const controlledError = requestControl.getError(error);
+      if (controlledError?.code === 'AI_REQUEST_TIMEOUT' || controlledError?.code === 'AI_REQUEST_ABORTED') {
+        throw controlledError;
+      }
+      if (controlledError?.code === 'AI_RESPONSE_PARSE_ERROR' || controlledError?.code === 'AI_HTTP_ERROR') {
+        throw controlledError;
+      }
+      throw sanitizeRuntimeError(controlledError, 'AI 上游响应格式无效');
+    } finally {
+      requestControl.finish();
     }
   }
 
@@ -682,7 +787,7 @@ function createAiRuntime(options = {}) {
     return modelConfig;
   }
 
-  async function executeChat(request) {
+  async function executeChat(request, executionOptions = {}) {
     const config = loadConfigSafely();
     const modelConfig = requireModelConfig(config);
     const body = buildChatBody(modelConfig, request);
@@ -699,7 +804,9 @@ function createAiRuntime(options = {}) {
 
     try {
       const responseData = await runWithRetry(
-        () => requestJsonBody(url, requestOptions, timeouts.text, 'chat'),
+        ({ timeoutMs, signal }) => requestJsonBody(url, requestOptions, timeoutMs, 'chat', { signal }),
+        timeouts.text,
+        executionOptions,
       );
       const usage = normalizeTokenUsage(responseData?.usage);
       textTokenStats.record(usage);
@@ -719,7 +826,7 @@ function createAiRuntime(options = {}) {
     }
   }
 
-  async function executeListModels(configOverride) {
+  async function executeListModels(configOverride, executionOptions = {}) {
     let config;
     try {
       config = loadConfigSafely();
@@ -742,17 +849,22 @@ function createAiRuntime(options = {}) {
     }
 
     try {
-      const data = await runWithRetry(() => requestJsonBody(
-        appendEndpoint(modelConfig.baseUrl, 'models'),
-        {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${modelConfig.apiKey}`,
+      const data = await runWithRetry(
+        ({ timeoutMs, signal }) => requestJsonBody(
+          appendEndpoint(modelConfig.baseUrl, 'models'),
+          {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${modelConfig.apiKey}`,
+            },
           },
-        },
+          timeoutMs,
+          'listModels',
+          { signal },
+        ),
         timeouts.listModels,
-        'listModels',
-      ));
+        executionOptions,
+      );
       const source = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
       const models = source
         .map((item) => (typeof item === 'string' ? item : item?.id || item?.name || ''))
@@ -771,34 +883,42 @@ function createAiRuntime(options = {}) {
     }
   }
 
-  function enqueueText(request, runner, scopeId) {
-    return queue.enqueue('text', runner, { scopeId: getScopeId(request, scopeId) });
+  function enqueueText(request, runner, scopeId, executionOptions = {}) {
+    return queue.enqueue('text', runner, {
+      scopeId: getScopeId(request, scopeId),
+      signal: executionOptions.signal,
+    });
   }
 
   const service = {
-    chat(request) {
-      return enqueueText(request, () => executeChat(request));
+    chat(request, executionOptions = {}) {
+      return enqueueText(request, (signal) => executeChat(request, { ...executionOptions, signal }), undefined, executionOptions);
     },
 
-    async requestJson(request) {
+    async requestJson(request, executionOptions = {}) {
       const source = request && typeof request === 'object' ? request : {};
       const content = await service.chat({
         ...source,
         response_format: source.response_format || { type: 'json_object' },
-      });
+      }, executionOptions);
       return applyJsonRequestContract(source, parseJsonResponseContent(content));
     },
 
-    async collectJsonResponse(request) {
-      return service.requestJson(request);
+    async collectJsonResponse(request, executionOptions = {}) {
+      return service.requestJson(request, executionOptions);
     },
 
     parseJsonResponseContent(request, content) {
       return applyJsonRequestContract(request, parseJsonResponseContent(content));
     },
 
-    listModels(configOverride) {
-      return enqueueText(configOverride, () => executeListModels(configOverride));
+    listModels(configOverride, executionOptions = {}) {
+      return enqueueText(
+        configOverride,
+        (signal) => executeListModels(configOverride, { ...executionOptions, signal }),
+        undefined,
+        executionOptions,
+      );
     },
 
     generateImage() {
