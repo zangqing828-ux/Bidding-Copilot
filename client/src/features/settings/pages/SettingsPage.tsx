@@ -1170,6 +1170,8 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
         const config = createClientConfig();
         const result = await window.yibiao?.config.listModels({
           ...config,
+          model_kind: 'image',
+          model_provider: state.imageModel.provider,
           api_key: state.imageModel.api_key,
           base_url: baseUrl,
           model_name: state.imageModel.model_name,

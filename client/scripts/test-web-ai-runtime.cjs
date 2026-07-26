@@ -506,6 +506,59 @@ async function main() {
       }
     });
 
+    await run('生图模型列表在重载后按图片 provider 回退保存的 Key', async () => {
+      const imageProviderKey = 'sk-image-provider-runtime-key';
+      const imageProviderConfig = {
+        workspaceKey: 'image-provider-runtime',
+        text_model_provider: 'provider-a',
+        api_key: PROVIDER_A_KEY,
+        base_url: 'https://provider-a.example/v1',
+        model_name: 'provider-a-model',
+        text_model_profiles: {
+          'provider-a': {
+            api_key: PROVIDER_A_KEY,
+            base_url: 'https://provider-a.example/v1',
+            model_name: 'provider-a-model',
+          },
+        },
+        image_model: {
+          provider: 'provider-b',
+          api_key: imageProviderKey,
+          base_url: mock.baseUrl,
+          model_name: 'provider-b-image-model',
+        },
+        image_model_profiles: {
+          'provider-b': {
+            api_key: imageProviderKey,
+            base_url: mock.baseUrl,
+            model_name: 'provider-b-image-model',
+          },
+        },
+      };
+      const imageProviderRuntime = createRuntime({
+        config: imageProviderConfig,
+        fetch: globalThis.fetch,
+        retryDelay: 0,
+      });
+      try {
+        const result = await imageProviderRuntime.listModels({
+          ...imageProviderConfig,
+          model_kind: 'image',
+          model_provider: 'provider-b',
+          api_key: '****-key',
+          base_url: mock.baseUrl,
+          model_name: 'provider-b-image-model',
+        });
+        assert.equal(result.success, true);
+        const modelRequest = mock.requests.filter((item) => item.path === '/v1/models').at(-1);
+        assert.equal(modelRequest.headers.authorization, `Bearer ${imageProviderKey}`);
+        assert.notEqual(modelRequest.headers.authorization, `Bearer ${PROVIDER_A_KEY}`);
+        assertNoSecret(result, '生图 provider 模型列表返回值');
+      } finally {
+        await imageProviderRuntime.close();
+      }
+    });
+
     await run('listModels 不要求模型名，chat 仍在缺模型名时失败', async () => {
       const emptyModelRuntime = createRuntime({
         config: {

@@ -1,15 +1,15 @@
-# BidMaster Web（架构与品牌迁移中）
+# Bidding-Copilot（Web 架构收敛中）
 
-> 当前 `main` 的 PR #3 只是 Web 运行基线，不是完整 Web v1。真实 AI/任务、文件解析、Linux Agent Runtime、Headless 渲染、Word 导出和真实 MainQuest OAuth 联调仍需按架构 Spec 完成。
+> 当前 `main` 的 PR #3 仅提供 Web 运行基线。真实 AI/任务、文件解析、Linux Agent Runtime、Headless 渲染、Word 导出和真实 MainQuest OAuth 联调仍需按架构 Spec 完成。
 
 ## 已锁定的项目方向
 
-- 目标交付是可由 Docker 部署、通过浏览器使用的 `BidMaster` Web 产品。
+- 目标交付是可由 Docker 部署、通过浏览器使用的 Web 产品。
 - Web 使用 MainQuest OAuth，并按账号隔离配置、SQLite、文件、任务、事件和导出物。
 - 实施顺序固定为：**先完成 Web 架构收敛，再执行品牌清理**。
 - v1 保留现有组件、布局和交互，只应用 MainQuest MQDS 浅色配色；不做深色模式。
 - 资源下载、投标机会、插件管理及其产品侧入口保持删除。
-- 用户可见品牌最终统一为 `BidMaster`，仓库统一指向 [zangqing828-ux/Bidding-Copilot](https://github.com/zangqing828-ux/Bidding-Copilot)。
+- 用户可见品牌与仓库外链的实施以品牌 Spec 为准；架构验收通过前不批量改写活跃产品文案。
 - 品牌清理不得对数据库、协议、环境变量、OAuth/CI 或云资源做无迁移方案的全局替换。
 - stub、mock、`500/501` 占位或只验证容器启动，不得被描述为功能完成。
 

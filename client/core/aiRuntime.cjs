@@ -164,6 +164,60 @@ function firstPlainNonEmpty(...values) {
   return '';
 }
 
+function resolveImageModelConfig(savedConfig, override) {
+  const savedActive = savedConfig?.image_model && typeof savedConfig.image_model === 'object'
+    ? savedConfig.image_model
+    : {};
+  const selectedProvider = firstNonEmpty(
+    override?.model_provider,
+    override?.provider,
+    override?.image_model?.provider,
+    savedActive.provider,
+  );
+  const savedProfiles = savedConfig?.image_model_profiles && typeof savedConfig.image_model_profiles === 'object'
+    ? savedConfig.image_model_profiles
+    : {};
+  const savedSelected = selectedProvider && savedProfiles[selectedProvider] && typeof savedProfiles[selectedProvider] === 'object'
+    ? savedProfiles[selectedProvider]
+    : {};
+  const sameAsSavedProvider = selectedProvider === savedActive.provider;
+  const savedFallback = {
+    apiKey: firstNonEmpty(savedSelected.api_key, savedSelected.apiKey, sameAsSavedProvider ? savedActive.api_key : ''),
+    baseUrl: firstNonEmpty(savedSelected.base_url, savedSelected.baseUrl, sameAsSavedProvider ? savedActive.base_url : ''),
+    modelName: firstNonEmpty(savedSelected.model_name, savedSelected.modelName, sameAsSavedProvider ? savedActive.model_name : ''),
+  };
+  const overrideApiKeyValues = [
+    override?.api_key,
+    override?.apiKey,
+    override?.image_model?.api_key,
+    override?.image_model?.apiKey,
+    override?.image_model_profiles?.[selectedProvider]?.api_key,
+    override?.image_model_profiles?.[selectedProvider]?.apiKey,
+  ];
+  const plainOverrideApiKey = firstPlainNonEmpty(...overrideApiKeyValues);
+  const anyOverrideApiKey = firstNonEmpty(...overrideApiKeyValues);
+
+  return {
+    provider: selectedProvider,
+    apiKey: plainOverrideApiKey
+      || (isMaskedApiKey(anyOverrideApiKey) ? savedFallback.apiKey : firstNonEmpty(anyOverrideApiKey, savedFallback.apiKey)),
+    baseUrl: firstNonEmpty(
+      override?.base_url,
+      override?.baseUrl,
+      override?.image_model?.base_url,
+      override?.image_model?.baseUrl,
+      savedFallback.baseUrl,
+    ),
+    modelName: firstNonEmpty(
+      override?.model_name,
+      override?.modelName,
+      override?.image_model?.model_name,
+      override?.image_model?.modelName,
+      savedFallback.modelName,
+    ),
+  };
+}
+
 function resolveTextModelConfig(savedConfig, override) {
   const saved = readTextModelConfig(savedConfig);
   if (!override || typeof override !== 'object') {
@@ -200,6 +254,13 @@ function resolveTextModelConfig(savedConfig, override) {
     baseUrl: firstNonEmpty(candidate.baseUrl, savedFallback.baseUrl),
     modelName: firstNonEmpty(candidate.modelName, savedFallback.modelName),
   };
+}
+
+function resolveModelConfig(savedConfig, override) {
+  if (override?.model_kind === 'image') {
+    return resolveImageModelConfig(savedConfig, override);
+  }
+  return resolveTextModelConfig(savedConfig, override);
 }
 
 function createRuntimeError(message, code, options = {}) {
@@ -789,15 +850,16 @@ function createAiRuntime(options = {}) {
   }
 
   function requireModelConfig(config, override, { requireModelName = true } = {}) {
-    const modelConfig = resolveTextModelConfig(config, override);
+    const modelConfig = resolveModelConfig(config, override);
+    const modelLabel = override?.model_kind === 'image' ? '生图模型' : '文本模型';
     if (!normalizeText(modelConfig.apiKey) || isMaskedApiKey(modelConfig.apiKey)) {
-      throw createRuntimeError('请先配置文本模型 API Key', 'AI_CONFIG_INVALID');
+      throw createRuntimeError(`请先配置${modelLabel} API Key`, 'AI_CONFIG_INVALID');
     }
     if (!trimBaseUrl(modelConfig.baseUrl)) {
-      throw createRuntimeError('请先配置文本模型 Base URL', 'AI_CONFIG_INVALID');
+      throw createRuntimeError(`请先配置${modelLabel} Base URL`, 'AI_CONFIG_INVALID');
     }
     if (requireModelName && !normalizeText(modelConfig.modelName)) {
-      throw createRuntimeError('请先配置文本模型名称', 'AI_CONFIG_INVALID');
+      throw createRuntimeError(`请先配置${modelLabel}名称`, 'AI_CONFIG_INVALID');
     }
     return modelConfig;
   }
@@ -1056,5 +1118,6 @@ module.exports = {
   createAiRuntime,
   parseJsonResponseContent,
   normalizeEndpointHost,
+  resolveImageModelConfig,
   resolveTextModelConfig,
 };

@@ -389,7 +389,7 @@ const rawMethods = {
       owner: 'settings',
       workPackage: 'WP-C',
       contractRef: 'config.listModels',
-      input: [contractArg('config', 'ClientConfig', { required: false })],
+      input: [contractArg('config', 'ModelListConfig', { required: false })],
       output: 'ModelListResult',
       errors: [
         'CONFIG_INVALID',
