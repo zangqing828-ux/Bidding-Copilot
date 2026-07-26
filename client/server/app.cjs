@@ -26,7 +26,7 @@ function createApp() {
   const app = express();
 
   // trust proxy：生产环境在反向代理后正确获取客户端 IP 和协议
-  app.set('trust proxy', config.isProduction ? 1 : false);
+  app.set('trust proxy', config.isProduction ? config.trustedProxyHops : false);
 
   app.use(compression());
   app.use(express.json({ limit: config.bodyLimit }));
