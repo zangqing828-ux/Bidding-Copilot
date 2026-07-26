@@ -565,9 +565,11 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
 
   useEffect(() => {
     void loadTextConfig();
-    void window.yibiao?.agent.listRuntimes()
-      .then((runtimes) => setAgentRuntimes(runtimes || []))
-      .catch(() => setAgentRuntimes([]));
+    if (!isWebPlatform) {
+      void window.yibiao?.agent.listRuntimes()
+        .then((runtimes) => setAgentRuntimes(runtimes || []))
+        .catch(() => setAgentRuntimes([]));
+    }
     if (!isWebPlatform) {
       void window.yibiao?.getVersion().then(setAppVersion);
     }
@@ -1375,6 +1377,9 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
   const currentAgentSelfCheckStatus = agentSelfCheckStatusMeta[agentSelfCheckStatus];
   const savedAgentRuntime = agentRuntimes.find((runtime) => runtime.id === savedConfig?.agent_runtime);
   const imageTestTime = formatImageTestTime(state.imageModel.tested_at);
+  const visibleSettingsTabs = isWebPlatform
+    ? settingsTabs.filter((tab) => tab.id !== 'agent')
+    : settingsTabs;
   const settingsToolbarGroups: FloatingToolbarGroup[] = canSaveActiveTab
     ? [
         {
@@ -1420,7 +1425,7 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
     <div className="settings-page">
       <div className="settings-page-scroll">
         <div className="settings-tab-shell" role="tablist" aria-label="设置分类">
-          {settingsTabs.map((tab) => (
+          {visibleSettingsTabs.map((tab) => (
             <button
               key={tab.id}
               type="button"

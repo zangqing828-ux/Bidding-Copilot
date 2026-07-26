@@ -67,12 +67,13 @@ function createDirectBinding(handler, contractRef) {
   });
 }
 
-function createStoreBinding(storeName, storeMethod, contractRef) {
+function createStoreBinding(storeName, storeMethod, contractRef, { mutation = false } = {}) {
   return Object.freeze({
     type: 'store',
     transport: 'bridge',
     storeName,
     storeMethod,
+    mutation,
     contractRef,
   });
 }
@@ -88,7 +89,21 @@ function pickEditableRejectionState(value) {
   return editable;
 }
 
-function executeWorkspaceStore(ctx, targetName, method, args, fallback) {
+function executeWorkspaceMutation(ctx, operation) {
+  if (ctx.mutationExecutor && typeof ctx.mutationExecutor.execute === 'function') {
+    return ctx.mutationExecutor.execute(operation);
+  }
+  return operation();
+}
+
+function executeWorkspaceStore(ctx, targetName, method, args, fallback, { mutation = false } = {}) {
+  const execute = () => {
+    if (ctx.storeExecutor && typeof ctx.storeExecutor.execute === 'function') {
+      return ctx.storeExecutor.execute(targetName, method, args);
+    }
+    return fallback();
+  };
+  if (mutation) return executeWorkspaceMutation(ctx, execute);
   if (ctx.storeExecutor && typeof ctx.storeExecutor.execute === 'function') {
     return ctx.storeExecutor.execute(targetName, method, args);
   }
@@ -160,15 +175,9 @@ const bridgeBindingMetadata = Object.freeze({
     listModels: createDirectBinding((ctx, args, options) => ctx.aiService.listModels(args[0], options), 'config.listModels'),
   }),
 
-  agent: Object.freeze({
-    listRuntimes: createDirectBinding((ctx) => ctx.agentService.listRuntimes(), 'agent.listRuntimes'),
-    selfCheck: createDirectBinding((ctx) => ctx.agentService.selfCheck(), 'agent.selfCheck'),
-    getStatus: createDirectBinding((ctx) => ctx.agentService.getStatus(), 'agent.getStatus'),
-    restart: createDirectBinding((ctx) => ctx.agentService.restart(), 'agent.restart'),
-  }),
-
   tasks: Object.freeze({
     getActiveTasks: createDirectBinding((ctx) => ctx.taskService.getActiveTasks(), 'tasks.getActiveTasks'),
+    startBidAnalysis: createDirectBinding((ctx, args, options) => ctx.taskService.startBidAnalysis(args[0], options), 'tasks.startBidAnalysis'),
   }),
 
   export: Object.freeze({
@@ -178,28 +187,28 @@ const bridgeBindingMetadata = Object.freeze({
   technicalPlan: Object.freeze({
     loadState: createStoreBinding('technicalPlanStore', 'loadTechnicalPlan', 'technicalPlan.loadState'),
     importTenderDocument: createDirectBinding(
-      (ctx, args, options) => ctx.stores.technicalPlanStore.importTenderDocument(args[0], options),
+      (ctx, args, options) => executeWorkspaceMutation(ctx, () => ctx.stores.technicalPlanStore.importTenderDocument(args[0], options)),
       'technicalPlan.importTenderDocument',
     ),
     importOriginalPlanDocument: createDirectBinding(
-      (ctx, args, options) => ctx.stores.technicalPlanStore.importOriginalPlanDocument(args[0], options),
+      (ctx, args, options) => executeWorkspaceMutation(ctx, () => ctx.stores.technicalPlanStore.importOriginalPlanDocument(args[0], options)),
       'technicalPlan.importOriginalPlanDocument',
     ),
     readTenderMarkdown: createStoreBinding('technicalPlanStore', 'readTenderMarkdown', 'technicalPlan.readTenderMarkdown'),
     readTenderSourceMarkdown: createStoreBinding('technicalPlanStore', 'readTenderSourceMarkdown', 'technicalPlan.readTenderSourceMarkdown'),
     readOriginalPlanMarkdown: createStoreBinding('technicalPlanStore', 'readOriginalPlanMarkdown', 'technicalPlan.readOriginalPlanMarkdown'),
-    updateStep: createStoreBinding('technicalPlanStore', 'updateStep', 'technicalPlan.updateStep'),
-    setWorkflowKind: createStoreBinding('technicalPlanStore', 'setWorkflowKind', 'technicalPlan.setWorkflowKind'),
-    switchWorkflowKind: createStoreBinding('technicalPlanStore', 'switchWorkflowKind', 'technicalPlan.switchWorkflowKind'),
-    saveBidAnalysisConfig: createStoreBinding('technicalPlanStore', 'saveBidAnalysisConfig', 'technicalPlan.saveBidAnalysisConfig'),
-    saveOutlineConfig: createStoreBinding('technicalPlanStore', 'saveOutlineConfig', 'technicalPlan.saveOutlineConfig'),
-    saveOutline: createStoreBinding('technicalPlanStore', 'saveOutline', 'technicalPlan.saveOutline'),
-    saveGlobalFacts: createStoreBinding('technicalPlanStore', 'saveGlobalFacts', 'technicalPlan.saveGlobalFacts'),
-    saveContentGenerationOptions: createStoreBinding('technicalPlanStore', 'saveContentGenerationOptions', 'technicalPlan.saveContentGenerationOptions'),
-    saveChapterContent: createStoreBinding('technicalPlanStore', 'saveChapterContent', 'technicalPlan.saveChapterContent'),
-    clear: createStoreBinding('technicalPlanStore', 'clearTechnicalPlan', 'technicalPlan.clear'),
+    updateStep: createStoreBinding('technicalPlanStore', 'updateStep', 'technicalPlan.updateStep', { mutation: true }),
+    setWorkflowKind: createStoreBinding('technicalPlanStore', 'setWorkflowKind', 'technicalPlan.setWorkflowKind', { mutation: true }),
+    switchWorkflowKind: createStoreBinding('technicalPlanStore', 'switchWorkflowKind', 'technicalPlan.switchWorkflowKind', { mutation: true }),
+    saveBidAnalysisConfig: createStoreBinding('technicalPlanStore', 'saveBidAnalysisConfig', 'technicalPlan.saveBidAnalysisConfig', { mutation: true }),
+    saveOutlineConfig: createStoreBinding('technicalPlanStore', 'saveOutlineConfig', 'technicalPlan.saveOutlineConfig', { mutation: true }),
+    saveOutline: createStoreBinding('technicalPlanStore', 'saveOutline', 'technicalPlan.saveOutline', { mutation: true }),
+    saveGlobalFacts: createStoreBinding('technicalPlanStore', 'saveGlobalFacts', 'technicalPlan.saveGlobalFacts', { mutation: true }),
+    saveContentGenerationOptions: createStoreBinding('technicalPlanStore', 'saveContentGenerationOptions', 'technicalPlan.saveContentGenerationOptions', { mutation: true }),
+    saveChapterContent: createStoreBinding('technicalPlanStore', 'saveChapterContent', 'technicalPlan.saveChapterContent', { mutation: true }),
+    clear: createStoreBinding('technicalPlanStore', 'clearTechnicalPlan', 'technicalPlan.clear', { mutation: true }),
     checkBidSections: createStoreBinding('technicalPlanStore', 'checkBidSections', 'technicalPlan.checkBidSections'),
-    selectBidSection: createStoreBinding('technicalPlanStore', 'selectBidSection', 'technicalPlan.selectBidSection'),
+    selectBidSection: createStoreBinding('technicalPlanStore', 'selectBidSection', 'technicalPlan.selectBidSection', { mutation: true }),
   }),
 
   knowledgeBase: Object.freeze({
@@ -292,14 +301,20 @@ function buildDispatchers(meta) {
 
       if (spec.type === 'store') {
         namespaceDispatchers[method] = (ctx, args) => {
-          if (ctx.storeExecutor && typeof ctx.storeExecutor.execute === 'function') {
-            return ctx.storeExecutor.execute(spec.storeName, spec.storeMethod, args);
-          }
-          const store = ctx.stores[spec.storeName];
-          if (!store || typeof store[spec.storeMethod] !== 'function') {
-            throw new Error(`${spec.storeName}.${spec.storeMethod} 不可用`);
-          }
-          return store[spec.storeMethod](...args);
+          return executeWorkspaceStore(
+            ctx,
+            spec.storeName,
+            spec.storeMethod,
+            args,
+            () => {
+              const store = ctx.stores[spec.storeName];
+              if (!store || typeof store[spec.storeMethod] !== 'function') {
+                throw new Error(`${spec.storeName}.${spec.storeMethod} 不可用`);
+              }
+              return store[spec.storeMethod](...args);
+            },
+            { mutation: spec.mutation === true },
+          );
         };
       }
 
@@ -453,6 +468,27 @@ router.post('/bridge', (req, res) => {
         code: 'CONFIG_INVALID',
         message: '配置格式无效',
         retryable: false,
+      });
+    }
+    if (err?.code === 'TASK_INVALID_INPUT' || err?.code === 'TASK_ITEM_NOT_FOUND') {
+      return res.status(400).json({
+        code: err.code,
+        message: err.message || '任务输入无效',
+        retryable: false,
+      });
+    }
+    if (err?.code === 'TASK_INPUT_CHANGED') {
+      return res.status(409).json({
+        code: err.code,
+        message: err.message || '任务输入已更新，请重新开始',
+        retryable: true,
+      });
+    }
+    if (err?.code === 'TASK_CONFLICT') {
+      return res.status(409).json({
+        code: err.code,
+        message: err.message || '当前技术方案任务仍在执行',
+        retryable: true,
       });
     }
     if (err?.code === 'AI_QUEUE_OVERLOADED') {

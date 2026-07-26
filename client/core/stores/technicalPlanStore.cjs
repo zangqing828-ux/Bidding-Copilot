@@ -29,6 +29,7 @@ const initialState = {
   techRequirements: '',
   bidAnalysisMode: 'key',
   bidAnalysisSelectedTaskIds: [],
+  inputRevision: 0,
   bidAnalysisTasks: {},
   bidAnalysisProgress: 0,
   bidSectionMode: 'single',
@@ -571,6 +572,36 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     });
   }
 
+  function currentInputRevision(meta = ensureMetaRow()) {
+    return Math.max(0, Math.floor(Number(meta.input_revision) || 0));
+  }
+
+  function bumpInputRevision() {
+    const nextRevision = currentInputRevision() + 1;
+    updateMeta({ input_revision: nextRevision });
+    return nextRevision;
+  }
+
+  function inputChangedError() {
+    const error = new Error('招标文件输入已更新，请重新开始解析');
+    error.code = 'TASK_INPUT_CHANGED';
+    error.retryable = true;
+    return error;
+  }
+
+  function getBidAnalysisInputVersion() {
+    const meta = ensureMetaRow();
+    const mode = isValidBidMode(meta.bid_analysis_mode) ? meta.bid_analysis_mode : 'key';
+    const selectedTaskIds = getBidAnalysisTaskIdsForConfig(mode, safeJsonParse(meta.bid_analysis_selected_task_ids_json, []));
+    return Object.freeze({
+      inputRevision: currentInputRevision(meta),
+      tenderHash: String(meta.tender_markdown_hash || ''),
+      selectedSectionId: String(meta.selected_section_id || ''),
+      selectionHash: stableHash(JSON.stringify({ mode, selectedTaskIds })),
+      workflowKind: normalizeWorkflowKind(meta.workflow_kind),
+    });
+  }
+
   function resolveMarkdownPath(relativeOrAbsolutePath) {
     const value = String(relativeOrAbsolutePath || '').trim();
     if (!value) return tenderMarkdownPath;
@@ -751,6 +782,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
       error: row.error || undefined,
       error_code: row.error_code || undefined,
       retryable: fromDbBool(row.retryable),
+      input_revision: row.input_revision === null || row.input_revision === undefined ? undefined : Number(row.input_revision),
       stats: safeJsonParse(row.stats_json, undefined),
       pause_requested: fromDbBool(row.pause_requested),
     };
@@ -766,8 +798,8 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     }
     const timestamp = now();
     db.prepare(`
-      INSERT INTO technical_plan_tasks (type, task_id, status, progress, logs_json, stats_json, error, error_code, retryable, pause_requested, started_at, updated_at)
-      VALUES (@type, @task_id, @status, @progress, @logs_json, @stats_json, @error, @error_code, @retryable, @pause_requested, @started_at, @updated_at)
+      INSERT INTO technical_plan_tasks (type, task_id, status, progress, logs_json, stats_json, error, error_code, retryable, input_revision, pause_requested, started_at, updated_at)
+      VALUES (@type, @task_id, @status, @progress, @logs_json, @stats_json, @error, @error_code, @retryable, @input_revision, @pause_requested, @started_at, @updated_at)
       ON CONFLICT(type) DO UPDATE SET
         task_id = excluded.task_id,
         status = excluded.status,
@@ -777,6 +809,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
         error = excluded.error,
         error_code = excluded.error_code,
         retryable = excluded.retryable,
+        input_revision = excluded.input_revision,
         pause_requested = excluded.pause_requested,
         started_at = excluded.started_at,
         updated_at = excluded.updated_at
@@ -790,6 +823,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
       error: task.error ? String(task.error) : null,
       error_code: task.error_code ? String(task.error_code) : null,
       retryable: toDbBool(task.retryable),
+      input_revision: Number.isInteger(task.input_revision) ? task.input_revision : null,
       pause_requested: toDbBool(task.pause_requested),
       started_at: task.started_at || timestamp,
       updated_at: task.updated_at || timestamp,
@@ -841,7 +875,11 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
       }
       db.prepare(`
         UPDATE technical_plan_bid_items
-        SET status = 'error', error = '服务重启导致任务中断，请重新执行', updated_at = ?
+        SET status = 'error',
+            error = '服务重启导致任务中断，请重新执行',
+            error_code = 'TASK_INTERRUPTED_BY_RESTART',
+            retryable = 1,
+            updated_at = ?
         WHERE status = 'running'
       `).run(timestamp);
     });
@@ -858,6 +896,8 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
         status: normalizeStatus(row.status, ['idle', 'running', 'success', 'error'], 'idle'),
         content: row.content || '',
         error: row.error || undefined,
+        error_code: row.error_code || undefined,
+        retryable: fromDbBool(row.retryable),
       };
       return acc;
     }, {});
@@ -882,13 +922,15 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     }
 
     const upsert = db.prepare(`
-      INSERT INTO technical_plan_bid_items (item_id, label, status, content, error, sort_order, updated_at)
-      VALUES (@item_id, @label, @status, @content, @error, @sort_order, @updated_at)
+      INSERT INTO technical_plan_bid_items (item_id, label, status, content, error, error_code, retryable, sort_order, updated_at)
+      VALUES (@item_id, @label, @status, @content, @error, @error_code, @retryable, @sort_order, @updated_at)
       ON CONFLICT(item_id) DO UPDATE SET
         label = excluded.label,
         status = excluded.status,
         content = excluded.content,
         error = excluded.error,
+        error_code = excluded.error_code,
+        retryable = excluded.retryable,
         sort_order = excluded.sort_order,
         updated_at = excluded.updated_at
     `);
@@ -900,6 +942,8 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
         status: normalizeStatus(task?.status, ['idle', 'running', 'success', 'error'], 'idle'),
         content: String(task?.content || ''),
         error: task?.error ? String(task.error) : null,
+        error_code: task?.error_code ? String(task.error_code) : null,
+        retryable: toDbBool(task?.retryable),
         sort_order: getBidItemSortOrder(itemId, mode),
         updated_at: task?.updated_at || timestamp,
       });
@@ -1299,6 +1343,24 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     });
   }
 
+  function clearDownstreamFromBidAnalysisChange() {
+    db.prepare('DELETE FROM technical_plan_tasks').run();
+    db.prepare('DELETE FROM technical_plan_reference_docs').run();
+    db.prepare('DELETE FROM technical_plan_outline_nodes').run();
+    db.prepare('DELETE FROM technical_plan_global_fact_groups').run();
+    clearOriginalOutlineRuntime();
+    clearTechnicalPlanMermaidCache();
+    updateMeta({
+      step: 'bid-analysis',
+      content_generation_options_json: null,
+      content_generation_runtime_json: null,
+      content_illustration_plan_json: null,
+      outline_word_control_snapshot_json: null,
+      outline_project_name: null,
+      outline_project_overview: null,
+    });
+  }
+
   function clearContentGenerationState() {
     db.prepare("UPDATE technical_plan_outline_nodes SET content = '', updated_at = ?").run(now());
     db.prepare('DELETE FROM technical_plan_content_sections').run();
@@ -1564,6 +1626,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
       techRequirements: bidAnalysisTasks.techRequirements?.status === 'success' ? bidAnalysisTasks.techRequirements.content : '',
       bidAnalysisMode,
       bidAnalysisSelectedTaskIds,
+      inputRevision: currentInputRevision(meta),
       bidAnalysisTasks,
       bidAnalysisProgress: calculateBidProgress(bidAnalysisMode, bidAnalysisTasks, bidAnalysisSelectedTaskIds),
       bidSectionMode: normalizeBidSectionMode(meta.bid_section_mode),
@@ -1608,12 +1671,34 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     return loadTechnicalPlan();
   }
 
+  const updateTechnicalPlanForInputRevisionTransaction = db.transaction((inputRevision, partial) => {
+    const meta = ensureMetaRow();
+    if (currentInputRevision(meta) !== Number(inputRevision)) {
+      throw inputChangedError();
+    }
+    applyPartial(partial || {});
+  });
+
+  function updateTechnicalPlanForInputRevision(inputRevision, partial) {
+    updateTechnicalPlanForInputRevisionTransaction(inputRevision, partial);
+    return loadTechnicalPlan();
+  }
+
   function updateStep(step) {
     return updateTechnicalPlan({ step });
   }
 
   function setWorkflowKind(workflowKind) {
-    return updateTechnicalPlan({ workflowKind: normalizeWorkflowKind(workflowKind) });
+    const nextWorkflowKind = normalizeWorkflowKind(workflowKind);
+    if (normalizeWorkflowKind(ensureMetaRow().workflow_kind) === nextWorkflowKind) {
+      return loadTechnicalPlan();
+    }
+    const transaction = db.transaction(() => {
+      updateMeta({ workflow_kind: nextWorkflowKind });
+      bumpInputRevision();
+    });
+    transaction();
+    return loadTechnicalPlan();
   }
 
   function switchWorkflowKind(workflowKind) {
@@ -1629,6 +1714,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     const transaction = db.transaction(() => {
       assertNoTechnicalPlanTaskRunning();
       clearWorkflowSpecificState(nextWorkflowKind);
+      bumpInputRevision();
     });
     transaction();
     if (fs.existsSync(originalPlanFilePath)) {
@@ -1664,7 +1750,13 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     const nextSectionMode = bidSectionMode === undefined ? null : normalizeBidSectionMode(bidSectionMode);
     const meta = ensureMetaRow();
     const shouldChangeSectionMode = nextSectionMode && nextSectionMode !== normalizeBidSectionMode(meta.bid_section_mode);
-    if (!shouldChangeSectionMode) {
+    const currentConfig = normalizeBidAnalysisConfig(
+      meta.bid_analysis_mode,
+      safeJsonParse(meta.bid_analysis_selected_task_ids_json, []),
+    );
+    const shouldChangeAnalysisConfig = currentConfig.mode !== config.mode
+      || JSON.stringify(currentConfig.selectedTaskIds) !== JSON.stringify(config.selectedTaskIds);
+    if (!shouldChangeSectionMode && !shouldChangeAnalysisConfig) {
       return updateTechnicalPlan({
         bidAnalysisMode: config.mode,
         bidAnalysisSelectedTaskIds: config.selectedTaskIds,
@@ -1672,29 +1764,74 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     }
 
     const transaction = db.transaction(() => {
-      if (nextSectionMode === 'single' || nextSectionMode === 'multiple') {
+      if (shouldChangeSectionMode && (nextSectionMode === 'single' || nextSectionMode === 'multiple')) {
         resetTenderWorkingCopyToOriginal();
       }
-      clearDownstreamFromBidSectionChange();
-      updateMeta({
+      if (shouldChangeSectionMode) {
+        clearDownstreamFromBidSectionChange();
+      } else {
+        clearDownstreamFromBidAnalysisChange();
+      }
+      bumpInputRevision();
+      const nextMeta = {
         bid_analysis_mode: config.mode,
         bid_analysis_selected_task_ids_json: jsonOrNull(config.selectedTaskIds),
-        bid_section_mode: nextSectionMode,
-        bid_sections_json: null,
-        bid_section_extraction_status: 'idle',
-        bid_section_extraction_error: null,
-        selected_section_id: null,
-        selected_section_title: null,
-      });
+        bid_section_mode: nextSectionMode || normalizeBidSectionMode(meta.bid_section_mode),
+      };
+      if (shouldChangeSectionMode) {
+        Object.assign(nextMeta, {
+          bid_sections_json: null,
+          bid_section_extraction_status: 'idle',
+          bid_section_extraction_error: null,
+          selected_section_id: null,
+          selected_section_title: null,
+        });
+      }
+      updateMeta(nextMeta);
     });
     transaction();
     return loadTechnicalPlan();
+  }
+
+  function prepareBidAnalysisRun({ mode, selectedTaskIds, taskIds, forceRerun } = {}) {
+    const config = normalizeBidAnalysisConfig(mode, selectedTaskIds);
+    const retryIds = forceRerun === true
+      ? normalizeBidAnalysisTaskIds(config.selectedTaskIds)
+      : normalizeBidAnalysisTaskIds(taskIds);
+    const transaction = db.transaction(() => {
+      const meta = ensureMetaRow();
+      const currentConfig = normalizeBidAnalysisConfig(
+        meta.bid_analysis_mode,
+        safeJsonParse(meta.bid_analysis_selected_task_ids_json, []),
+      );
+      const shouldChangeAnalysisConfig = currentConfig.mode !== config.mode
+        || JSON.stringify(currentConfig.selectedTaskIds) !== JSON.stringify(config.selectedTaskIds);
+      if (shouldChangeAnalysisConfig || retryIds.length) {
+        clearDownstreamFromBidAnalysisChange();
+      }
+      if (shouldChangeAnalysisConfig) {
+        updateMeta({
+          bid_analysis_mode: config.mode,
+          bid_analysis_selected_task_ids_json: jsonOrNull(config.selectedTaskIds),
+        });
+      }
+      if (retryIds.length) {
+        const removeItem = db.prepare('DELETE FROM technical_plan_bid_items WHERE item_id = ?');
+        retryIds.forEach((itemId) => removeItem.run(itemId));
+      }
+      if (shouldChangeAnalysisConfig || retryIds.length) {
+        bumpInputRevision();
+      }
+    });
+    transaction();
+    return { state: loadTechnicalPlan(), inputVersion: getBidAnalysisInputVersion() };
   }
 
   function prepareBidSectionExtraction() {
     const transaction = db.transaction(() => {
       resetTenderWorkingCopyToOriginal();
       clearDownstreamFromBidSectionChange();
+      bumpInputRevision();
       updateMeta({
         bid_section_mode: 'multiple',
         bid_sections_json: null,
@@ -1853,6 +1990,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
           original_plan_imported_at: timestamp,
         });
         clearDownstreamFromOriginalPlan();
+        bumpInputRevision();
       });
       transaction();
       return {
@@ -1883,6 +2021,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     const timestamp = now();
     const transaction = db.transaction(() => {
       clearDownstreamFromTender();
+      bumpInputRevision();
       updateMeta({
         tender_file_name: fileName || '未命名文件',
         tender_markdown_path: tenderMarkdownRelativePath,
@@ -1922,6 +2061,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
       writeMarkdownFile(tenderMarkdownPath, workingMarkdown, 'tender');
       const transaction = db.transaction(() => {
         clearDownstreamFromBidSectionChange();
+        bumpInputRevision();
         updateMeta({
           tender_markdown_path: tenderMarkdownRelativePath,
           tender_markdown_hash: stableHash(workingMarkdown),
@@ -1945,7 +2085,9 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
 
   function clearTechnicalPlan() {
     cleanupPendingTenderSelection();
-    const workflowKind = normalizeWorkflowKind(ensureMetaRow().workflow_kind);
+    const meta = ensureMetaRow();
+    const workflowKind = normalizeWorkflowKind(meta.workflow_kind);
+    const nextInputRevision = currentInputRevision(meta) + 1;
     const transaction = db.transaction(() => {
       db.prepare('DELETE FROM technical_plan_tasks').run();
       db.prepare('DELETE FROM technical_plan_bid_items').run();
@@ -1954,7 +2096,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
       db.prepare('DELETE FROM technical_plan_global_fact_groups').run();
       db.prepare('DELETE FROM technical_plan_meta').run();
       ensureMetaRow();
-      updateMeta({ workflow_kind: workflowKind });
+      updateMeta({ workflow_kind: workflowKind, input_revision: nextInputRevision });
     });
     transaction();
     if (fs.existsSync(tenderMarkdownPath)) {
@@ -1978,6 +2120,8 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     loadTechnicalPlan,
     updateTechnicalPlan,
     updateTechnicalPlanWithoutReload,
+    updateTechnicalPlanForInputRevision,
+    getBidAnalysisInputVersion,
     recoverInterruptedTasks,
     saveContentGenerationItem,
     clearMermaidCache: clearTechnicalPlanMermaidCache,
@@ -2001,6 +2145,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     setWorkflowKind,
     switchWorkflowKind,
     saveBidAnalysisConfig,
+    prepareBidAnalysisRun,
     saveOutlineConfig,
     saveOutline,
     saveGlobalFacts,

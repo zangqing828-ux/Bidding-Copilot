@@ -123,8 +123,9 @@ jobs:
         working-directory: .
         run: |
           docker run -d --name web-test -p 3000:3000 \
-            -e NODE_ENV=development \
+            -e NODE_ENV=test \
             -e OAUTH_MODE=mock \
+            -e WEB_BID_ANALYSIS_TEST_MODE=1 \
             -e SESSION_SECRET=ci-test-secret \
             -e CONFIG_ENCRYPTION_KEY=ci-test-key \
             -e YIBIAO_DATA_DIR=/data \
@@ -163,12 +164,39 @@ jobs:
             -H 'content-type: application/json' \
             -d '{"namespace":"technicalPlan","method":"loadState","args":[]}' \
             http://127.0.0.1:3000/api/bridge | grep -q '"code":"OK"'
+          printf '%s\n' 'CI 招标文件：项目概况、技术要求、交付服务要求。' > /tmp/yibiao-bid-analysis.txt
+          upload_response="$(curl -fsS -b /tmp/yibiao-mock-cookies \
+            -F 'file=@/tmp/yibiao-bid-analysis.txt;type=text/plain' \
+            http://127.0.0.1:3000/api/uploads)"
+          file_id="$(node -e "const result = JSON.parse(process.argv[1]); if (!/^[0-9a-f-]{36}$/i.test(result.fileId || '')) process.exit(1); process.stdout.write(result.fileId);" "$upload_response")"
           curl -fsS -b /tmp/yibiao-mock-cookies \
             -H 'content-type: application/json' \
-            -d '{"namespace":"agent","method":"selfCheck","args":[]}' \
-            -o /tmp/yibiao-agent-self-check.json \
-            http://127.0.0.1:3000/api/bridge
-          node -e "const fs = require('node:fs'); const result = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); if (result.code !== 'OK' || result.data?.success !== true) process.exit(1);" /tmp/yibiao-agent-self-check.json
+            -d "{\"namespace\":\"technicalPlan\",\"method\":\"importTenderDocument\",\"args\":[[\"${file_id}\"]]}" \
+            http://127.0.0.1:3000/api/bridge | grep -q '"code":"OK"'
+          curl -fsS -b /tmp/yibiao-mock-cookies \
+            -H 'content-type: application/json' \
+            -d '{"namespace":"tasks","method":"startBidAnalysis","args":[{"mode":"key","selected_task_ids":["projectOverview","techRequirements","projectInfo","partAInfo","deliveryAndServiceRequirements"],"force_rerun":true}]}' \
+            http://127.0.0.1:3000/api/bridge | grep -q '"code":"OK"'
+          for i in $(seq 1 30); do
+            curl -fsS -b /tmp/yibiao-mock-cookies \
+              -H 'content-type: application/json' \
+              -d '{"namespace":"technicalPlan","method":"loadState","args":[]}' \
+              -o /tmp/yibiao-bid-analysis-state.json \
+              http://127.0.0.1:3000/api/bridge
+            if node -e "const fs = require('node:fs'); const result = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); const state = result.data || {}; process.exit(result.code === 'OK' && state.bidAnalysisTask?.status === 'success' && state.bidAnalysisTasks?.projectOverview?.status === 'success' ? 0 : 1);" /tmp/yibiao-bid-analysis-state.json; then
+              echo "Bid analysis business smoke passed after ${i}s"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo 'Bid analysis business smoke failed'
+              cat /tmp/yibiao-bid-analysis-state.json
+              docker logs web-test
+              docker stop web-test || true
+              docker rm web-test || true
+              exit 1
+            fi
+            sleep 1
+          done
           curl -fsS -b /tmp/yibiao-mock-cookies \
             -H 'content-type: application/json' \
             -d '{"namespace":"export","method":"exportWord","args":[{"project_name":"CI 投标技术文件","outline":[{"id":"ci-outline-1","title":"第一章","content":"容器端到端导出验证内容","children":[]}]}]}' \

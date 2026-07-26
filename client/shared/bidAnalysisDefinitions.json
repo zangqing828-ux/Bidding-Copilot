@@ -1,0 +1,20 @@
+[
+  { "id": "projectOverview", "label": "项目概述", "description": "提取项目基本信息、背景目的、规模预算、时间安排、实施内容和技术特点等。", "required": true, "output": "markdown" },
+  { "id": "techRequirements", "label": "技术评分要求", "description": "提取技术评分项、权重分值、评分标准和招标文件中的位置。", "required": true, "output": "markdown" },
+  { "id": "projectInfo", "label": "项目信息", "description": "项目名称、编号、类型、预算和地址。", "required": true, "output": "json" },
+  { "id": "partAInfo", "label": "甲方信息", "description": "招标人公司、地址、联系人和电话。", "required": true, "output": "json" },
+  { "id": "deliveryAndServiceRequirements", "label": "交货和服务要求", "description": "实施周期、交付范围、地点、验收、质保、售后、响应、培训和文档要求。", "required": true, "output": "json" },
+  { "id": "procurementList", "label": "采购清单", "description": "采购内容、数量、规格参数、交付和验收要求。", "required": false, "output": "markdown" },
+  { "id": "responseFileRequirements", "label": "响应文件要求", "description": "响应文件组成、格式模板、签章、递交和偏离表要求。", "required": false, "output": "markdown" },
+  { "id": "agentInfo", "label": "代理机构信息", "description": "代理机构联系方式和账户信息。", "required": false, "output": "json" },
+  { "id": "keyInfo", "label": "投标关键节点", "description": "公告、获取文件、递交、截止和开标信息。", "required": false, "output": "json" },
+  { "id": "marginInfo", "label": "投标保证金", "description": "保证金金额、方式、截止和退还条件。", "required": false, "output": "json" },
+  { "id": "qualificationReview", "label": "资格性审查", "description": "投标人资格条件和资格审查要求。", "required": false, "output": "markdown" },
+  { "id": "complianceCheck", "label": "符合性检查", "description": "文件完整性、有效性、规范和偏差处理要求。", "required": false, "output": "markdown" },
+  { "id": "openBid", "label": "开标要求", "description": "开标时间地点、参与要求、无效标和流程。", "required": false, "output": "json" },
+  { "id": "evaluationBid", "label": "评标要求", "description": "评标委员会、评分构成、方法和原则。", "required": false, "output": "json" },
+  { "id": "businessScoring", "label": "商务评分要求", "description": "商务评分因素，为商务方案准备。", "required": false, "output": "markdown" },
+  { "id": "discardedBids", "label": "无效标与废标项", "description": "投标无效、废标相关风险项。", "required": false, "output": "markdown" },
+  { "id": "signingProcess", "label": "合同授予与签订", "description": "中标公示、合同签订、履约保证金和合同文本。", "required": false, "output": "json" },
+  { "id": "terminationCondition", "label": "合同解除和终止", "description": "违约解除、不可抗力、合同终止和争议解决。", "required": false, "output": "json" }
+]

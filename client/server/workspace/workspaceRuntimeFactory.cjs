@@ -11,6 +11,7 @@ const { getGlobalAiCoordinator } = require('../ai/globalAiCoordinator.cjs');
 const { createAiAnalyticsTracker } = require('../ai/aiAnalytics.cjs');
 const { createWebEndpointPolicy } = require('../ai/webEndpointPolicy.cjs');
 const { createWorkspaceStoreExecutor } = require('./storeBridgeExecutor.cjs');
+const { createWorkspaceMutationExecutor } = require('./workspaceMutationExecutor.cjs');
 const { createUploadRegistry } = require('./uploadRegistry.cjs');
 const { createWebFileService } = require('./webFileService.cjs');
 
@@ -121,6 +122,19 @@ function createTaskEventPortAndTrack(taskService, closeHandlers) {
   return taskEvents;
 }
 
+function createBidAnalysisTestAiService() {
+  return {
+    chat: async ({ messages = [] } = {}) => `浏览器测试解析结果：${String(messages.at(-1)?.content || '').slice(0, 24)}`,
+    close() {},
+    getConfig: () => ({}),
+    getImageQueueStatus: () => ({ active: 0, queued: 0 }),
+    getTextQueueStatus: () => ({ active: 0, queued: 0 }),
+    pauseQueueScope() {},
+    resumeQueueScope() {},
+    withQueueScope() { return this; },
+  };
+}
+
 function createWebWorkspaceRuntime({
   workspaceId,
   userDir,
@@ -130,6 +144,7 @@ function createWebWorkspaceRuntime({
   configPath,
   sharedCoordinator,
   aiRuntimeOptions = {},
+  aiServiceOverride,
 }) {
   const closeHandlers = [];
   let closePromise = null;
@@ -157,7 +172,7 @@ function createWebWorkspaceRuntime({
   try {
     const { createSqliteDatabase } = require('../../core/sqliteDatabase.cjs');
     const {
-      createWebTaskServiceStub,
+      createWebBidAnalysisTaskService,
       createWebKnowledgeBaseService,
       createWebDuplicateCheckServiceStub,
     } = require('./webServices.cjs');
@@ -196,6 +211,8 @@ function createWebWorkspaceRuntime({
       configPath,
     });
     pushCloseHandler(closeHandlers, createCloseHandler(storeExecutor), 'storeExecutor');
+    const mutationExecutor = createWorkspaceMutationExecutor();
+    pushCloseHandler(closeHandlers, createCloseHandler(mutationExecutor), 'mutationExecutor');
 
     const resolvedCoordinator = sharedCoordinator || getGlobalAiCoordinator();
     const runtimeAiOptions = {
@@ -216,7 +233,14 @@ function createWebWorkspaceRuntime({
       });
     }
     delete runtimeAiOptions.analyticsFetch;
-    const aiService = createAiRuntime(runtimeAiOptions);
+    const useBidAnalysisTestAi = process.env.WEB_BID_ANALYSIS_TEST_MODE === '1';
+    if ((aiServiceOverride || useBidAnalysisTestAi) && isProductionRuntime) {
+      throw new Error('生产环境禁止使用测试 AI 装配');
+    }
+    if (useBidAnalysisTestAi && process.env.NODE_ENV !== 'test') {
+      throw new Error('测试 AI 只允许由 NODE_ENV=test 的测试装配启用');
+    }
+    const aiService = aiServiceOverride || (useBidAnalysisTestAi ? createBidAnalysisTestAiService() : createAiRuntime(runtimeAiOptions));
     pushCloseHandler(closeHandlers, createCloseHandler(aiService), 'aiService');
     const agentService = createWebAgentService({ workspaceId, workspaceRoot, aiService });
     if (!agentService || typeof agentService.close !== 'function') {
@@ -228,7 +252,11 @@ function createWebWorkspaceRuntime({
 
     const knowledgeBaseService = createWebKnowledgeBaseService({ knowledgeBaseStore, fileService });
     const duplicateCheckService = createWebDuplicateCheckServiceStub({ duplicateCheckStore });
-    const taskService = createWebTaskServiceStub();
+    const taskService = createWebBidAnalysisTaskService({
+      aiService,
+      technicalPlanStore,
+      mutationExecutor,
+    });
     pushCloseHandler(closeHandlers, createCloseHandler(taskService), 'taskService');
 
     const taskEvents = createTaskEventPortAndTrack(taskService, closeHandlers);
@@ -240,6 +268,7 @@ function createWebWorkspaceRuntime({
       uploadRegistry,
       fileService,
       storeExecutor,
+      mutationExecutor,
       aiService,
       agentService,
       exportService,
@@ -325,6 +354,7 @@ function createWorkspaceRuntimeFactory(runtimeOptions = {}) {
     configPath,
     sharedCoordinator,
     aiRuntimeOptions,
+    aiServiceOverride: runtimeOptions.aiServiceOverride,
   });
 }
 

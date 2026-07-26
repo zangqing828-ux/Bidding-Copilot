@@ -52,6 +52,17 @@
 
 因此，PR #3 不得在后续文档中描述为“7 个 Sprint 完整交付”或“Web v1 完成”。
 
+## WP-I PR I-1 当前修复状态（2026-07-26）
+
+以下状态仅适用于 `codex/wp-i-business-task-agent-spec` 的 Draft PR #7，尚不构成 `main` 已合入、完整 CI 通过或 Web v1 完成的声明。
+
+- 已建立运行环境无关的 Task Orchestrator、输入版本 CAS、每 Workspace 单一 mutation executor 与持久化任务状态/SSE 回放；其修复版仍待当前门禁复核。
+- 浏览器招标解析仅开放单标段链路；多标段识别和选标段在 Web 继续保持不可达，Electron 兼容能力与历史数据保留。
+- 浏览器 E2E、Docker 业务 smoke、Electron native smoke、production OAuth smoke 与 production audit 必须在修复提交上全绿后，才可描述为已验证。
+- 知识库、查重、废标、技术方案后续阶段和其他 Web 业务任务继续保持 pending；浏览器 Agent 能力也继续保持 pending。
+- 首个正式 Agent 业务任务开放前，必须单独通过 OS 级隔离 Release Gate：非 root、只读输入、独立可写目录、egress deny、`no_new_privs`、seccomp 与资源配额。当前应用级权限测试不代表该 Gate 已完成。
+- 品牌清理仍冻结，等待 I-1、I-2 两轮架构实施和相应验收完成。
+
 ## 目标架构
 
 ```text

@@ -72,7 +72,7 @@ const REQUIRED_WEB_BRIDGE_META_KEYS = [
 ];
 
 const requiredMetaFields = ['status', 'owner', 'workPackage', 'transport', 'contractRef', 'input', 'output', 'errors'];
-const IMPLEMENTED_BRIDGE_RPC_COUNT = 52;
+const IMPLEMENTED_BRIDGE_RPC_COUNT = 49;
 const COMMON_IMPLEMENTED_BRIDGE_ERRORS = [
   'UNAUTHORIZED',
   'INVALID_BRIDGE_ARGUMENTS',
@@ -1161,6 +1161,32 @@ async function runBridgeBehavior(inject, context) {
     setWorkspaceContextResolver(previousConfigResolver);
   }
 
+  const previousTaskConflictResolver = setWorkspaceContextResolver(() => ({
+    taskService: {
+      startBidAnalysis: () => {
+        const error = new Error('当前解析任务正在执行');
+        error.code = 'TASK_CONFLICT';
+        error.retryable = true;
+        return Promise.reject(error);
+      },
+    },
+  }));
+  try {
+    const taskConflictRes = await statusPayload({
+      namespace: 'tasks',
+      method: 'startBidAnalysis',
+      args: [{
+        mode: 'key',
+        selected_task_ids: ['projectOverview', 'techRequirements', 'projectInfo', 'partAInfo', 'deliveryAndServiceRequirements'],
+      }],
+    });
+    assert(taskConflictRes.response.statusCode === 409, '不同任务 payload 冲突通过 Bridge 返回 409');
+    assert(taskConflictRes.payload.code === 'TASK_CONFLICT', '任务冲突保留 TASK_CONFLICT 错误码');
+    assert(taskConflictRes.payload.retryable === true, '任务冲突标记为可重试');
+  } finally {
+    setWorkspaceContextResolver(previousTaskConflictResolver);
+  }
+
   let invalidContractWorkspaceResolutions = 0;
   const previousWorkflowResolver = setWorkspaceContextResolver(() => {
     invalidContractWorkspaceResolutions += 1;
@@ -1391,6 +1417,18 @@ async function runBridgeBehavior(inject, context) {
   const missingFileIdsRes = await statusPayload({ namespace: 'technicalPlan', method: 'importTenderDocument', args: [] });
   assert(missingFileIdsRes.response.statusCode === 400, '导入缺少 file ID 返回 400');
   assert(missingFileIdsRes.payload.code === 'UPLOAD_FILE_ID_INVALID', '导入缺少 file ID 保留安全错误码');
+
+  for (const method of ['listRuntimes', 'run', 'selfCheck', 'exportSelfCheckReport', 'getStatus', 'restart']) {
+    const contractKey = `agent.${method}`;
+    const pendingAgentRes = await statusPayload({ namespace: 'agent', method, args: [] });
+    assert(pendingAgentRes.response.statusCode === 501, `${contractKey} 返回 501`);
+    assert(pendingAgentRes.payload.code === 'WEB_CAPABILITY_PENDING', `${contractKey} code 为 WEB_CAPABILITY_PENDING`);
+    assert(!bindingMetadata.get(contractKey), `${contractKey} 无 binding spec`);
+    assert(
+      !routeDispatchers?.agent || typeof routeDispatchers.agent[method] !== 'function',
+      `${contractKey} 无 route dispatcher`
+    );
+  }
 
   for (const method of ['updateState']) {
     const contractKey = `duplicateCheck.${method}`;

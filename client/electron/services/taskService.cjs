@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const { createTaskOrchestrator } = require('../../core/taskOrchestrator.cjs');
 const { runBidSectionExtractionTask } = require('./bidSectionExtractionTask.cjs');
 const { runBidAnalysisTask } = require('./bidAnalysisTask.cjs');
 const { runContentGenerationTask } = require('./contentGenerationTask.cjs');
@@ -201,22 +202,13 @@ function createTask(type, payload) {
   };
 }
 
-function createTaskService({ aiService, agentService, technicalPlanStore, rejectionCheckStore, duplicateCheckStore, knowledgeBaseService, duplicateCheckService }) {
-  const subscribers = new Set();
-  const callbackSubscribers = new Set();
-  const activeTasks = new Map();
-  const activeTaskControls = new Map();
+function createTaskService({ aiService, agentService, technicalPlanStore, rejectionCheckStore, duplicateCheckStore, knowledgeBaseService, duplicateCheckService, taskRunners = {} }) {
+  let orchestrator;
+  let activeTasks;
+  let activeTaskControls;
 
   function emit(task, snapshot) {
-    const event = { task, ...snapshot };
-    for (const webContents of subscribers) {
-      if (!webContents.isDestroyed()) {
-        webContents.send('tasks:event', event);
-      }
-    }
-    for (const callback of callbackSubscribers) {
-      callback(event);
-    }
+    orchestrator.emit(task, snapshot);
   }
 
   function buildTechnicalPlanSnapshot(task, state = {}, eventPatch = {}) {
@@ -364,37 +356,31 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
   }
 
   function subscribe(webContents) {
-    subscribers.add(webContents);
-    for (const task of activeTasks.values()) {
+    const unsubscribe = orchestrator.subscribe((event) => {
       if (!webContents.isDestroyed()) {
-        webContents.send('tasks:event', { task, ...getSnapshotForTask(task) });
+        webContents.send('tasks:event', event);
       }
-    }
-    webContents.once('destroyed', () => subscribers.delete(webContents));
+    });
+    webContents.once('destroyed', unsubscribe);
   }
 
   /**
    * 订阅 Main 进程中的任务事件，并返回取消订阅函数
    */
   function subscribeCallback(callback) {
-    callbackSubscribers.add(callback);
-    try {
-      for (const task of activeTasks.values()) {
-        callback({ task, ...getSnapshotForTask(task) });
-      }
-    } catch (error) {
-      callbackSubscribers.delete(callback);
-      throw error;
-    }
-    return () => callbackSubscribers.delete(callback);
+    return orchestrator.subscribe(callback);
   }
 
   function unsubscribeCallback(callback) {
-    callbackSubscribers.delete(callback);
+    orchestrator.unsubscribe(callback);
   }
 
   function getTaskField(type) {
     return getTaskDefinition(type).field;
+  }
+
+  function getTaskRunner(type, fallback) {
+    return typeof taskRunners[type] === 'function' ? taskRunners[type] : fallback;
   }
 
   function getActiveTaskConflict(type, payload) {
@@ -474,95 +460,7 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
   }
 
   function startManagedTask(type, payload, runner, initialPartial = {}) {
-    const existingTask = activeTasks.get(type);
-    if (existingTask && isActiveTaskStatus(existingTask.status)) {
-      const nextPayloadSignature = getPayloadSignature(type, payload);
-      if (existingTask.payload_signature && nextPayloadSignature && existingTask.payload_signature !== nextPayloadSignature) {
-        const definition = getTaskDefinition(type);
-        throw new Error(`当前${definition.groupLabel || '任务组'}正在执行“${definition.label || type}”，请等待当前任务完成后再重新分析新的文件集合。`);
-      }
-      emit(existingTask, getSnapshotForTask(existingTask));
-      return existingTask;
-    }
-
-    assertTaskCanStart(type, payload);
-
-    const definition = getTaskDefinition(type);
-    const task = createTask(type, payload);
-    const queueScopeId = `${type}:${task.task_id}`;
-    activeTasks.set(type, task);
-    const taskField = getTaskField(type);
-    let currentTask = task;
-    const taskControl = {
-      queueScopeId,
-      pauseRequested: false,
-      isPauseRequested() {
-        return this.pauseRequested;
-      },
-      requestPause() {
-        this.pauseRequested = true;
-        const pausedLogs = currentTask.logs?.length
-          ? currentTask.logs
-          : ['已请求暂停，正在等待当前 AI 请求完成。'];
-        const pausingTask = updateTask({ status: 'pausing', pause_requested: true, logs: pausedLogs });
-        const state = updateWorkspaceState(definition, { [taskField]: pausingTask });
-        emit(pausingTask, buildSnapshot(definition, state, pausingTask));
-        return pausingTask;
-      },
-    };
-    activeTaskControls.set(type, taskControl);
-
-    const updateTask = (partial, workspaceState, eventPatch, options = {}) => {
-      const nextStatus = currentTask.status === 'pausing' && partial.status === 'running'
-        ? 'pausing'
-        : partial.status || currentTask.status;
-      currentTask = {
-        ...currentTask,
-        ...partial,
-        status: nextStatus,
-        pause_requested: partial.pause_requested === false ? false : taskControl.pauseRequested || partial.pause_requested,
-        logs: partial.logs ? partial.logs : currentTask.logs,
-        updated_at: now(),
-      };
-      activeTasks.set(type, currentTask);
-      if (workspaceState) {
-        let persistedState = workspaceState;
-        if (taskField) {
-          if (options.skipWorkspaceReload && definition.stateKey === 'technicalPlan') {
-            technicalPlanStore.updateTechnicalPlanWithoutReload({ [taskField]: currentTask });
-          } else {
-            persistedState = updateWorkspaceState(definition, { [taskField]: currentTask });
-          }
-        }
-        emit(currentTask, buildSnapshot(definition, persistedState, currentTask, eventPatch));
-      }
-      return currentTask;
-    };
-
-    const previousState = loadWorkspaceState(definition) || {};
-    const state = updateWorkspaceState(definition, { ...initialPartial, [taskField]: currentTask });
-    emit(currentTask, buildSnapshot(definition, state, currentTask));
-
-    const runnerWorkspaceStore = definition.stateKey === 'technicalPlan'
-      ? technicalPlanStore
-      : definition.stateKey === 'rejectionCheck'
-        ? rejectionCheckStore
-        : duplicateCheckStore;
-    const runnerAiService = aiService?.withQueueScope ? aiService.withQueueScope(queueScopeId) : aiService;
-    const runnerAgentService = agentService.bindSelectedRuntime();
-    runner({ aiService: runnerAiService, agentService: runnerAgentService, workspaceStore: runnerWorkspaceStore, knowledgeBaseService, updateTask, payload, taskControl, previousState }).catch((error) => {
-      const failedTask = updateTask({ status: 'error', error: error.message || '任务执行失败' });
-      const nextState = updateWorkspaceState(definition, { [taskField]: failedTask });
-      emit(failedTask, buildSnapshot(definition, nextState, failedTask));
-    }).finally(() => {
-      if (aiService?.resumeQueueScope) {
-        aiService.resumeQueueScope(queueScopeId);
-      }
-      activeTasks.delete(type);
-      activeTaskControls.delete(type);
-    });
-
-    return currentTask;
+    return orchestrator.start({ type, payload, runner, initialPartial });
   }
 
   function recoverInterruptedContentGenerationTask() {
@@ -807,11 +705,60 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
     emit(nextState.analysisTask || recoveredTask, { duplicateCheck: nextState });
   }
 
+  orchestrator = createTaskOrchestrator({
+    definitions: taskDefinitions,
+    createTask,
+    getScopeId,
+    getPayloadSignature,
+    stateAdapter: {
+      load: loadWorkspaceState,
+      persist(definition, partial, options = {}) {
+        if (options.skipWorkspaceReload && definition.stateKey === 'technicalPlan') {
+          technicalPlanStore.updateTechnicalPlanWithoutReload(partial);
+          return technicalPlanStore.loadTechnicalPlan();
+        }
+        return updateWorkspaceState(definition, partial);
+      },
+      snapshot: buildSnapshot,
+      assertCanStart(type, payload) {
+        const definition = getTaskDefinition(type);
+        if (definition.group !== 'technical-plan') return;
+        const technicalPlan = technicalPlanStore.loadTechnicalPlan() || {};
+        const pausedContentTask = technicalPlan.contentGenerationTask;
+        if (pausedContentTask?.status === 'paused' && !(type === 'content-generation' && payload?.resume)) {
+          throw new Error('正文生成已暂停，请先继续当前正文生成任务或重置技术方案后再启动新的任务。');
+        }
+      },
+    },
+    createRunnerContext({ definition, payload, queueScopeId, updateTask, taskControl, previousState }) {
+      const workspaceStore = definition.stateKey === 'technicalPlan'
+        ? technicalPlanStore
+        : definition.stateKey === 'rejectionCheck'
+          ? rejectionCheckStore
+          : duplicateCheckStore;
+      return {
+        aiService: aiService?.withQueueScope ? aiService.withQueueScope(queueScopeId) : aiService,
+        agentService: agentService.bindSelectedRuntime(),
+        workspaceStore,
+        knowledgeBaseService,
+        updateTask,
+        payload,
+        taskControl,
+        previousState,
+      };
+    },
+    releaseRunnerContext(context) {
+      if (aiService?.resumeQueueScope) aiService.resumeQueueScope(context.taskControl.queueScopeId);
+    },
+  });
+  activeTasks = orchestrator.activeTasks;
+  activeTaskControls = orchestrator.activeTaskControls;
+
   return {
     subscribe,
     subscribeCallback,
     startBidSectionExtraction(payload) {
-      return startManagedTask('bid-section-extraction', payload, runBidSectionExtractionTask, {
+      return startManagedTask('bid-section-extraction', payload, getTaskRunner('bid-section-extraction', runBidSectionExtractionTask), {
         bidSectionMode: 'multiple',
         bidSections: [],
         bidSectionExtractionStatus: 'running',
@@ -836,10 +783,10 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
       });
     },
     startBidAnalysis(payload) {
-      return startManagedTask('bid-analysis', payload, runBidAnalysisTask);
+      return startManagedTask('bid-analysis', payload, getTaskRunner('bid-analysis', runBidAnalysisTask));
     },
     startOutlineGeneration(payload) {
-      return startManagedTask('outline-generation', payload, runOutlineGenerationTask, {
+      return startManagedTask('outline-generation', payload, getTaskRunner('outline-generation', runOutlineGenerationTask), {
         outlineMode: 'aligned',
         outlineExpansionMode: payload?.outline_expansion_mode === 'original-only' ? 'original-only' : 'ai-complement',
         outlineWordControlOptions: payload?.word_control_options,
@@ -847,7 +794,7 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
       });
     },
     startGlobalFactsGeneration(payload) {
-      return startManagedTask('global-facts-generation', payload, runGlobalFactsTask, {
+      return startManagedTask('global-facts-generation', payload, getTaskRunner('global-facts-generation', runGlobalFactsTask), {
         globalFacts: [],
         contentGenerationTask: undefined,
         contentGenerationSections: {},
@@ -861,7 +808,7 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
       if (!technicalPlan.outlineWordControlSnapshot) {
         throw new Error('当前目录没有字数控制生效快照，请重新生成目录');
       }
-      return startManagedTask('content-generation', payload, runContentGenerationTask);
+      return startManagedTask('content-generation', payload, getTaskRunner('content-generation', runContentGenerationTask));
     },
     pauseContentGeneration() {
       const task = activeTasks.get('content-generation');
@@ -882,16 +829,16 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
       throw new Error('当前没有正在生成的正文任务。');
     },
     startRejectionItemsExtraction(payload) {
-      return startManagedTask('rejection-items-extraction', payload, runRejectionItemsExtractionTask, payload?.workspaceState || {});
+      return startManagedTask('rejection-items-extraction', payload, getTaskRunner('rejection-items-extraction', runRejectionItemsExtractionTask), payload?.workspaceState || {});
     },
     startRejectionCheck(payload) {
-      return startManagedTask('rejection-check-run', payload, runRejectionCheckTask, payload?.workspaceState || {});
+      return startManagedTask('rejection-check-run', payload, getTaskRunner('rejection-check-run', runRejectionCheckTask), payload?.workspaceState || {});
     },
     startDuplicateAnalysis(payload) {
       if (!duplicateCheckService?.runAnalysisTask) {
         throw new Error('标书查重任务服务尚未初始化');
       }
-      return startManagedTask('duplicate-analysis', payload, duplicateCheckService.runAnalysisTask);
+      return startManagedTask('duplicate-analysis', payload, getTaskRunner('duplicate-analysis', duplicateCheckService.runAnalysisTask));
     },
     getActiveTasks() {
       recoverInterruptedBidSectionExtractionTask();
@@ -907,4 +854,4 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
   };
 }
 
-module.exports = { createTaskService };
+module.exports = { createTask, createTaskService, taskDefinitions };

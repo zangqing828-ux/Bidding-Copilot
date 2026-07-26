@@ -161,15 +161,29 @@ async function runTests() {
     assert(res.statusCode === 401, '未登录访问 SSE 返回 401');
   }
 
-  // 5. 正式 Bid Analysis 链路未完成前保持 pending，避免把单项结果误报为整体成功。
+  // 5. Web 招标解析拒绝非法 DTO，并接受真实任务启动请求。
   {
     const res = await httpRequest('POST', '/api/bridge', {
       'content-type': 'application/json',
       cookie: cookieStr,
     }, { namespace: 'tasks', method: 'startBidAnalysis', args: [{}] });
-    assert(res.statusCode === 501, 'tasks.startBidAnalysis 返回 501');
+    assert(res.statusCode === 400, 'tasks.startBidAnalysis 非法 DTO 返回 400');
     const body = JSON.parse(res.body);
-    assert(body.code === 'WEB_CAPABILITY_PENDING', 'tasks.startBidAnalysis 返回 WEB_CAPABILITY_PENDING');
+    assert(body.code === 'INVALID_BRIDGE_ARGUMENTS', 'tasks.startBidAnalysis 非法 DTO 不会进入任务服务');
+  }
+
+  {
+    const res = await httpRequest('POST', '/api/bridge', {
+      'content-type': 'application/json',
+      cookie: cookieStr,
+    }, {
+      namespace: 'tasks',
+      method: 'startBidAnalysis',
+      args: [{ mode: 'key', selected_task_ids: ['projectOverview', 'techRequirements', 'projectInfo', 'partAInfo', 'deliveryAndServiceRequirements'] }],
+    });
+    assert(res.statusCode === 200, 'tasks.startBidAnalysis 接受真实 Web 任务');
+    const body = JSON.parse(res.body);
+    assert(body.data?.type === 'bid-analysis' && body.data?.status === 'running', 'tasks.startBidAnalysis 返回 running 任务');
   }
 
   // 5b. bridge technicalPlan.loadState → 200（Store 数据操作已实现）

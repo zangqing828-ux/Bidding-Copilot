@@ -1046,8 +1046,8 @@ function createAiRuntime(options = {}) {
       const normalizedScopeId = normalizeScopeId(scopeId);
       return {
         ...service,
-        chat(request) {
-          return service.chat({ ...(request || {}), queueScopeId: getScopeId(request, normalizedScopeId) || normalizedScopeId });
+        chat(request, executionOptions = {}) {
+          return service.chat({ ...(request || {}), queueScopeId: getScopeId(request, normalizedScopeId) || normalizedScopeId }, executionOptions);
         },
         requestJson(request) {
           return service.requestJson({ ...(request || {}), queueScopeId: getScopeId(request, normalizedScopeId) || normalizedScopeId });

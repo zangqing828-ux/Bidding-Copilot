@@ -6,32 +6,30 @@
 
 **来源**：Sprint 05 工包 B/C（缩减范围时跳过）
 
-- `prepare-opencode-binary.cjs` 只支持 Windows/macOS，缺 `linux-x64`
-- `prepare-opencode-tools.cjs` 缺 Linux 的 `rg`/`fd`/`jq`
-- Dockerfile 未安装 Chromium、LibreOffice、OpenCode
+- Docker 镜像已提供 OpenCode Linux binary 与 `rg`/`fd`/`jq`，并由 readiness 检查；浏览器 Agent 业务能力仍未开放。
+- Dockerfile 未安装 Chromium、LibreOffice。
 - `localImageRenderService.cjs` 的渲染 adapter 仍依赖 Electron BrowserWindow（已延迟加载，Web 端调用会抛错）
-- `exportService.cjs` 的 Word 导出仍调用 Electron dialog（Web 端返回 501）
+- Web Word 导出与一次性浏览器下载仍需在当前修复提交的完整浏览器和 Docker 门禁中复核。
 - Mermaid/HTML 图片渲染在 Web 端不可用
 
 **建议**：新增 Sprint 08 或纳入 v1.1，在 Docker 环境内完成 Playwright/Chromium + LibreOffice 安装和适配器实现。
 
-## P1：真实 AI 请求能力
+## P1：真实 AI 请求能力与未接通业务任务
 
 **来源**：Sprint 05（aiService 为占位 stub）
 
-- `server/workspace/webServices.cjs` 的 `createWebAiServiceStub` 所有方法 reject
-- bridge dispatcher 的 `tasks.startXxx` 全部抛错（"Web 端任务启动尚未实现"）
-- `ai.chat`/`ai.requestJson` 返回 501
-- 技术方案生成、目录生成、正文生成、查重分析、废标检查等业务任务无法执行
+- WP-I PR I-1 已实现 `tasks.startBidAnalysis` 的 Web 执行链，当前 Draft PR #7 正在修复 strict DTO、input revision CAS、单一 mutation executor、SSE 与持久化任务状态的边界问题，完整门禁尚未通过。
+- `ai.chat`/`ai.requestJson` 的浏览器入口仍保持 pending。
+- 技术方案生成、目录生成、正文生成、知识库、查重和废标检查等业务任务仍未接通。
 
-**建议**：创建 Web 端真实 aiService，复用 `electron/services/aiService.cjs` 的 HTTP 请求逻辑，配置从 `encryptedConfigStore.loadDecrypted()` 读取。需处理 AI 请求队列、重试、token 统计。
+**建议**：后续业务任务复用现有 Web AI Runtime，并补足各自的真实成功、失败、隔离与恢复验收。
 
 ## P1：文件上传解析链路
 
 **来源**：Sprint 04（上传端点已实现，业务适配未接入）
 
-- `server/routes/uploads.cjs` 可接收 multipart 上传，返回 fileId
-- 但 `technicalPlan.importTenderDocument`、`knowledgeBase.uploadDocuments`、`rejectionCheck.importDocument`、`duplicateCheck` 文件选择仍返回 501
+- `server/routes/uploads.cjs` 可接收 multipart 上传，返回 fileId；`technicalPlan.importTenderDocument` 已接通招标文件导入，浏览器 E2E 证据需随当前修复提交复核。
+- `knowledgeBase.uploadDocuments`、`rejectionCheck.importDocument`、`duplicateCheck` 文件选择仍返回 501。
 - 需要把上传后的 fileId 转为服务端文件路径，调用 `fileService.parseDocumentWithConfig` 解析
 - 知识库上传需要 SSE 进度推送（Sprint 05 SSE 已有骨架）
 
@@ -52,10 +50,8 @@
 
 **来源**：外部审查指出"把失败状态计为成功"
 
-- `test:web-tasks` 测试 5 断言"任务启动返回 500"——这是验证占位行为，不是验证业务完成
-- `test:web-export` 断言"导出返回 501"——同上
-- SSE 隔离测试只建立空连接，未验证事件归属
-- 缺少真实业务 E2E 测试（技术方案完整生成 + Word 下载）
+- `tasks.startBidAnalysis` 的真实 Web runtime 测试与浏览器 E2E正在随 Draft PR #7 修复复核；浏览器 E2E 使用 test-only AI 响应，仍需保留用户模型配置下的集成验收。
+- 其余业务任务仍缺真实成功 E2E；不得以其占位错误测试标记完成。
 
 **建议**：在 P1 项完成后，把占位测试改为真实业务测试，新增端到端验收脚本。
 
@@ -63,11 +59,9 @@
 
 **来源**：外部审查指出 ABI 切换不可靠
 
-- `prestart:web`/`predev:web` 重建 Node ABI，`prestart`/`presmoke:electron-native` 重建 Electron ABI
-- 但 CI 未执行 `smoke:electron-native`，无法发现 ABI 回归
-- 建议 CI 在 Web 测试后执行 Electron ABI 恢复 + native smoke
+- CI 已在 Web 测试后执行 `smoke:electron-native`；本地 Web native 依赖验证后仍需恢复 Node ABI，再执行 Electron smoke。
 
-**建议**：CI 增加 `npm run smoke:electron-native` 步骤（在 Web 测试之后、ABI 恢复之后）。
+**建议**：保持 CI 中的 `npm run smoke:electron-native` 步骤，新增 native 依赖时同步验证 Node/Electron ABI 切换。
 
 ## P2：Docker 镜像运行时依赖
 

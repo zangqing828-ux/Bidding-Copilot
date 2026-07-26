@@ -3,6 +3,12 @@ import type { OutlineData, OutlineExpansionMode, OutlineMode, OutlineWordControl
 export type TechnicalPlanStep = 'document-analysis' | 'bid-analysis' | 'outline-generation' | 'global-facts' | 'content-edit' | 'expand';
 export type TechnicalPlanWorkflowKind = 'technical-plan' | 'existing-plan-expansion';
 export type BidAnalysisMode = 'key' | 'full' | 'custom';
+export interface StartBidAnalysisInput {
+  mode: BidAnalysisMode;
+  selected_task_ids: string[];
+  task_ids?: string[];
+  force_rerun?: boolean;
+}
 export type BidAnalysisTaskStatus = 'idle' | 'running' | 'success' | 'error';
 export type BidSectionMode = 'single' | 'multiple';
 export type BidSectionExtractionStatus = 'idle' | 'running' | 'success' | 'error';

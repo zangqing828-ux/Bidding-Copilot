@@ -69,7 +69,7 @@ function AppRouter({ activeSection, developerMode, onDeveloperModeChange, onSect
     case 'developer-expansion-replace-test':
       return <ContentExpansionReplaceTestPage />;
     case 'developer-agent-test':
-      return <AgentTestPage />;
+      return window.yibiao?.platform === 'web' ? null : <AgentTestPage />;
     case 'settings':
       return <SettingsPage onDeveloperModeChange={onDeveloperModeChange} />;
     default:

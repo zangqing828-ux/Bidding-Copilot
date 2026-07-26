@@ -425,12 +425,12 @@ const rawMethods = {
     testImageModel: createContractEntry({ status: 'pending', owner: 'runtime', workPackage: 'WP-C', contractRef: 'ai.testImageModel' }),
   },
   agent: {
-    listRuntimes: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.listRuntimes', input: [], output: 'AgentRuntimeDescriptor[]' }),
-    run: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.run', input: [contractArg('payload', 'AgentRunPayload'), contractArg('runtimeId', 'string', { required: false })], output: { type: 'AgentRunResult' }, errors: ['WEB_CAPABILITY_PENDING'] }),
-    selfCheck: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.selfCheck', input: [contractArg('runtimeId', 'string', { required: false })], output: 'AgentSelfCheckResult' }),
-    exportSelfCheckReport: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.exportSelfCheckReport' }),
-    getStatus: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.getStatus', input: [contractArg('runtimeId', 'string', { required: false })], output: 'AgentRuntimeStatus' }),
-    restart: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.restart', input: [contractArg('reason', 'string', { required: false }), contractArg('runtimeId', 'string', { required: false })], output: 'AgentRuntimeStatus' }),
+    listRuntimes: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-I-D', contractRef: 'agent.listRuntimes', input: [], output: 'AgentRuntimeDescriptor[]', errors: ['WEB_CAPABILITY_PENDING'] }),
+    run: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-I-D', contractRef: 'agent.run', input: [contractArg('payload', 'AgentRunPayload'), contractArg('runtimeId', 'string', { required: false })], output: { type: 'AgentRunResult' }, errors: ['WEB_CAPABILITY_PENDING'] }),
+    selfCheck: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-I-D', contractRef: 'agent.selfCheck', input: [contractArg('runtimeId', 'string', { required: false })], output: 'AgentSelfCheckResult', errors: ['WEB_CAPABILITY_PENDING'] }),
+    exportSelfCheckReport: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-I-D', contractRef: 'agent.exportSelfCheckReport' }),
+    getStatus: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-I-D', contractRef: 'agent.getStatus', input: [contractArg('runtimeId', 'string', { required: false })], output: 'AgentRuntimeStatus', errors: ['WEB_CAPABILITY_PENDING'] }),
+    restart: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-I-D', contractRef: 'agent.restart', input: [contractArg('reason', 'string', { required: false }), contractArg('runtimeId', 'string', { required: false })], output: 'AgentRuntimeStatus', errors: ['WEB_CAPABILITY_PENDING'] }),
   },
   developerTokenStats: {
     openWindow: createContractEntry({
@@ -762,7 +762,21 @@ const rawMethods = {
   },
   tasks: {
     startBidSectionExtraction: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startBidSectionExtraction' }),
-    startBidAnalysis: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-E', contractRef: 'tasks.startBidAnalysis', input: [contractArg('payload', 'unknown')], output: { type: 'unknown' }, errors: ['WEB_CAPABILITY_PENDING'] }),
+    startBidAnalysis: implementedBridgeContract({
+      owner: 'workflow',
+      workPackage: 'WP-I',
+      contractRef: 'tasks.startBidAnalysis',
+      input: [contractArg('payload', 'StartBidAnalysisInput', {
+        properties: {
+          mode: { type: 'BidAnalysisMode', required: true, enum: contractEnums.BidAnalysisMode },
+          selected_task_ids: { type: 'string[]', required: true },
+          task_ids: { type: 'string[]', required: false },
+          force_rerun: { type: 'boolean', required: false },
+        },
+      })],
+      output: 'BackgroundTaskState',
+      errors: ['TASK_INVALID_INPUT', 'TASK_ITEM_NOT_FOUND', 'TASK_INPUT_CHANGED', 'TASK_CONFLICT'],
+    }),
     startOutlineGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startOutlineGeneration' }),
     startGlobalFactsGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startGlobalFactsGeneration' }),
     startContentGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startContentGeneration' }),
