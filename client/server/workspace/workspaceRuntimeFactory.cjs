@@ -219,7 +219,19 @@ function createWebWorkspaceRuntime({
       });
     }
     delete runtimeAiOptions.analyticsFetch;
-    const aiService = createAiRuntime(runtimeAiOptions);
+    const useBidAnalysisTestAi = process.env.WEB_BID_ANALYSIS_TEST_MODE === '1';
+    const aiService = useBidAnalysisTestAi
+      ? {
+        chat: async ({ messages = [] } = {}) => `浏览器测试解析结果：${String(messages.at(-1)?.content || '').slice(0, 24)}`,
+        close() {},
+        getConfig: () => ({}),
+        getImageQueueStatus: () => ({ active: 0, queued: 0 }),
+        getTextQueueStatus: () => ({ active: 0, queued: 0 }),
+        pauseQueueScope() {},
+        resumeQueueScope() {},
+        withQueueScope() { return this; },
+      }
+      : createAiRuntime(runtimeAiOptions);
     pushCloseHandler(closeHandlers, createCloseHandler(aiService), 'aiService');
     const agentService = createWebAgentService({ workspaceId, workspaceRoot, aiService });
     if (!agentService || typeof agentService.close !== 'function') {
