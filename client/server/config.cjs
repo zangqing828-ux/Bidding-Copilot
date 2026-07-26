@@ -37,7 +37,8 @@ const oauth = {
 };
 
 const sessionSecret = process.env.SESSION_SECRET || '';
-const publicBaseUrl = process.env.PUBLIC_BASE_URL || 'http://localhost:3000';
+let publicBaseUrl = process.env.PUBLIC_BASE_URL || 'http://localhost:3000';
+const trustedProxyHops = Number(process.env.TRUST_PROXY_HOPS || 1);
 const WEB_AI_DEFAULT_TEXT_LIMIT = 30;
 const WEB_AI_DEFAULT_IMAGE_LIMIT = 6;
 
@@ -48,6 +49,21 @@ function normalizeWebAiLimit(value, fallback) {
   }
   const normalized = Math.floor(number);
   return normalized > 0 ? Math.min(normalized, fallback) : fallback;
+}
+
+function normalizeServiceBaseUrl(name, value, { requireHttps = false } = {}) {
+  let parsed;
+  try {
+    parsed = new URL(String(value || '').trim());
+  } catch {
+    throw new Error(`${name} 必须是有效 URL`);
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error(`${name} 只允许 HTTP(S) URL`);
+  if (requireHttps && parsed.protocol !== 'https:') throw new Error(`${name} 必须使用 HTTPS`);
+  if (parsed.username || parsed.password) throw new Error(`${name} 禁止包含账号密码`);
+  if (parsed.search || parsed.hash) throw new Error(`${name} 禁止包含 query 或 fragment`);
+  const pathname = parsed.pathname.replace(/\/+$/, '');
+  return `${parsed.origin}${pathname === '/' ? '' : pathname}`;
 }
 
 const webAiGlobalTextLimit = normalizeWebAiLimit(
@@ -72,9 +88,20 @@ if (oauthMode === 'mainquest') {
     console.error(`[config] MainQuest OAuth 模式缺少必需配置：${missing.join(', ')}`);
     process.exit(1);
   }
-  // 生产 mainquest 模式强制 HTTPS，防止 Cookie secure 属性失效。
-  if (isProduction && !publicBaseUrl.startsWith('https')) {
-    console.error('[config] 生产环境 PUBLIC_BASE_URL 必须使用 HTTPS');
+  try {
+    publicBaseUrl = normalizeServiceBaseUrl('PUBLIC_BASE_URL', publicBaseUrl, { requireHttps: isProduction });
+    oauth.baseUrl = normalizeServiceBaseUrl('MAINQUEST_AUTH_BASE_URL', oauth.baseUrl, { requireHttps: isProduction });
+  } catch (error) {
+    console.error(`[config] ${error.message}`);
+    process.exit(1);
+  }
+  const expectedCallback = `${publicBaseUrl.replace(/\/+$/, '')}/api/auth/callback`;
+  if (oauth.redirectUri !== expectedCallback) {
+    console.error('[config] MAINQUEST_OAUTH_REDIRECT_URI 必须等于 PUBLIC_BASE_URL/api/auth/callback');
+    process.exit(1);
+  }
+  if (!Number.isInteger(trustedProxyHops) || trustedProxyHops < 1 || trustedProxyHops > 3) {
+    console.error('[config] TRUST_PROXY_HOPS 必须为 1 到 3 的整数');
     process.exit(1);
   }
 }
@@ -90,7 +117,7 @@ const config = {
   // mock 模式默认只监听本地，避免局域网误开放登录入口；mainquest 模式默认 0.0.0.0。
   host: process.env.HOST || (oauthMode === 'mock' ? '127.0.0.1' : '0.0.0.0'),
   isProduction,
-  isHttps: publicBaseUrl.startsWith('https'),
+  isHttps: new URL(publicBaseUrl).protocol === 'https:',
   distDir: resolveDistDir(),
   dataDir: resolveDataDir(),
   version: pkg.version,
@@ -99,6 +126,7 @@ const config = {
   oauth,
   sessionSecret,
   publicBaseUrl,
+  trustedProxyHops,
   sessionTtlDays: Number(process.env.SESSION_TTL_DAYS) || 7,
   configEncryptionKey: process.env.CONFIG_ENCRYPTION_KEY || '',
   uploadMaxSize: Number(process.env.UPLOAD_MAX_SIZE_MB) || 50,

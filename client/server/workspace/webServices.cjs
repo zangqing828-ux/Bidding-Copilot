@@ -87,26 +87,18 @@ function createWebAiServiceStub() {
   };
 }
 
-function createWebAgentServiceStub() {
-  return {
-    bindSelectedRuntime() {
-      return {
-        run: () => Promise.reject(new Error('Web 端 Agent Runtime 尚未实现')),
-        getStatus: () => Promise.resolve({ phase: 'stopped', healthy: false, message: 'Web 端 Agent Runtime 尚未实现' }),
-        listRuntimes: () => [],
-        selfCheck: () => Promise.reject(new Error('Web 端 Agent Runtime 尚未实现')),
-      };
-    },
-    close() {
-      // no-op
-    },
-  };
-}
-
-function createWebKnowledgeBaseServiceStub({ knowledgeBaseStore }) {
+function createWebKnowledgeBaseService({ knowledgeBaseStore, fileService }) {
   return {
     store: knowledgeBaseStore,
-    // 真实方法留到后续 Sprint
+    list() {
+      return knowledgeBaseStore.list();
+    },
+    createFolder(name) {
+      return knowledgeBaseStore.createFolder(name);
+    },
+    uploadDocuments(folderId, fileIds, options = {}) {
+      return fileService.uploadKnowledgeBaseDocuments({ folderId, fileIds, knowledgeBaseStore, signal: options.signal });
+    },
   };
 }
 
@@ -122,7 +114,6 @@ function createWebDuplicateCheckServiceStub({ duplicateCheckStore }) {
 module.exports = {
   createWebTaskServiceStub,
   createWebAiServiceStub,
-  createWebAgentServiceStub,
-  createWebKnowledgeBaseServiceStub,
+  createWebKnowledgeBaseService,
   createWebDuplicateCheckServiceStub,
 };

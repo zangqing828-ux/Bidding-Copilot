@@ -1,9 +1,28 @@
 // OAuth client：封装 MainQuest Auth 的 authorize/token/me 调用。
 // mock 模式下返回模拟数据，不调用外部服务。
 const config = require('../config.cjs');
+const OAUTH_REQUEST_TIMEOUT_MS = 10_000;
+
+async function requestOAuth(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OAUTH_REQUEST_TIMEOUT_MS);
+  timer.unref?.();
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error('MainQuest OAuth 请求超时');
+    throw new Error('MainQuest OAuth 请求失败');
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function isMockMode() {
   return config.oauth.mode === 'mock';
+}
+
+function oauthEndpoint(pathname) {
+  return new URL(String(pathname || '').replace(/^\/+/, ''), `${config.oauth.baseUrl}/`).toString();
 }
 
 // 构造 authorize URL（mock 模式返回 mock 登录页地址）。
@@ -19,7 +38,9 @@ function getAuthorizeUrl(state) {
     state,
   });
 
-  return `${config.oauth.baseUrl}/oauth/authorize?${params.toString()}`;
+  const url = new URL(oauthEndpoint('oauth/authorize'));
+  url.search = params.toString();
+  return url.toString();
 }
 
 // 交换授权码（mock 模式直接用 code 作为 email）。
@@ -29,7 +50,7 @@ async function exchangeCode(code, redirectUri) {
     return { accessToken: `mock-token-${Date.now()}`, code };
   }
 
-  const response = await fetch(`${config.oauth.baseUrl}/oauth/token`, {
+  const response = await requestOAuth(oauthEndpoint('oauth/token'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -42,8 +63,7 @@ async function exchangeCode(code, redirectUri) {
   });
 
   if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`OAuth token 交换失败：HTTP ${response.status} ${text}`);
+    throw new Error(`OAuth token 交换失败：HTTP ${response.status}`);
   }
 
   const data = await response.json();
@@ -62,7 +82,7 @@ async function getUserInfo(accessToken, mockPayload) {
     };
   }
 
-  const response = await fetch(`${config.oauth.baseUrl}/oauth/me`, {
+  const response = await requestOAuth(oauthEndpoint('oauth/me'), {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
@@ -79,4 +99,4 @@ async function getUserInfo(accessToken, mockPayload) {
   };
 }
 
-module.exports = { getAuthorizeUrl, exchangeCode, getUserInfo, isMockMode };
+module.exports = { getAuthorizeUrl, exchangeCode, getUserInfo, isMockMode, requestOAuth, OAUTH_REQUEST_TIMEOUT_MS };

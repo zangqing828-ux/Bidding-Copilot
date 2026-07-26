@@ -1,6 +1,7 @@
 export interface LocalFileSelection {
   id: string;
   file_name: string;
+  // Electron 为本地路径；Web 固定为 upload:<fileId>，不得作为服务端路径使用。
   file_path: string;
   extension: string;
   size: number;
@@ -12,6 +13,10 @@ export interface FileSelectionResult {
   message: string;
   files?: LocalFileSelection[];
 }
+
+export type DuplicateCheckSaveFilesRequest = Pick<DuplicateCheckWorkspaceState, 'tenderFile' | 'tenderFiles' | 'bidFiles'>
+  & Partial<Pick<DuplicateCheckWorkspaceState, 'step' | 'activeAnalysisTab'>>
+  & { tenderFileIds?: string[]; bidFileIds?: string[] };
 
 export type DuplicateCheckStep = 'upload' | 'analysis';
 

@@ -749,6 +749,8 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
       started_at: row.started_at,
       updated_at: row.updated_at,
       error: row.error || undefined,
+      error_code: row.error_code || undefined,
+      retryable: fromDbBool(row.retryable),
       stats: safeJsonParse(row.stats_json, undefined),
       pause_requested: fromDbBool(row.pause_requested),
     };
@@ -764,8 +766,8 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     }
     const timestamp = now();
     db.prepare(`
-      INSERT INTO technical_plan_tasks (type, task_id, status, progress, logs_json, stats_json, error, pause_requested, started_at, updated_at)
-      VALUES (@type, @task_id, @status, @progress, @logs_json, @stats_json, @error, @pause_requested, @started_at, @updated_at)
+      INSERT INTO technical_plan_tasks (type, task_id, status, progress, logs_json, stats_json, error, error_code, retryable, pause_requested, started_at, updated_at)
+      VALUES (@type, @task_id, @status, @progress, @logs_json, @stats_json, @error, @error_code, @retryable, @pause_requested, @started_at, @updated_at)
       ON CONFLICT(type) DO UPDATE SET
         task_id = excluded.task_id,
         status = excluded.status,
@@ -773,6 +775,8 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
         logs_json = excluded.logs_json,
         stats_json = excluded.stats_json,
         error = excluded.error,
+        error_code = excluded.error_code,
+        retryable = excluded.retryable,
         pause_requested = excluded.pause_requested,
         started_at = excluded.started_at,
         updated_at = excluded.updated_at
@@ -784,6 +788,8 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
       logs_json: JSON.stringify(Array.isArray(task.logs) ? task.logs : []),
       stats_json: jsonOrNull(task.stats),
       error: task.error ? String(task.error) : null,
+      error_code: task.error_code ? String(task.error_code) : null,
+      retryable: toDbBool(task.retryable),
       pause_requested: toDbBool(task.pause_requested),
       started_at: task.started_at || timestamp,
       updated_at: task.updated_at || timestamp,
@@ -804,6 +810,43 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
       if (field) tasks[field] = taskFromRow(row);
     }
     return tasks;
+  }
+
+  function recoverInterruptedTasks() {
+    const interrupted = db.prepare(
+      "SELECT * FROM technical_plan_tasks WHERE status IN ('running', 'pausing')",
+    ).all();
+    if (!interrupted.length) return { recovered: 0 };
+    const timestamp = now();
+    const transaction = db.transaction(() => {
+      const updateTask = db.prepare(`
+        UPDATE technical_plan_tasks
+        SET status = 'error',
+            logs_json = @logs_json,
+            error = @error,
+            error_code = 'TASK_INTERRUPTED_BY_RESTART',
+            retryable = 1,
+            pause_requested = 0,
+            updated_at = @updated_at
+        WHERE type = @type
+      `);
+      for (const row of interrupted) {
+        const logs = safeJsonParse(row.logs_json, []);
+        updateTask.run({
+          type: row.type,
+          logs_json: JSON.stringify([...logs, '服务重启导致任务中断，请重新执行']),
+          error: '服务重启导致任务中断，请重新执行',
+          updated_at: timestamp,
+        });
+      }
+      db.prepare(`
+        UPDATE technical_plan_bid_items
+        SET status = 'error', error = '服务重启导致任务中断，请重新执行', updated_at = ?
+        WHERE status = 'running'
+      `).run(timestamp);
+    });
+    transaction();
+    return { recovered: interrupted.length };
   }
 
   function loadBidItems() {
@@ -1739,12 +1782,12 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     return loadTechnicalPlan();
   }
 
-  async function importTenderDocument() {
+  async function importTenderDocument(fileIds, options = {}) {
     if (!fileService?.importDocument) {
       throw new Error('文件导入服务尚未初始化');
     }
 
-    const result = await fileService.importDocument({ multiple: true });
+    const result = await fileService.importDocument({ fileIds, multiple: true }, options);
     if (!result?.success || !result.file_content) {
       return {
         success: false,
@@ -1770,15 +1813,15 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     });
   }
 
-  async function importOriginalPlanDocument() {
+  async function importOriginalPlanDocument(fileIds, options = {}) {
     const importer = fileService?.importTechnicalPlanDocument || fileService?.importDocument;
     if (!importer) {
       throw new Error('文件导入服务尚未初始化');
     }
 
     const result = fileService.importTechnicalPlanDocument
-      ? await fileService.importTechnicalPlanDocument('原方案')
-      : await importer();
+      ? await fileService.importTechnicalPlanDocument('原方案', { fileIds }, options)
+      : await importer({ fileIds }, options);
     if (!result?.success || !result.file_content) {
       return {
         success: false,
@@ -1935,6 +1978,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     loadTechnicalPlan,
     updateTechnicalPlan,
     updateTechnicalPlanWithoutReload,
+    recoverInterruptedTasks,
     saveContentGenerationItem,
     clearMermaidCache: clearTechnicalPlanMermaidCache,
     clearIllustrationFiles,

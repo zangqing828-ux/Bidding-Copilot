@@ -3,7 +3,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 
 
-const schemaVersion = 18;
+const schemaVersion = 20;
 
 function createInitialSchema(db) {
   db.exec(`
@@ -63,6 +63,8 @@ function createInitialSchema(db) {
       logs_json TEXT,
       stats_json TEXT,
       error TEXT,
+      error_code TEXT,
+      retryable INTEGER NOT NULL DEFAULT 0,
       pause_requested INTEGER NOT NULL DEFAULT 0,
       started_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -157,6 +159,33 @@ function createTechnicalPlanGlobalFactsSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_technical_plan_global_fact_groups_order
     ON technical_plan_global_fact_groups(sort_order);
   `);
+}
+
+function createUploadRegistrySchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS upload_registry (
+      file_id TEXT PRIMARY KEY,
+      stored_name TEXT NOT NULL UNIQUE,
+      original_name TEXT NOT NULL,
+      extension TEXT NOT NULL,
+      mime_type TEXT,
+      size INTEGER NOT NULL,
+      sha256 TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ready',
+      claim_count INTEGER NOT NULL DEFAULT 0,
+      claimed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_upload_registry_hash
+    ON upload_registry(sha256, size, status);
+  `);
+}
+
+function addTechnicalPlanTaskRecoveryFields(db) {
+  addColumnIfMissing(db, 'technical_plan_tasks', 'error_code', 'TEXT');
+  addColumnIfMissing(db, 'technical_plan_tasks', 'retryable', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 function addTechnicalPlanBidSectionV6Compat(db) {
@@ -971,6 +1000,11 @@ const schemaHealthTableGroups = [
     tables: ['export_templates'],
     repair: createExportTemplatesSchema,
   },
+  {
+    version: 19,
+    tables: ['upload_registry'],
+    repair: createUploadRegistrySchema,
+  },
 ];
 
 const schemaHealthColumnGroups = [
@@ -1119,6 +1153,32 @@ const schemaHealthColumnGroups = [
     columns: {
       outline_word_control_options_json: 'TEXT',
       outline_word_control_snapshot_json: 'TEXT',
+    },
+  },
+  {
+    version: 19,
+    table: 'upload_registry',
+    columns: {
+      file_id: 'TEXT',
+      stored_name: 'TEXT',
+      original_name: 'TEXT',
+      extension: 'TEXT',
+      mime_type: 'TEXT',
+      size: 'INTEGER',
+      sha256: 'TEXT',
+      status: "TEXT NOT NULL DEFAULT 'ready'",
+      claim_count: 'INTEGER NOT NULL DEFAULT 0',
+      claimed_at: 'TEXT',
+      created_at: 'TEXT',
+      updated_at: 'TEXT',
+    },
+  },
+  {
+    version: 20,
+    table: 'technical_plan_tasks',
+    columns: {
+      error_code: 'TEXT',
+      retryable: 'INTEGER NOT NULL DEFAULT 0',
     },
   },
 ];
@@ -1274,6 +1334,16 @@ const migrations = [
     version: 18,
     description: '技术方案新增目录字数控制设置和生效快照',
     up: addTechnicalPlanOutlineWordControl,
+  },
+  {
+    version: 19,
+    description: '新增 Web 上传文件注册表',
+    up: createUploadRegistrySchema,
+  },
+  {
+    version: 20,
+    description: '技术方案任务新增重启恢复错误字段',
+    up: addTechnicalPlanTaskRecoveryFields,
   },
 ];
 

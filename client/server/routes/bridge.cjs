@@ -160,8 +160,31 @@ const bridgeBindingMetadata = Object.freeze({
     listModels: createDirectBinding((ctx, args, options) => ctx.aiService.listModels(args[0], options), 'config.listModels'),
   }),
 
+  agent: Object.freeze({
+    listRuntimes: createDirectBinding((ctx) => ctx.agentService.listRuntimes(), 'agent.listRuntimes'),
+    selfCheck: createDirectBinding((ctx) => ctx.agentService.selfCheck(), 'agent.selfCheck'),
+    getStatus: createDirectBinding((ctx) => ctx.agentService.getStatus(), 'agent.getStatus'),
+    restart: createDirectBinding((ctx) => ctx.agentService.restart(), 'agent.restart'),
+  }),
+
+  tasks: Object.freeze({
+    getActiveTasks: createDirectBinding((ctx) => ctx.taskService.getActiveTasks(), 'tasks.getActiveTasks'),
+  }),
+
+  export: Object.freeze({
+    exportWord: createDirectBinding((ctx, args) => ctx.exportService.exportWord(args[0]), 'export.exportWord'),
+  }),
+
   technicalPlan: Object.freeze({
     loadState: createStoreBinding('technicalPlanStore', 'loadTechnicalPlan', 'technicalPlan.loadState'),
+    importTenderDocument: createDirectBinding(
+      (ctx, args, options) => ctx.stores.technicalPlanStore.importTenderDocument(args[0], options),
+      'technicalPlan.importTenderDocument',
+    ),
+    importOriginalPlanDocument: createDirectBinding(
+      (ctx, args, options) => ctx.stores.technicalPlanStore.importOriginalPlanDocument(args[0], options),
+      'technicalPlan.importOriginalPlanDocument',
+    ),
     readTenderMarkdown: createStoreBinding('technicalPlanStore', 'readTenderMarkdown', 'technicalPlan.readTenderMarkdown'),
     readTenderSourceMarkdown: createStoreBinding('technicalPlanStore', 'readTenderSourceMarkdown', 'technicalPlan.readTenderSourceMarkdown'),
     readOriginalPlanMarkdown: createStoreBinding('technicalPlanStore', 'readOriginalPlanMarkdown', 'technicalPlan.readOriginalPlanMarkdown'),
@@ -180,6 +203,9 @@ const bridgeBindingMetadata = Object.freeze({
   }),
 
   knowledgeBase: Object.freeze({
+    list: createDirectBinding((ctx) => ctx.knowledgeBaseService.list(), 'knowledgeBase.list'),
+    createFolder: createDirectBinding((ctx, args) => ctx.knowledgeBaseService.createFolder(args[0]), 'knowledgeBase.createFolder'),
+    uploadDocuments: createDirectBinding((ctx, args, options) => ctx.knowledgeBaseService.uploadDocuments(args[0], args[1], options), 'knowledgeBase.uploadDocuments'),
     getMigrationStatus: createStoreBinding('knowledgeBaseStore', 'getMigrationStatus', 'knowledgeBase.getMigrationStatus'),
     migrateLegacy: createStoreBinding('knowledgeBaseStore', 'migrateLegacy', 'knowledgeBase.migrateLegacy'),
     renameFolder: createStoreBinding('knowledgeBaseStore', 'renameFolder', 'knowledgeBase.renameFolder'),
@@ -190,12 +216,38 @@ const bridgeBindingMetadata = Object.freeze({
 
   duplicateCheck: Object.freeze({
     loadState: createStoreBinding('duplicateCheckStore', 'loadDuplicateCheck', 'duplicateCheck.loadState'),
+    saveFiles: createDirectBinding(
+      (ctx, args) => {
+        const payload = args[0] || {};
+        const tenderFiles = ctx.fileService.resolveDuplicateCheckFiles(payload.tenderFileIds || []);
+        const bidFiles = ctx.fileService.resolveDuplicateCheckFiles(payload.bidFileIds || []);
+        const normalized = {
+          tenderFile: tenderFiles[0] || null,
+          tenderFiles,
+          bidFiles,
+          step: payload.step,
+          activeAnalysisTab: payload.activeAnalysisTab,
+        };
+        return executeWorkspaceStore(
+          ctx,
+          'duplicateCheckStore',
+          'saveFiles',
+          [normalized],
+          () => ctx.stores.duplicateCheckStore.saveFiles(normalized),
+        );
+      },
+      'duplicateCheck.saveFiles',
+    ),
     saveUiState: createStoreBinding('duplicateCheckStore', 'saveUiState', 'duplicateCheck.saveUiState'),
     clear: createStoreBinding('duplicateCheckStore', 'clearDuplicateCheck', 'duplicateCheck.clear'),
   }),
 
   rejectionCheck: Object.freeze({
     loadState: createStoreBinding('rejectionCheckStore', 'loadRejectionCheck', 'rejectionCheck.loadState'),
+    importDocument: createDirectBinding(
+      (ctx, args, options) => ctx.stores.rejectionCheckStore.importDocument(args[0], args[1], options),
+      'rejectionCheck.importDocument',
+    ),
     removeDocument: createStoreBinding('rejectionCheckStore', 'removeDocument', 'rejectionCheck.removeDocument'),
     saveUiState: createStoreBinding('rejectionCheckStore', 'saveUiState', 'rejectionCheck.saveUiState'),
     updateState: createDirectBinding(
@@ -223,9 +275,6 @@ const bridgeBindingMetadata = Object.freeze({
     delete: createStoreBinding('templateStore', 'deleteTemplate', 'templates.delete'),
   }),
 
-  tasks: Object.freeze({
-    getActiveTasks: createDirectBinding((ctx) => ctx.taskService.getActiveTasks(), 'tasks.getActiveTasks'),
-  }),
 });
 
 function buildDispatchers(meta) {
@@ -414,6 +463,21 @@ router.post('/bridge', (req, res) => {
           message: 'AI 请求队列繁忙，请稍后重试',
           retryable: true,
         });
+    }
+    if (typeof err?.code === 'string' && err.code.startsWith('AGENT_')) {
+      const unavailable = err.code === 'AGENT_RUNTIME_UNAVAILABLE' || err.code === 'AGENT_CLOSING';
+      return res.status(unavailable ? 503 : 400).json({
+        code: err.code,
+        message: err.message || 'Agent Runtime 请求失败',
+        retryable: unavailable || err.code === 'AGENT_TIMEOUT',
+      });
+    }
+    if (typeof err?.code === 'string' && err.code.startsWith('UPLOAD_FILE_')) {
+      return res.status(400).json({
+        code: err.code,
+        message: err.message || '上传文件无效',
+        retryable: false,
+      });
     }
     console.error(`[bridge] ${namespace}.${method} 执行失败`, err?.message || String(err));
     return res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });

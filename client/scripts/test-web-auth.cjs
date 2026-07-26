@@ -4,6 +4,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { createApp } = require('../server/app.cjs');
 
 const app = createApp();
@@ -196,6 +197,30 @@ async function runTests() {
   {
     const authSource = require('fs').readFileSync(require('path').join(__dirname, '..', 'server', 'routes', 'auth.cjs'), 'utf-8');
     assert(authSource.includes('config.sessionTtlDays * 24 * 60 * 60 * 1000'), 'Cookie maxAge 使用 config.sessionTtlDays');
+  }
+
+  // 测试 14：生产环境 OAuth 上游必须使用不含凭据、query、fragment 的 HTTPS URL。
+  {
+    const baseEnv = {
+      ...process.env,
+      NODE_ENV: 'production',
+      OAUTH_MODE: 'mainquest',
+      MAINQUEST_OAUTH_CLIENT_ID: 'test-client',
+      MAINQUEST_OAUTH_CLIENT_SECRET: 'test-secret',
+      MAINQUEST_OAUTH_REDIRECT_URI: 'https://web.example.test/api/auth/callback',
+      PUBLIC_BASE_URL: 'https://web.example.test',
+      SESSION_SECRET: 'test-session-secret',
+      CONFIG_ENCRYPTION_KEY: 'test-encryption-key',
+    };
+    const runConfig = (authBaseUrl) => spawnSync(
+      process.execPath,
+      ['-e', "require('./server/config.cjs')"],
+      { cwd: path.join(__dirname, '..'), env: { ...baseEnv, MAINQUEST_AUTH_BASE_URL: authBaseUrl }, encoding: 'utf8' },
+    );
+    assert(runConfig('http://auth.example.test').status === 1, '生产环境拒绝 HTTP OAuth 上游');
+    assert(runConfig('https://user:pass@auth.example.test').status === 1, '生产环境拒绝带账号密码的 OAuth 上游');
+    assert(runConfig('https://auth.example.test?tenant=unsafe').status === 1, '生产环境拒绝带 query 的 OAuth 上游');
+    assert(runConfig('https://auth.example.test/base').status === 0, '生产环境接受合法 HTTPS OAuth 基地址');
   }
 
   // 汇总

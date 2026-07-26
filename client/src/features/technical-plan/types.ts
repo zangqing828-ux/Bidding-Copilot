@@ -45,6 +45,8 @@ export interface BackgroundTaskState {
   started_at: string;
   updated_at: string;
   error?: string;
+  error_code?: string;
+  retryable?: boolean;
   stats?: {
     outline?: {
       phase: 'generating' | 'reviewing' | 'word-adjusting' | 'second-review' | 'done';
@@ -311,4 +313,13 @@ export interface TechnicalPlanState {
   contentIllustrationPlan?: ContentIllustrationPlanState;
   contentGenerationRuntime?: ContentGenerationRuntimeState;
   outlineData: OutlineData | null;
+}
+
+export interface TechnicalPlanImportResult {
+  success: boolean;
+  message?: string;
+  state?: TechnicalPlanState;
+  markdown?: string;
+  fileName?: string;
+  parserLabel?: string | null;
 }

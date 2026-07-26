@@ -161,13 +161,13 @@ async function runTests() {
     assert(res.statusCode === 401, '未登录访问 SSE 返回 401');
   }
 
-  // 5. bridge tasks.startBidAnalysis → 501（待能力未实现）
+  // 5. 正式 Bid Analysis 链路未完成前保持 pending，避免把单项结果误报为整体成功。
   {
     const res = await httpRequest('POST', '/api/bridge', {
       'content-type': 'application/json',
       cookie: cookieStr,
     }, { namespace: 'tasks', method: 'startBidAnalysis', args: [{}] });
-    assert(res.statusCode === 501, 'tasks.startBidAnalysis 返回 501（待能力未实现）');
+    assert(res.statusCode === 501, 'tasks.startBidAnalysis 返回 501');
     const body = JSON.parse(res.body);
     assert(body.code === 'WEB_CAPABILITY_PENDING', 'tasks.startBidAnalysis 返回 WEB_CAPABILITY_PENDING');
   }
@@ -229,7 +229,30 @@ async function runTests() {
     sse2.close();
   }
 
-  // 7. workspace 正在关闭时 SSE 返回可重试 503，且不泄露内部状态
+  // 7. Runtime 重建时将遗留 running 任务收口为可重试错误。
+  {
+    const { getSystemDb } = require('../server/database/systemDatabase.cjs');
+    const { closeWorkspaceContext, getWorkspaceContext } = require('../server/workspace/workspaceRegistry.cjs');
+    const account = getSystemDb().prepare('SELECT workspace_id FROM accounts WHERE email = ?').get('tasks@test.com');
+    const firstContext = getWorkspaceContext(account.workspace_id);
+    firstContext.stores.technicalPlanStore.updateTechnicalPlanWithoutReload({
+      bidAnalysisTask: {
+        task_id: 'restart-recovery-task',
+        type: 'bid-analysis',
+        status: 'running',
+        progress: 42,
+        logs: ['任务执行中'],
+      },
+    });
+    await closeWorkspaceContext(account.workspace_id, { force: true });
+    const recreatedContext = getWorkspaceContext(account.workspace_id);
+    const recovered = recreatedContext.stores.technicalPlanStore.loadTechnicalPlan().bidAnalysisTask;
+    assert(recovered?.status === 'error', '重启后 running 任务收口为 error');
+    assert(recovered?.error_code === 'TASK_INTERRUPTED_BY_RESTART', '重启恢复返回稳定错误码');
+    assert(recovered?.retryable === true, '重启中断任务允许用户重试');
+  }
+
+  // 8. workspace 正在关闭时 SSE 返回可重试 503，且不泄露内部状态
   {
     const { getSystemDb } = require('../server/database/systemDatabase.cjs');
     const {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { isLibreOfficeRequiredMessage, MarkdownFullscreenViewer, MarkdownRenderer, useDocumentParseNotice, useToast } from '../../../shared/ui';
+import { httpClient } from '../../../shared/api/httpClient';
 import type { FileParserProvider } from '../../../shared/types';
 import type { TechnicalPlanOriginalPlanFile, TechnicalPlanState, TechnicalPlanTenderFile, TechnicalPlanTenderSourceFile, TechnicalPlanWorkflowKind } from '../types';
 
@@ -128,7 +129,11 @@ function DocumentAnalysisPage({
   const importTenderDocument = async () => {
     try {
       setBusy('tender');
-      const result = await window.yibiao?.technicalPlan.importTenderDocument();
+      const fileIds = window.yibiao?.platform === 'web'
+        ? (await httpClient.chooseAndUpload({ multiple: true })).map((file) => file.fileId)
+        : undefined;
+      if (window.yibiao?.platform === 'web' && !fileIds?.length) return;
+      const result = await window.yibiao?.technicalPlan.importTenderDocument(fileIds);
 
       if (!result?.success) {
         const message = result?.message || '未导入文件';
@@ -167,7 +172,11 @@ function DocumentAnalysisPage({
   const importOriginalPlanDocument = async () => {
     try {
       setBusy('originalPlan');
-      const result = await window.yibiao?.technicalPlan.importOriginalPlanDocument();
+      const fileIds = window.yibiao?.platform === 'web'
+        ? (await httpClient.chooseAndUpload()).map((file) => file.fileId)
+        : undefined;
+      if (window.yibiao?.platform === 'web' && !fileIds?.length) return;
+      const result = await window.yibiao?.technicalPlan.importOriginalPlanDocument(fileIds);
 
       if (!result?.success) {
         const message = result?.message || '未导入文件';

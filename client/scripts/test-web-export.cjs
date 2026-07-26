@@ -1,4 +1,4 @@
-// Web 导出合同边界，exportWord pending 501，openFile desktop-only removed 410。
+// Web 导出合同边界：Word 生成后仅通过一次性下载令牌交付，openFile 仍是 desktop-only。
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -59,14 +59,20 @@ async function runTests() {
   const sessionCookie = sessionMatch?.match(/yibiao_session=([^;]+)/)?.[1];
   const cookieStr = `yibiao_session=${sessionCookie}`;
 
-  // 1. export.exportWord → 501（pending）
+  // 1. export.exportWord → 200，返回受当前账号约束的一次性下载令牌。
   {
     const res = await httpRequest('POST', '/api/bridge', {
       'content-type': 'application/json', cookie: cookieStr,
-    }, { namespace: 'export', method: 'exportWord', args: [{}] });
-    assert(res.statusCode === 501, 'export.exportWord 返回 501（需要 Chromium/LibreOffice）');
+    }, { namespace: 'export', method: 'exportWord', args: [{ project_name: '测试投标文件', outline: [{ id: 'n1', title: '第一章', content: '测试内容', children: [] }] }] });
+    assert(res.statusCode === 200, 'export.exportWord 返回 200');
     const body = JSON.parse(res.body);
-    assert(body.code === 'WEB_CAPABILITY_PENDING', 'export.exportWord 返回 WEB_CAPABILITY_PENDING');
+    assert(body.data?.success === true, 'export.exportWord 生成 Word');
+    assert(typeof body.data?.downloadUrl === 'string', 'export.exportWord 返回下载地址');
+    assert(/^测试投标文件_.*\.docx$/.test(body.data?.fileName || ''), 'export.exportWord 返回浏览器文件名');
+    const download = await httpRequest('GET', body.data.downloadUrl, { cookie: cookieStr });
+    assert(download.statusCode === 200, '当前账号可下载生成的 Word');
+    const secondDownload = await httpRequest('GET', body.data.downloadUrl, { cookie: cookieStr });
+    assert(secondDownload.statusCode === 404, '下载令牌只能使用一次');
   }
 
   // 2. export.openFile → 410（desktop-only removed）

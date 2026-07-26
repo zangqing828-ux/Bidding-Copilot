@@ -96,6 +96,8 @@ CREATE TABLE IF NOT EXISTS technical_plan_tasks (
   logs_json TEXT,
   stats_json TEXT,
   error TEXT,
+  error_code TEXT,
+  retryable INTEGER NOT NULL DEFAULT 0,
   pause_requested INTEGER NOT NULL DEFAULT 0,
   started_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

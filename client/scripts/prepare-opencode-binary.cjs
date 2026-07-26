@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const https = require('node:https');
+const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const AdmZip = require('adm-zip');
 
@@ -8,8 +9,11 @@ const REPO = 'anomalyco/opencode';
 const ROOT = path.resolve(__dirname, '..');
 const VENDOR_ROOT = path.join(ROOT, 'vendor', 'opencode');
 const VERSION_FILE = path.join(VENDOR_ROOT, 'VERSION');
+const CHECKSUMS_FILE = path.join(__dirname, 'opencode-checksums.json');
 
 const ASSET_PATTERNS = {
+  'linux-x64': [/^opencode-linux-x64(?:-baseline)?\.tar\.gz$/i, /opencode.*linux.*x64.*\.tar\.gz$/i],
+  'linux-arm64': [/^opencode-linux-arm64\.tar\.gz$/i, /opencode.*linux.*arm64.*\.tar\.gz$/i],
   'win32-x64': [/opencode-(windows|win32|win)-x64.*\.zip$/i, /opencode.*(windows|win32|win).*x64.*\.zip$/i, /opencode.*(windows|win32|win).*amd64.*\.zip$/i],
   'darwin-arm64': [/^opencode-darwin-arm64\.zip$/i, /opencode.*darwin.*arm64.*\.zip$/i, /opencode.*mac.*arm64.*\.zip$/i],
   'darwin-x64': [/^opencode-darwin-x64\.zip$/i, /opencode.*darwin.*x64.*\.zip$/i, /opencode.*mac.*x64.*\.zip$/i],
@@ -28,6 +32,26 @@ function readVersion() {
   if (envVersion) return envVersion;
   if (fs.existsSync(VERSION_FILE)) return fs.readFileSync(VERSION_FILE, 'utf-8').trim();
   throw new Error('缺少 OpenCode 版本：请设置 OPENCODE_VERSION 或创建 client/vendor/opencode/VERSION');
+}
+
+function readExpectedChecksum(version, assetName) {
+  const override = String(process.env.OPENCODE_ASSET_SHA256 || '').trim().toLowerCase();
+  if (override) return override;
+  if (!fs.existsSync(CHECKSUMS_FILE)) throw new Error('缺少 OpenCode checksum 清单');
+  const checksums = JSON.parse(fs.readFileSync(CHECKSUMS_FILE, 'utf-8'));
+  const expected = String(checksums?.[version]?.[assetName] || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(expected)) {
+    throw new Error(`缺少 OpenCode checksum：${version} ${assetName}`);
+  }
+  return expected;
+}
+
+function verifyChecksum(filePath, expected) {
+  const actual = crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+  if (actual !== expected) {
+    throw new Error(`OpenCode binary checksum 校验失败：expected=${expected} actual=${actual}`);
+  }
+  return actual;
 }
 
 function requestJson(url) {
@@ -117,7 +141,7 @@ async function main() {
   const key = `${platform}-${arch}`;
   const version = readVersion();
   const binaryName = platform === 'win32' ? 'opencode.exe' : 'opencode';
-  if (!ASSET_PATTERNS[key]) throw new Error(`第一版只支持 win32-x64、darwin-x64、darwin-arm64，当前为 ${key}`);
+  if (!ASSET_PATTERNS[key]) throw new Error(`不支持的 OpenCode 平台：${key}`);
 
   const release = await requestJson(`https://api.github.com/repos/${REPO}/releases/tags/${encodeURIComponent(version)}`);
   const asset = findAsset(release, key);
@@ -127,7 +151,14 @@ async function main() {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
   fs.mkdirSync(extractDir, { recursive: true });
   await downloadFile(asset.browser_download_url, zipPath);
-  new AdmZip(zipPath).extractAllTo(extractDir, true);
+  const checksum = verifyChecksum(zipPath, readExpectedChecksum(version, asset.name));
+  if (/\.zip$/i.test(asset.name)) {
+    new AdmZip(zipPath).extractAllTo(extractDir, true);
+  } else if (/\.tar\.gz$/i.test(asset.name)) {
+    execFileSync('tar', ['-xzf', zipPath, '-C', extractDir]);
+  } else {
+    throw new Error(`不支持的 OpenCode 压缩包格式：${asset.name}`);
+  }
 
   fs.rmSync(VENDOR_ROOT, { recursive: true, force: true });
   const targetBinary = path.join(VENDOR_ROOT, key, binaryName);
@@ -138,10 +169,14 @@ async function main() {
     try { execFileSync('xattr', ['-dr', 'com.apple.quarantine', targetBinary], { stdio: 'ignore' }); } catch {}
   }
   fs.writeFileSync(VERSION_FILE, `${version}\n`, 'utf-8');
-  fs.writeFileSync(path.join(VENDOR_ROOT, 'manifest.json'), JSON.stringify({ version, platform, arch, key, asset: asset.name, prepared_at: new Date().toISOString() }, null, 2), 'utf-8');
+  fs.writeFileSync(path.join(VENDOR_ROOT, 'manifest.json'), JSON.stringify({ version, platform, arch, key, asset: asset.name, sha256: checksum, prepared_at: new Date().toISOString() }, null, 2), 'utf-8');
   verifyExecutable(targetBinary);
   fs.rmSync(tmpRoot, { recursive: true, force: true });
   console.log(`Prepared ${targetBinary}`);
 }
 
-main().catch((error) => { console.error(error?.stack || error?.message || String(error)); process.exit(1); });
+if (require.main === module) {
+  main().catch((error) => { console.error(error?.stack || error?.message || String(error)); process.exit(1); });
+}
+
+module.exports = { readExpectedChecksum, verifyChecksum };
