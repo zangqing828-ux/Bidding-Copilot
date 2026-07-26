@@ -563,7 +563,7 @@ function BidAnalysisPage({
     : hasExtractedBidSections
       ? selectedSectionTitle ? '更换' : '选择标段'
       : bidSectionExtractionStatus === 'error' ? '重新识别标段' : '识别标段';
-  const webBidAnalysisPending = window.yibiao?.platform === 'web';
+  const webBidAnalysisPending = false;
 
   return (
     <div className="plan-step-body bid-analysis-page">
