@@ -103,3 +103,6 @@ RUN chown yibiao:yibiao ./scripts/test-web-agent-docker.cjs
 USER yibiao
 ENV NODE_ENV=test
 CMD ["node", "scripts/test-web-agent-docker.cjs"]
+
+# 保持无 --target 的常规构建产出生产 Web Runtime。
+FROM runtime AS production
