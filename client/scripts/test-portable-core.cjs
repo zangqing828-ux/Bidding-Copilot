@@ -833,12 +833,13 @@ function runWorkspaceRollbackCheck(tmpDir) {
     }],
     [require.resolve('../server/workspace/webServices.cjs'), {
       ...webServices,
-      createWebTaskServiceStub() {
+      createWebTaskService() {
         throw expectedError;
       },
-      createWebAgentServiceStub() {
+    }],
+    [require.resolve('../server/agent/webAgentService.cjs'), {
+      createWebAgentService() {
         return {
-          ...webServices.createWebAgentServiceStub(),
           close() {
             agentClosed = true;
           },
@@ -848,13 +849,19 @@ function runWorkspaceRollbackCheck(tmpDir) {
   ]);
 
   withFreshModuleOverrides(
-    '../server/workspace/workspaceContext.cjs',
+    '../server/workspace/workspaceRuntimeFactory.cjs',
     overrides,
-    ({ createWorkspaceContext: createFailingWorkspaceContext }) => {
+    ({ createWorkspaceRuntimeFactory: createFailingWorkspaceRuntime }) => {
       try {
-        createFailingWorkspaceContext({
+        const workspaceRoot = path.join(tmpDir, 'web-rollback', 'users', 'rollback-user', 'workspace');
+        const paths = sharedWorkspacePaths.resolveWorkspacePaths(workspaceRoot);
+        createFailingWorkspaceRuntime({
           workspaceId: 'rollback-user',
-          dataDir: path.join(tmpDir, 'web-rollback'),
+          userDir: path.dirname(workspaceRoot),
+          workspaceRoot,
+          paths,
+          databasePath: paths.databasePath,
+          configPath: path.join(path.dirname(workspaceRoot), 'config.enc.json'),
         });
       } catch (error) {
         caughtError = error;

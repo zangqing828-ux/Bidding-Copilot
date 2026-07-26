@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { createDownloadToken } = require('../routes/downloads.cjs');
-const { buildDocxResult } = require('../../electron/services/exportService.cjs');
+const { buildSimpleDocxResult } = require('./simpleDocxBuilder.cjs');
 
 function safeFileName(value) {
   return String(value || '投标技术文件').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 100) || '投标技术文件';
@@ -18,7 +18,7 @@ function createWebExportService({ workspaceId, workspaceRoot }) {
         throw error;
       }
       fs.mkdirSync(exportsDir, { recursive: true, mode: 0o700 });
-      const result = await buildDocxResult(payload, { warnings: [] });
+      const result = await buildSimpleDocxResult(payload);
       const fileName = `${safeFileName(payload.project_name)}_${new Date().toISOString().replace(/[:.]/g, '-')}.docx`;
       const filePath = path.join(exportsDir, `${crypto.randomUUID()}.docx`);
       fs.writeFileSync(filePath, result.buffer, { mode: 0o600 });

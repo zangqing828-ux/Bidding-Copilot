@@ -99,7 +99,7 @@ jobs:
         working-directory: .
         run: docker build -t bidding-copilot-web:ci .
 
-      - name: Docker run health check
+      - name: Docker Web business smoke
         working-directory: .
         run: |
           docker run -d --name web-test -p 3000:3000 \
@@ -143,6 +143,24 @@ jobs:
             -H 'content-type: application/json' \
             -d '{"namespace":"technicalPlan","method":"loadState","args":[]}' \
             http://127.0.0.1:3000/api/bridge | grep -q '"code":"OK"'
+          curl -fsS -b /tmp/yibiao-mock-cookies \
+            -H 'content-type: application/json' \
+            -d '{"namespace":"agent","method":"selfCheck","args":[]}' \
+            -o /tmp/yibiao-agent-self-check.json \
+            http://127.0.0.1:3000/api/bridge
+          node -e "const fs = require('node:fs'); const result = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); if (result.code !== 'OK' || result.data?.success !== true) process.exit(1);" /tmp/yibiao-agent-self-check.json
+          curl -fsS -b /tmp/yibiao-mock-cookies \
+            -H 'content-type: application/json' \
+            -d '{"namespace":"export","method":"exportWord","args":[{"project_name":"CI 投标技术文件","outline":[{"id":"ci-outline-1","title":"第一章","content":"容器端到端导出验证内容","children":[]}]}]}' \
+            -o /tmp/yibiao-export.json \
+            http://127.0.0.1:3000/api/bridge
+          download_url="$(node -e "const fs = require('node:fs'); const result = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); const url = result.code === 'OK' && result.data?.success === true ? result.data.download_url : ''; if (!/^\\/api\\/downloads\\/[0-9a-f-]+$/i.test(url)) process.exit(1); process.stdout.write(url);" /tmp/yibiao-export.json)"
+          curl -fsS -b /tmp/yibiao-mock-cookies \
+            -o /tmp/yibiao-export.docx \
+            "http://127.0.0.1:3000${download_url}"
+          node -e "const fs = require('node:fs'); const file = fs.readFileSync(process.argv[1]); if (file.length < 4 || file[0] !== 0x50 || file[1] !== 0x4b) process.exit(1);" /tmp/yibiao-export.docx
+          download_status="$(curl -sS -b /tmp/yibiao-mock-cookies -o /dev/null -w '%{http_code}' "http://127.0.0.1:3000${download_url}")"
+          test "$download_status" = "404"
           docker stop web-test
           docker rm web-test
 

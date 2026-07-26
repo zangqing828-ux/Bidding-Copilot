@@ -250,7 +250,6 @@ function createWebWorkspaceRuntime({
         },
         ai: aiService,
         agent: agentService,
-        exporter: exportService,
         taskEvents,
       },
       close() {

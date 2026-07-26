@@ -555,6 +555,7 @@ await run('workspaceRuntimeFactory: 依赖失败需回滚并保留原始错误',
     const factoryPath = require.resolve('../server/workspace/workspaceRuntimeFactory.cjs');
     const sqlitePath = require.resolve('../core/sqliteDatabase.cjs');
     const webServicesPath = require.resolve('../server/workspace/webServices.cjs');
+    const agentServicePath = require.resolve('../server/agent/webAgentService.cjs');
 
     const originalLoad = Module._load;
     const realSqlite = originalLoad(sqlitePath);
@@ -565,7 +566,7 @@ await run('workspaceRuntimeFactory: 依赖失败需回滚并保留原始错误',
     let caughtError;
     try {
       Module._load = function loadWithOverrides(request, parent, isMain) {
-        if (request === sqlitePath || request === webServicesPath) {
+        if (request === sqlitePath || request === webServicesPath || request === agentServicePath) {
           const resolved = Module._resolveFilename(request, parent, isMain);
           if (path.resolve(resolved) === sqlitePath) {
             return {
@@ -585,10 +586,13 @@ await run('workspaceRuntimeFactory: 依赖失败需回滚并保留原始错误',
           if (path.resolve(resolved) === webServicesPath) {
             return {
               ...realWebServices,
-              createWebTaskServiceStub() {
+              createWebTaskService() {
                 throw expectedError;
               },
             };
+          }
+          if (path.resolve(resolved) === agentServicePath) {
+            return { createWebAgentService() { return { close() {} }; } };
           }
         }
 
@@ -616,10 +620,13 @@ await run('workspaceRuntimeFactory: 依赖失败需回滚并保留原始错误',
         if (resolved && path.resolve(resolved) === webServicesPath) {
           return {
             ...realWebServices,
-            createWebTaskServiceStub() {
+            createWebTaskService() {
               throw expectedError;
             },
           };
+        }
+        if (resolved && path.resolve(resolved) === agentServicePath) {
+          return { createWebAgentService() { return { close() {} }; } };
         }
 
         return originalLoad.apply(this, arguments);
@@ -660,6 +667,7 @@ await run('workspaceRuntimeFactory: close 按顺序关闭并聚合失败', async
     const configPath = path.join(baseDir, 'users', 'closeerr', 'config.enc.json');
     const factoryPath = require.resolve('../server/workspace/workspaceRuntimeFactory.cjs');
     const webServicesPath = require.resolve('../server/workspace/webServices.cjs');
+    const agentServicePath = require.resolve('../server/agent/webAgentService.cjs');
 
     const originalLoad = Module._load;
     const realWebServices = originalLoad(webServicesPath);
@@ -667,33 +675,6 @@ await run('workspaceRuntimeFactory: close 按顺序关闭并聚合失败', async
 
     try {
       Module._load = function loadWithOverrides(request, parent, isMain) {
-        if (request === webServicesPath) {
-          const resolved = Module._resolveFilename(request, parent, isMain);
-          if (path.resolve(resolved) === webServicesPath) {
-            return {
-              ...realWebServices,
-              createWebAgentServiceStub() {
-                const originalAgent = realWebServices.createWebAgentServiceStub();
-                return {
-                  ...originalAgent,
-                  close() {
-                    throw new Error('agent close fail');
-                  },
-                };
-              },
-              createWebTaskServiceStub() {
-                const stub = realWebServices.createWebTaskServiceStub();
-                return {
-                  ...stub,
-                  close() {
-                    throw new Error('taskService close fail');
-                  },
-                };
-              },
-            };
-          }
-        }
-
         let resolved;
         try {
           resolved = Module._resolveFilename(request, parent, isMain);
@@ -703,22 +684,24 @@ await run('workspaceRuntimeFactory: close 按顺序关闭并聚合失败', async
         if (resolved && path.resolve(resolved) === webServicesPath) {
           return {
             ...realWebServices,
-            createWebAgentServiceStub() {
-              const originalAgent = realWebServices.createWebAgentServiceStub();
+            createWebTaskService() {
               return {
-                ...originalAgent,
-                close() {
-                  throw new Error('agent close fail');
-                },
-              };
-            },
-            createWebTaskServiceStub() {
-              const stub = realWebServices.createWebTaskServiceStub();
-              return {
-                ...stub,
+                getActiveTasks() { return []; },
+                subscribeCallback() { return () => {}; },
+                unsubscribeCallback() {},
                 close() {
                   throw new Error('taskService close fail');
                 },
+              };
+            },
+          };
+        }
+        if (resolved && path.resolve(resolved) === agentServicePath) {
+          return {
+            createWebAgentService() {
+              return {
+                bindSelectedRuntime() { return {}; },
+                close() { throw new Error('agent close fail'); },
               };
             },
           };
@@ -766,6 +749,7 @@ await run('workspaceRuntimeFactory: close 重试会保留失败 handler，成功
     const sqlitePath = require.resolve('../core/sqliteDatabase.cjs');
     const taskEventPortPath = require.resolve('../core/taskEventPort.cjs');
     const webServicesPath = require.resolve('../server/workspace/webServices.cjs');
+    const agentServicePath = require.resolve('../server/agent/webAgentService.cjs');
 
     const originalLoad = Module._load;
     const realWebServices = originalLoad(webServicesPath);
@@ -826,25 +810,30 @@ await run('workspaceRuntimeFactory: close 重试会保留失败 handler，成功
         if (resolved && path.resolve(resolved) === webServicesPath) {
           return {
             ...realWebServices,
-            createWebAgentServiceStub() {
-              const originalAgent = realWebServices.createWebAgentServiceStub();
+            createWebTaskService() {
               return {
-                ...originalAgent,
+                getActiveTasks() { return []; },
+                subscribeCallback() { return () => {}; },
+                unsubscribeCallback() {},
+                close() {
+                  closeStats.taskServiceClose += 1;
+                },
+              };
+            },
+          };
+        }
+
+        if (resolved && path.resolve(resolved) === agentServicePath) {
+          return {
+            createWebAgentService() {
+              return {
+                bindSelectedRuntime() { return {}; },
                 close() {
                   closeStats.agentCloseAttempts += 1;
                   closeStats.agentClose += 1;
                   if (closeStats.agentCloseAttempts === 1) {
                     throw new Error('agent close should fail once');
                   }
-                },
-              };
-            },
-            createWebTaskServiceStub() {
-              const stub = realWebServices.createWebTaskServiceStub();
-              return {
-                ...stub,
-                close() {
-                  closeStats.taskServiceClose += 1;
                 },
               };
             },
