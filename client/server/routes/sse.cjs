@@ -5,14 +5,49 @@
 const express = require('express');
 const { acquireWorkspaceContext } = require('../workspace/workspaceRegistry.cjs');
 
-const router = express.Router();
+function createSseConnectionRegistry() {
+  const connections = new Set();
+  let draining = false;
 
-router.get('/tasks/events', (req, res) => {
+  return {
+    isDraining: () => draining,
+    resetDraining: () => {
+      draining = false;
+    },
+    register(connection) {
+      connections.add(connection);
+      return () => connections.delete(connection);
+    },
+    beginDraining() {
+      draining = true;
+      for (const connection of [...connections]) {
+        connection.close();
+      }
+    },
+    size: () => connections.size,
+  };
+}
+
+function createSseRouter({
+  acquireWorkspaceContextFn = acquireWorkspaceContext,
+  connectionRegistry = createSseConnectionRegistry(),
+} = {}) {
+  const router = express.Router();
+
+  router.get('/tasks/events', (req, res) => {
+    if (connectionRegistry.isDraining()) {
+      return res.status(503).json({
+        code: 'SERVER_DRAINING',
+        message: '服务正在关闭，请稍后重试',
+        retryable: true,
+      });
+    }
+
   const workspaceId = req.workspaceId;
   let lease;
   let ctx;
   try {
-    lease = acquireWorkspaceContext(workspaceId);
+    lease = acquireWorkspaceContextFn(workspaceId);
     ctx = lease.context;
   } catch (error) {
     if (error?.code === 'WORKSPACE_UNAVAILABLE') {
@@ -58,8 +93,9 @@ router.get('/tasks/events', (req, res) => {
     }
   }, 30000);
 
-  // 客户端断开时清理。req/res 任一 close 事件触发即可，release 本身幂等。
+  // 客户端断开或服务进入 draining 时清理。release 与 cleanup 均保持幂等。
   let cleaned = false;
+  let unregister = () => {};
   const cleanup = () => {
     if (cleaned) {
       return;
@@ -72,9 +108,29 @@ router.get('/tasks/events', (req, res) => {
       console.warn('SSE: 断开连接时取消任务事件订阅失败', error?.message || error);
     }
     lease.release();
+    unregister();
   };
+  unregister = connectionRegistry.register({
+    close() {
+      cleanup();
+      if (!res.writableEnded) {
+        res.end();
+      }
+    },
+  });
   req.on('close', cleanup);
   res.on('close', cleanup);
-});
+  });
+
+  router.isDraining = connectionRegistry.isDraining;
+  router.resetDraining = connectionRegistry.resetDraining;
+  router.beginDraining = connectionRegistry.beginDraining;
+  router.connectionCount = connectionRegistry.size;
+  return router;
+}
+
+const router = createSseRouter();
 
 module.exports = router;
+module.exports.createSseRouter = createSseRouter;
+module.exports.createSseConnectionRegistry = createSseConnectionRegistry;

@@ -52,7 +52,16 @@ function createApp() {
     if (isPublicApi(req.path)) {
       return next();
     }
-    return requireAuth(req, res, next);
+    return requireAuth(req, res, () => {
+      if (sseRouter.isDraining()) {
+        return res.status(503).json({
+          code: 'SERVER_DRAINING',
+          message: '服务正在关闭，请稍后重试',
+          retryable: true,
+        });
+      }
+      return next();
+    });
   });
 
   // 受保护的业务 API 路由

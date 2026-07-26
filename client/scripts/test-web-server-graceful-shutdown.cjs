@@ -1,9 +1,16 @@
 const assert = require('node:assert/strict');
+const http = require('node:http');
+const { once } = require('node:events');
+const express = require('express');
 
 const {
   createGracefulShutdownHandler,
   SHUTDOWN_TIMEOUT_MS,
 } = require('../server/index.cjs');
+const {
+  createSseRouter,
+  createSseConnectionRegistry,
+} = require('../server/routes/sse.cjs');
 
 const passed = [];
 const failed = [];
@@ -54,6 +61,12 @@ function createServer({ error = null, delayMs = 0, hang = false } = {}) {
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function listen(server) {
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  return server.address().port;
 }
 
 async function runTests() {
@@ -162,6 +175,66 @@ async function runTests() {
 
     await gracefulShutdown('SIGTERM');
     assert.deepEqual(exit.calls, [1]);
+  });
+
+  await run('真实 SSE 连接在关闭前主动释放订阅和 workspace lease', async () => {
+    const registry = createSseConnectionRegistry();
+    let subscriptions = 0;
+    let unsubscriptions = 0;
+    let leaseReleases = 0;
+    let closeAllCalls = 0;
+    const app = express();
+    app.use(createSseRouter({
+      connectionRegistry: registry,
+      acquireWorkspaceContextFn: () => ({
+        context: {
+          taskEvents: {
+            subscribe(callback) {
+              subscriptions += 1;
+              callback({ type: 'snapshot', tasks: [] });
+              return () => {
+                unsubscriptions += 1;
+              };
+            },
+          },
+        },
+        release() {
+          leaseReleases += 1;
+        },
+      }),
+    }));
+    const server = http.createServer(app);
+    const port = await listen(server);
+
+    const response = await new Promise((resolve, reject) => {
+      const request = http.get({ host: '127.0.0.1', port, path: '/tasks/events', agent: false }, resolve);
+      request.once('error', reject);
+    });
+    await once(response, 'data');
+    const responseEnded = once(response, 'end');
+    assert.equal(registry.size(), 1);
+    assert.equal(subscriptions, 1);
+
+    const exit = createExitSpy();
+    const gracefulShutdown = createGracefulShutdownHandler({
+      server,
+      beginDrainingFn: () => registry.beginDraining(),
+      closeAllFn: async () => {
+        closeAllCalls += 1;
+        return { closed: 1, failed: 0 };
+      },
+      logger: createLogger(),
+      exit: exit.exit,
+      timeoutMs: 500,
+    });
+
+    await gracefulShutdown('SIGTERM');
+    assert.equal(unsubscriptions, 1);
+    assert.equal(leaseReleases, 1);
+    assert.equal(registry.size(), 0);
+    assert.equal(closeAllCalls, 1);
+    assert.deepEqual(exit.calls, [0]);
+    await responseEnded;
   });
 
   assert.equal(SHUTDOWN_TIMEOUT_MS, 10_000);

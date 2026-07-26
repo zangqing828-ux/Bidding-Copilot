@@ -17,6 +17,10 @@ function createGracefulShutdownHandler({
     const { closeAll: defaultCloseAll } = require('./workspace/workspaceRegistry.cjs');
     return defaultCloseAll();
   },
+  beginDrainingFn = () => {
+    const sseRouter = require('./routes/sse.cjs');
+    return sseRouter.beginDraining();
+  },
   logger = console,
   exit = (code) => process.exit(code),
   timeoutMs = SHUTDOWN_TIMEOUT_MS,
@@ -79,6 +83,9 @@ function createGracefulShutdownHandler({
 
     shutdownPromise = (async () => {
       try {
+        await beginDrainingFn();
+        logger.log('[web] SSE 连接已进入 draining 并主动关闭');
+
         await closeServer();
         logger.log('[web] HTTP 服务已关闭');
 
@@ -108,6 +115,8 @@ function startServer() {
   const { createApp } = require('./app.cjs');
   const app = createApp();
   const { closeAll } = require('./workspace/workspaceRegistry.cjs');
+  const sseRouter = require('./routes/sse.cjs');
+  sseRouter.resetDraining();
   const server = app.listen(config.port, config.host, () => {
     console.log(`[web] 易标 Web 服务已启动：http://127.0.0.1:${config.port}（host=${config.host}）`);
     console.log(`[web] 版本 ${config.version}，环境 ${config.isProduction ? 'production' : 'development'}`);
@@ -117,6 +126,7 @@ function startServer() {
   const gracefulShutdown = createGracefulShutdownHandler({
     server,
     closeAllFn: closeAll,
+    beginDrainingFn: sseRouter.beginDraining,
     logger: console,
     exit: (code) => process.exit(code),
     timeoutMs: SHUTDOWN_TIMEOUT_MS,
