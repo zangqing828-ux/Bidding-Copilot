@@ -45,26 +45,26 @@ function sameFile(left, right) {
   return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode && left.nlink === right.nlink && left.size === right.size;
 }
 
-function readSafeOutput(outputPath, { maxBytes = MAX_OUTPUT_BYTES } = {}) {
+function readSafeOutput(outputPath, { maxBytes = MAX_OUTPUT_BYTES, fileSystem = fs } = {}) {
   let descriptor = null;
   try {
-    const before = fs.lstatSync(outputPath);
+    const before = fileSystem.lstatSync(outputPath);
     assertRegularSingleLink(before);
     if (before.size <= 0) throw createWorkspaceError('Agent 未生成有效输出', 'AGENT_OUTPUT_MISSING');
     if (before.size > maxBytes) throw createWorkspaceError('Agent 输出超出大小限制', 'AGENT_OUTPUT_TOO_LARGE');
-    descriptor = fs.openSync(outputPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-    const opened = fs.fstatSync(descriptor);
+    descriptor = fileSystem.openSync(outputPath, fileSystem.constants.O_RDONLY | fileSystem.constants.O_NOFOLLOW);
+    const opened = fileSystem.fstatSync(descriptor);
     assertRegularSingleLink(opened);
     if (!sameFile(before, opened)) throw createWorkspaceError('Agent 输出在读取前发生替换', 'AGENT_OUTPUT_UNSAFE');
     const content = Buffer.alloc(opened.size);
     let offset = 0;
     while (offset < content.length) {
-      const bytes = fs.readSync(descriptor, content, offset, content.length - offset, offset);
+      const bytes = fileSystem.readSync(descriptor, content, offset, content.length - offset, offset);
       if (!bytes) break;
       offset += bytes;
     }
     if (offset !== content.length) throw createWorkspaceError('Agent 输出读取不完整', 'AGENT_OUTPUT_UNSAFE');
-    const after = fs.fstatSync(descriptor);
+    const after = fileSystem.fstatSync(descriptor);
     if (!sameFile(opened, after)) throw createWorkspaceError('Agent 输出在读取期间发生替换', 'AGENT_OUTPUT_UNSAFE');
     return Object.freeze({
       content,
@@ -76,7 +76,7 @@ function readSafeOutput(outputPath, { maxBytes = MAX_OUTPUT_BYTES } = {}) {
     if (error?.code === 'ELOOP') throw createWorkspaceError('Agent 输出不允许使用符号链接', 'AGENT_OUTPUT_UNSAFE');
     throw error;
   } finally {
-    if (descriptor !== null) fs.closeSync(descriptor);
+    if (descriptor !== null) fileSystem.closeSync(descriptor);
   }
 }
 

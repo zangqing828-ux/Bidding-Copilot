@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { buildOpenCodeConfig, createWebAgentService, safeRelativePath } = require('../server/agent/webAgentService.cjs');
-const { MAX_OUTPUT_BYTES, OUTPUT_FILE, createOpenCodeTaskWorkspace } = require('../server/agent/openCodeTaskWorkspace.cjs');
+const { MAX_OUTPUT_BYTES, OUTPUT_FILE, createOpenCodeTaskWorkspace, readSafeOutput } = require('../server/agent/openCodeTaskWorkspace.cjs');
 const { STDERR_RING_BYTES, STDOUT_RING_BYTES, createRingBuffer } = require('../server/agent/webOpenCodeRunner.cjs');
 const { createAgentOpenAiProxy } = require('../server/agent/agentOpenAiProxy.cjs');
 
@@ -193,22 +193,21 @@ async function run() {
   const replacementWorkspace = createOpenCodeTaskWorkspace({ workspaceRoot, runId: 'unsafe-replacement', inputs: { 'input/source.json': '{}' } });
   try {
     fs.writeFileSync(replacementWorkspace.outputPath, '{"version":1}', 'utf8');
-    const realOpenSync = fs.openSync;
+    const replacementFileSystem = Object.create(fs);
     let replaced = false;
-    fs.openSync = function guardedOpen(target, ...args) {
+    replacementFileSystem.openSync = function guardedOpen(target, ...args) {
       if (!replaced && target === replacementWorkspace.outputPath) {
         replaced = true;
         fs.unlinkSync(replacementWorkspace.outputPath);
         fs.writeFileSync(replacementWorkspace.outputPath, '{"version":2}', 'utf8');
       }
-      return realOpenSync.call(this, target, ...args);
+      return fs.openSync(target, ...args);
     };
-    try {
-      assert.throws(() => replacementWorkspace.readOutput(), (error) => error?.code === 'AGENT_OUTPUT_UNSAFE');
-      check(true, '拒绝读取前被替换的输出文件');
-    } finally {
-      fs.openSync = realOpenSync;
-    }
+    assert.throws(
+      () => readSafeOutput(replacementWorkspace.outputPath, { fileSystem: replacementFileSystem }),
+      (error) => error?.code === 'AGENT_OUTPUT_UNSAFE',
+    );
+    check(true, '拒绝读取前被替换的输出文件');
   } finally {
     replacementWorkspace.cleanup();
   }
