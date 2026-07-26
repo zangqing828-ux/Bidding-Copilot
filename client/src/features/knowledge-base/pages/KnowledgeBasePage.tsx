@@ -351,6 +351,12 @@ function KnowledgeBasePage() {
     void loadInitialData();
     window.addEventListener('focus', loadDeveloperMode);
     document.addEventListener('visibilitychange', loadDeveloperMode);
+    if (window.yibiao?.platform === 'web') {
+      return () => {
+        window.removeEventListener('focus', loadDeveloperMode);
+        document.removeEventListener('visibilitychange', loadDeveloperMode);
+      };
+    }
     const unsubscribe = window.yibiao?.knowledgeBase.onEvent(({ document }) => {
       const parseMessage = document.error || document.message;
       if (document.status === 'error'

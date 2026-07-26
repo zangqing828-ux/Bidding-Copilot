@@ -31,6 +31,7 @@ function UpdateNotifier() {
 
   useEffect(() => {
     let disposed = false;
+    const isWeb = window.yibiao?.platform === 'web';
 
     const checkUpdate = async () => {
       if (updateCheckingRef.current) {
@@ -86,7 +87,9 @@ function UpdateNotifier() {
     };
 
     const checkAll = () => {
-      void checkUpdate();
+      if (!isWeb) {
+        void checkUpdate();
+      }
       void checkRemoteNotice();
     };
 

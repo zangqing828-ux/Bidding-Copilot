@@ -23,7 +23,7 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-test-'));
 process.env.YIBIAO_DATA_DIR = tmpDir;
 process.env.CONFIG_ENCRYPTION_KEY = 'test-encryption-key-for-testing';
 
-function runTests() {
+async function runTests() {
   // 测试 1：resolveWorkspacePaths 返回完整路径
   {
     const paths = resolveWorkspacePaths('/tmp/fake-workspace');
@@ -70,7 +70,21 @@ function runTests() {
     const store = createEncryptedConfigStore({ configPath });
 
     // 保存配置（含 API Key）
-    store.save({ api_key: 'sk-secret-key-12345', model_name: 'gpt-4' });
+    const saveResult = store.save({ api_key: 'sk-secret-key-12345', model_name: 'gpt-4' });
+    assert(saveResult?.success === true, '加密配置 save 返回 success');
+    assert(saveResult?.message === '配置已保存', '加密配置 save message 正确');
+    assert(saveResult?.config_path === undefined, 'Web 配置 save 不回传服务端路径');
+
+    const baselineClientId = store.loadDecrypted().analytics_client_id;
+    const legacyId = 'legacy-web-save-test-id';
+    const legacySaveResult = store.save({
+      ...store.load(),
+      analytics_client_id: legacyId,
+    });
+    const afterLegacySave = store.loadDecrypted();
+    assert(legacySaveResult?.success === true, 'legacy id 覆盖尝试 save 仍返回 success');
+    assert(afterLegacySave.analytics_client_id === baselineClientId, 'server 端 identity 不被 legacy id 覆盖');
+    assert(afterLegacySave.analytics_client_id !== legacyId, 'legacy id 未写入文件');
 
     // load 返回脱敏
     const masked = store.load();
@@ -85,6 +99,52 @@ function runTests() {
     const rawFile = fs.readFileSync(configPath, 'utf-8');
     assert(!rawFile.includes('sk-secret-key-12345'), '配置文件不含 API Key 明文');
     assert(rawFile.includes('enc:v1:'), '配置文件含加密标记');
+  }
+
+  // 测试 5.1：活动生图模型 Key 同样加密、脱敏，并能重写旧明文副本
+  {
+    const configPath = path.join(tmpDir, 'test-image-model-config.enc.json');
+    const store = createEncryptedConfigStore({ configPath });
+    const imageKey = 'img-secret-key-6789';
+    store.save({
+      image_model: {
+        provider: 'custom',
+        base_url: 'https://images.example.test/v1',
+        api_key: imageKey,
+        model_name: 'image-test-model',
+      },
+    });
+
+    const masked = store.load();
+    assert(masked.image_model.api_key === '****6789', '活动生图模型 Key 返回脱敏值');
+    const rawFile = fs.readFileSync(configPath, 'utf-8');
+    assert(!rawFile.includes(imageKey), '活动生图模型 Key 不以明文落盘');
+
+    const legacyPath = path.join(tmpDir, 'legacy-image-model-config.enc.json');
+    const legacyKey = 'legacy-image-secret-2468';
+    fs.writeFileSync(legacyPath, JSON.stringify({
+      analytics_client_id: 'legacy-analytics-id',
+      analytics_created_at: '2026-07-25T00:00:00.000Z',
+      image_model: {
+        provider: 'custom',
+        base_url: 'https://images.example.test/v1',
+        api_key: legacyKey,
+        model_name: 'legacy-image-model',
+      },
+      image_model_profiles: {
+        custom: {
+          provider: 'custom',
+          base_url: 'https://images.example.test/v1',
+          api_key: legacyKey,
+          model_name: 'legacy-image-model',
+        },
+      },
+    }), 'utf-8');
+    const legacyStore = createEncryptedConfigStore({ configPath: legacyPath });
+    const legacyMasked = legacyStore.load();
+    const rewrittenLegacy = fs.readFileSync(legacyPath, 'utf-8');
+    assert(legacyMasked.image_model.api_key === '****2468', '旧活动生图模型 Key 读取后返回脱敏值');
+    assert(!rewrittenLegacy.includes(legacyKey), '旧活动生图模型 Key 会被重写为密文');
   }
 
   // 测试 6：两个 workspace 隔离
@@ -103,8 +163,8 @@ function runTests() {
     const ctx2Config = ctx2.configStore.load();
     assert(ctx2Config.api_key !== '****ws1-key', 'workspace 2 不含 workspace 1 的 Key');
 
-    ctx1.close();
-    ctx2.close();
+    await ctx1.close();
+    await ctx2.close();
   }
 
   // 测试 7：同一 workspaceId 重新获取保持数据
@@ -112,13 +172,13 @@ function runTests() {
     const { getWorkspaceContext, closeAll } = require('../server/workspace/workspaceRegistry.cjs');
     const ctx1 = getWorkspaceContext('ws-persist-test');
     ctx1.configStore.save({ api_key: 'sk-persist-key' });
-    closeAll();
+    await closeAll();
 
     // 重新获取同一个 workspace
     const ctx2 = getWorkspaceContext('ws-persist-test');
     const config = ctx2.configStore.loadDecrypted();
     assert(config.api_key === 'sk-persist-key', '同一 workspace 重新获取后数据仍在');
-    closeAll();
+    await closeAll();
   }
 
   // 测试 8：bridge dispatcher config.load 返回脱敏
@@ -132,7 +192,7 @@ function runTests() {
     assert(result.api_key === '****-key', 'bridge config.load 返回脱敏');
     assert(!JSON.stringify(result).includes('sk-bridge-secret-key'), 'bridge config.load 不含明文');
 
-    closeAll();
+    await closeAll();
   }
 
   // 清理
@@ -154,4 +214,7 @@ function runTests() {
   console.log('全部通过 ✅');
 }
 
-runTests();
+runTests().catch((error) => {
+  console.error(error.stack || error.message);
+  process.exitCode = 1;
+});

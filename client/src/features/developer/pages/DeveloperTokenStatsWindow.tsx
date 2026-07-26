@@ -39,6 +39,14 @@ function DeveloperTokenStatsWindow() {
         }
       });
 
+    if (window.yibiao?.platform === 'web') {
+      return () => {
+        mounted = false;
+        document.documentElement.classList.remove('token-stats-transparent-root');
+        document.body.classList.remove('token-stats-transparent-root');
+      };
+    }
+
     const unsubscribe = window.yibiao?.developerTokenStats.onChanged((nextStats) => {
       setStats(nextStats);
     }) ?? (() => undefined);

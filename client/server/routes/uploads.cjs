@@ -13,8 +13,12 @@ const router = express.Router();
 function createUploadMiddleware() {
   const storage = multer.diskStorage({
     destination: (req, _file, cb) => {
-      const ctx = getWorkspaceContext(req.workspaceId);
-      cb(null, ctx.paths.uploadsDir);
+      try {
+        const ctx = getWorkspaceContext(req.workspaceId);
+        cb(null, ctx.paths.uploadsDir);
+      } catch (error) {
+        cb(error);
+      }
     },
     filename: (_req, file, cb) => {
       const ext = path.extname(file.originalname).toLowerCase();
@@ -33,15 +37,27 @@ function createUploadMiddleware() {
   });
 }
 
+function sendUploadError(res, error) {
+  if (error?.code === 'WORKSPACE_UNAVAILABLE') {
+    return res.status(503).json({
+      code: 'WORKSPACE_UNAVAILABLE',
+      message: '工作区暂时不可用，请稍后重试',
+      retryable: true,
+    });
+  }
+
+  const message = error?.code === 'LIMIT_FILE_SIZE'
+    ? `文件大小超过限制（${config.uploadMaxSize}MB）`
+    : error?.message || '上传失败';
+  return res.status(400).json({ code: 'UPLOAD_ERROR', message });
+}
+
 // POST /api/uploads — 单文件上传，返回 fileId 和 fileName。
 router.post('/uploads', (req, res, next) => {
   const upload = createUploadMiddleware();
   upload.single('file')(req, res, (err) => {
     if (err) {
-      const message = err.code === 'LIMIT_FILE_SIZE'
-        ? `文件大小超过限制（${config.uploadMaxSize}MB）`
-        : err.message || '上传失败';
-      return res.status(400).json({ code: 'UPLOAD_ERROR', message });
+      return sendUploadError(res, err);
     }
     next();
   });
@@ -62,10 +78,7 @@ router.post('/uploads/multiple', (req, res, next) => {
   const upload = createUploadMiddleware();
   upload.array('files', MAX_FILE_COUNT)(req, res, (err) => {
     if (err) {
-      const message = err.code === 'LIMIT_FILE_SIZE'
-        ? `文件大小超过限制（${config.uploadMaxSize}MB）`
-        : err.message || '上传失败';
-      return res.status(400).json({ code: 'UPLOAD_ERROR', message });
+      return sendUploadError(res, err);
     }
     next();
   });

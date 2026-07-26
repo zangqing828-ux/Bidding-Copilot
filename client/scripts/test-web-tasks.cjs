@@ -161,15 +161,15 @@ async function runTests() {
     assert(res.statusCode === 401, '未登录访问 SSE 返回 401');
   }
 
-  // 5. bridge tasks.startBidAnalysis → 500（Web 端任务启动未实现，需真实 AI 服务）
+  // 5. bridge tasks.startBidAnalysis → 501（待能力未实现）
   {
     const res = await httpRequest('POST', '/api/bridge', {
       'content-type': 'application/json',
       cookie: cookieStr,
     }, { namespace: 'tasks', method: 'startBidAnalysis', args: [{}] });
-    assert(res.statusCode === 500, 'tasks.startBidAnalysis 返回 500（未实现，需真实 AI 服务）');
+    assert(res.statusCode === 501, 'tasks.startBidAnalysis 返回 501（待能力未实现）');
     const body = JSON.parse(res.body);
-    assert(body.code === 'INTERNAL_ERROR', 'tasks.startBidAnalysis 返回 INTERNAL_ERROR');
+    assert(body.code === 'WEB_CAPABILITY_PENDING', 'tasks.startBidAnalysis 返回 WEB_CAPABILITY_PENDING');
   }
 
   // 5b. bridge technicalPlan.loadState → 200（Store 数据操作已实现）
@@ -227,6 +227,48 @@ async function runTests() {
 
     sse1.close();
     sse2.close();
+  }
+
+  // 7. workspace 正在关闭时 SSE 返回可重试 503，且不泄露内部状态
+  {
+    const { getSystemDb } = require('../server/database/systemDatabase.cjs');
+    const {
+      closeWorkspaceContext,
+      getWorkspaceContext,
+    } = require('../server/workspace/workspaceRegistry.cjs');
+    const account = getSystemDb()
+      .prepare('SELECT workspace_id FROM accounts WHERE email = ?')
+      .get('tasks@test.com');
+    const workspaceId = account.workspace_id;
+    const context = getWorkspaceContext(workspaceId);
+    const originalClose = context.close.bind(context);
+    let resolveClose;
+    const closeGate = new Promise((resolve) => {
+      resolveClose = resolve;
+    });
+    context.close = async () => {
+      await closeGate;
+      await originalClose();
+    };
+    const closePromise = closeWorkspaceContext(workspaceId, { force: true });
+
+    try {
+      const res = await httpRequest('GET', '/api/tasks/events', {
+        cookie: cookieStr,
+        Accept: 'text/event-stream',
+      });
+      const body = JSON.parse(res.body);
+      assert(res.statusCode === 503, 'workspace closing 时 SSE 返回 503');
+      assert(body.code === 'WORKSPACE_UNAVAILABLE', 'workspace closing 时 SSE 保留错误码');
+      assert(body.retryable === true, 'workspace closing 时 SSE 标记可重试');
+      assert(typeof body.message === 'string' && body.message.includes('稍后重试'), 'workspace closing 时 SSE 返回安全中文提示');
+      const payload = JSON.stringify(body);
+      assert(!payload.includes('closing'), 'workspace closing 时 SSE 不泄露 state');
+      assert(!payload.includes(workspaceId), 'workspace closing 时 SSE 不泄露 workspaceId');
+    } finally {
+      resolveClose();
+      await closePromise;
+    }
   }
 
   // 清理

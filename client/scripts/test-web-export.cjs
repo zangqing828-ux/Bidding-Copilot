@@ -1,4 +1,4 @@
-// Web 导出测试：验证导出 API 在 Web 端返回可解释的未实现错误。
+// Web 导出合同边界，exportWord pending 501，openFile desktop-only removed 410。
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -43,8 +43,7 @@ async function runTests() {
   // 登录
   const loginRes = await httpRequest('GET', '/api/auth/login');
   if (!loginRes.headers || !loginRes.headers['set-cookie']) {
-    console.error('登录失败：未收到 set-cookie，status=', loginRes.statusCode);
-    process.exit(1);
+    throw new Error(`登录失败：未收到 set-cookie，status=${loginRes.statusCode}`);
   }
   const setCookies = loginRes.headers['set-cookie'];
   const loginCookies = Array.isArray(setCookies) ? setCookies : (setCookies ? [setCookies] : []);
@@ -60,7 +59,7 @@ async function runTests() {
   const sessionCookie = sessionMatch?.match(/yibiao_session=([^;]+)/)?.[1];
   const cookieStr = `yibiao_session=${sessionCookie}`;
 
-  // 1. export.exportWord → 501（需要 Chromium/LibreOffice，尚未实现）
+  // 1. export.exportWord → 501（pending）
   {
     const res = await httpRequest('POST', '/api/bridge', {
       'content-type': 'application/json', cookie: cookieStr,
@@ -70,21 +69,49 @@ async function runTests() {
     assert(body.code === 'WEB_CAPABILITY_PENDING', 'export.exportWord 返回 WEB_CAPABILITY_PENDING');
   }
 
-  // 2. export.openFile → 501
+  // 2. export.openFile → 410（desktop-only removed）
   {
     const res = await httpRequest('POST', '/api/bridge', {
       'content-type': 'application/json', cookie: cookieStr,
     }, { namespace: 'export', method: 'openFile', args: ['/tmp/test.docx'] });
-    assert(res.statusCode === 501, 'export.openFile 返回 501');
+    assert(res.statusCode === 410, 'export.openFile 返回 410');
+    const body = JSON.parse(res.body);
+    assert(body.code === 'WEB_BRIDGE_DESKTOP_ONLY', 'export.openFile 返回 WEB_BRIDGE_DESKTOP_ONLY');
   }
+}
 
-  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+async function cleanup() {
+  await new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  }).catch((error) => {
+    if (error?.code !== 'ERR_SERVER_NOT_RUNNING') console.error('关闭服务器失败:', error);
+  });
+  try { await fs.promises.rm(tmpDir, { recursive: true, force: true }); } catch (error) { console.error('清理测试目录失败:', error); }
+}
 
+function printSummary() {
   console.log(`\n=== Web Export 测试结果 ===`);
   console.log(`通过: ${passed.length}`);
   console.log(`失败: ${failed.length}`);
-  if (failed.length > 0) { console.log('\n失败项:'); failed.forEach((f) => console.log(`  - ${f}`)); process.exit(1); }
+  if (failed.length > 0) { console.log('\n失败项:'); failed.forEach((f) => console.log(`  - ${f}`)); return; }
   console.log('全部通过 ✅');
 }
 
-startServer().then(() => runTests()).catch((err) => { console.error('测试执行失败:', err); process.exit(1); }).finally(() => server.close());
+async function main() {
+  let startupError = null;
+  try {
+    await startServer();
+    await runTests();
+  } catch (error) {
+    startupError = error;
+    console.error('测试执行失败:', error);
+    failed.push('测试流程异常中断');
+  } finally {
+    await cleanup();
+    printSummary();
+    if (startupError) process.exitCode = 1;
+    if (failed.length > 0) process.exitCode = 1;
+  }
+}
+
+main();

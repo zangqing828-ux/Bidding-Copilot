@@ -78,38 +78,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Rebuild better-sqlite3 for Node.js
+        run: npm rebuild better-sqlite3 --runtime=node
+
       - name: Check CommonJS syntax
-        run: find electron scripts server -name '*.cjs' -print0 | xargs -0 -n1 node --check
+        run: find electron scripts server core shared -name '*.cjs' -print0 | xargs -0 -n1 node --check
 
       - name: Build renderer
         run: npm run build
 
-      - name: Run Web Auth tests
-        run: |
-          npm rebuild better-sqlite3 --runtime=node
-          npm run test:web-auth
-
-      - name: Run Web Workspace tests
-        run: |
-          npm rebuild better-sqlite3 --runtime=node
-          npm run test:web-workspace
+      - name: Run complete Web gate
+        run: npm run test:web
         env:
           CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
 
-      - name: Run Web Tasks tests
-        run: npm run test:web-tasks
-        env:
-          CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
-
-      - name: Run Web Files tests
-        run: npm run test:web-files
-        env:
-          CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
-
-      - name: Run Web Export tests
-        run: npm run test:web-export
-        env:
-          CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
+      - name: Run Electron native smoke
+        run: xvfb-run -a npm run smoke:electron-native
 
       - name: Docker build
         working-directory: .
@@ -142,11 +126,65 @@ jobs:
           done
           curl -fsS http://127.0.0.1:3000/api/health
           curl -fsS http://127.0.0.1:3000/api/readiness
+          curl -sS -D /tmp/yibiao-mock-login-headers -c /tmp/yibiao-mock-cookies \
+            -o /dev/null http://127.0.0.1:3000/api/auth/login
+          oauth_state="$(grep -i '^location:' /tmp/yibiao-mock-login-headers \
+            | sed -E 's#.*[?&]state=([^&[:space:]]+).*#\1#' \
+            | tr -d '\r')"
+          test -n "$oauth_state"
+          curl -sS -b /tmp/yibiao-mock-cookies -c /tmp/yibiao-mock-cookies \
+            -o /dev/null -X POST \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            --data-urlencode 'email=ci-worker@example.test' \
+            --data-urlencode 'name=CI Worker' \
+            --data-urlencode "state=$oauth_state" \
+            http://127.0.0.1:3000/api/auth/mock-callback
+          curl -fsS -b /tmp/yibiao-mock-cookies \
+            -H 'content-type: application/json' \
+            -d '{"namespace":"technicalPlan","method":"loadState","args":[]}' \
+            http://127.0.0.1:3000/api/bridge | grep -q '"code":"OK"'
           docker stop web-test
           docker rm web-test
 
+      - name: Docker production OAuth smoke
+        working-directory: .
+        run: |
+          docker run -d --name web-prod-test -p 3001:3000 \
+            -e NODE_ENV=production \
+            -e OAUTH_MODE=mainquest \
+            -e MAINQUEST_AUTH_BASE_URL=https://auth.example.test \
+            -e MAINQUEST_OAUTH_CLIENT_ID=ci-client-id \
+            -e MAINQUEST_OAUTH_CLIENT_SECRET=ci-client-secret \
+            -e MAINQUEST_OAUTH_REDIRECT_URI=https://web.example.test/api/auth/callback \
+            -e PUBLIC_BASE_URL=https://web.example.test \
+            -e SESSION_SECRET=ci-production-session-secret \
+            -e CONFIG_ENCRYPTION_KEY=ci-production-encryption-key \
+            -e YIBIAO_DATA_DIR=/data \
+            bidding-copilot-web:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3001/api/readiness >/dev/null 2>&1; then
+              echo "Production readiness passed after ${i}s"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "Production readiness failed after 30s"
+              docker logs web-prod-test
+              docker stop web-prod-test || true
+              docker rm web-prod-test || true
+              exit 1
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:3001/api/health
+          curl -fsS http://127.0.0.1:3001/api/readiness
+          curl -sS -D /tmp/yibiao-oauth-headers -o /dev/null http://127.0.0.1:3001/api/auth/login
+          grep -Eiq '^location: https://auth\.example\.test/oauth/authorize\\?' /tmp/yibiao-oauth-headers
+          grep -Eiq '^set-cookie: yibiao_oauth_state=.*; Secure;' /tmp/yibiao-oauth-headers
+          docker stop web-prod-test
+          docker rm web-prod-test
+
       - name: Block critical production vulnerabilities
-        run: npm audit --omit=dev --audit-level=critical
+        run: npm run audit:production
 
   analytics_worker:
     name: Analytics Worker Check

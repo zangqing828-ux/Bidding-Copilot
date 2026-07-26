@@ -17,7 +17,8 @@
     "generate-build-attestation": "node scripts/generate-build-attestation.cjs",
     "prepare-opencode-tools": "node scripts/prepare-opencode-tools.cjs",
     "verify-opencode-tools": "node scripts/verify-opencode-tools.cjs",
-    "smoke:electron-native": "electron scripts/electron-native-smoke.cjs",
+    "audit:production": "npm audit --omit=dev --audit-level=critical || node scripts/audit-production-dependencies.cjs",
+    "smoke:electron-native": "electron --no-sandbox scripts/electron-native-smoke.cjs",
     "presmoke:electron-native": "npm rebuild better-sqlite3 --runtime=electron --target=41.10.2",
     "start": "electron .",
     "prestart": "npm rebuild better-sqlite3 --runtime=electron --target=41.10.2",
@@ -31,7 +32,19 @@
     "test:web-tasks": "node scripts/test-web-tasks.cjs",
     "test:web-files": "node scripts/test-web-files.cjs",
     "test:web-export": "node scripts/test-web-export.cjs",
-    "test:web": "npm run test:web-auth && npm run test:web-workspace && npm run test:web-tasks && npm run test:web-files && npm run test:web-export"
+    "test:web-graceful-shutdown": "node scripts/test-web-server-graceful-shutdown.cjs",
+    "test:web-contract": "node scripts/test-web-contract.cjs",
+    "test:web-contract:strict-guard": "node scripts/test-web-contract-strict-guard.cjs",
+    "test:ai-scheduler": "node scripts/test-ai-scheduler.cjs",
+    "test:web-endpoint-policy": "node scripts/test-web-endpoint-policy.cjs",
+    "test:web-ai-runtime": "node scripts/test-web-ai-runtime.cjs",
+    "test:web-analytics-identity": "node scripts/test-web-analytics-identity.cjs",
+    "test:web-analytics-identity-retirement": "node scripts/test-analytics-legacy-migration.cjs",
+    "test:portable-core": "node scripts/test-portable-core.cjs",
+    "test:workspace-lifecycle": "node scripts/test-workspace-lifecycle.cjs",
+    "test:web-workspace-registry": "node scripts/test-web-workspace-registry.cjs",
+    "test:web-store-executor": "node scripts/test-web-store-executor.cjs",
+    "test:web": "npm run test:portable-core && npm run test:ai-scheduler && npm run test:web-endpoint-policy && npm run test:web-ai-runtime && npm run test:web-analytics-identity && npm run test:web-analytics-identity-retirement && npm run test:web-store-executor && npm run test:workspace-lifecycle && npm run test:web-workspace-registry && npm run test:web-graceful-shutdown && npm run test:web-auth && npm run test:web-workspace && npm run test:web-contract && npm run test:web-contract:strict-guard && npm run test:web-tasks && npm run test:web-files && npm run test:web-export"
   },
   "build": {
     "appId": "com.yibiao.openbidkit",
@@ -44,6 +57,8 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "core/**/*",
+      "shared/**/*",
       "assets/**/*",
       "package.json"
     ],

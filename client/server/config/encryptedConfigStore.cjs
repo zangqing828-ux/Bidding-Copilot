@@ -6,11 +6,19 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { normalizeConfig } = require('../../electron/services/configStore.cjs');
+const { normalizeConfig } = require('../../core/configStore.cjs');
 
 const ENCRYPTED_FIELDS = [
   'api_key',
   'components.file_parser.mineru_token',
+];
+const TEXT_MODEL_FLAT_FIELDS = [
+  'api_key',
+  'base_url',
+  'model_name',
+  'context_length_limit',
+  'concurrency_limit',
+  'request_mode',
 ];
 
 // 从 text_model_profiles 和 image_model_profiles 中提取需要加密的字段路径
@@ -33,7 +41,29 @@ function getSensitiveFieldPaths(config) {
     }
   }
 
+  if (config.image_model?.api_key) {
+    paths.push('image_model.api_key');
+  }
+
   return paths;
+}
+
+function hasPlaintextSensitiveValue(config) {
+  return getSensitiveFieldPaths(config || {}).some((fieldPath) => {
+    const value = getValueByPath(config, fieldPath);
+    return value && typeof value === 'string' && !value.startsWith('enc:v1:');
+  });
+}
+
+function assertSensitiveFieldTypes(config) {
+  for (const fieldPath of getSensitiveFieldPaths(config || {})) {
+    const value = getValueByPath(config, fieldPath);
+    if (value !== null && value !== undefined && typeof value !== 'string') {
+      const error = new Error(`配置字段 ${fieldPath} 必须为字符串`);
+      error.code = 'CONFIG_INVALID';
+      throw error;
+    }
+  }
 }
 
 function getValueByPath(obj, fieldPath) {
@@ -48,6 +78,17 @@ function setValueByPath(obj, fieldPath, value) {
     return acc[key];
   }, obj);
   target[lastKey] = value;
+}
+
+function mergeProfileMap(currentProfiles, incomingProfiles) {
+  const merged = { ...(currentProfiles || {}) };
+  for (const [provider, profile] of Object.entries(incomingProfiles || {})) {
+    merged[provider] = {
+      ...(currentProfiles?.[provider] || {}),
+      ...(profile && typeof profile === 'object' ? profile : {}),
+    };
+  }
+  return merged;
 }
 
 function getEncryptionKey() {
@@ -90,6 +131,24 @@ function maskKey(key) {
   return `****${key.slice(-4)}`;
 }
 
+function cloneConfig(config) {
+  return JSON.parse(JSON.stringify(config || {}));
+}
+
+function ensureAnalyticsIdentity(config) {
+  const next = { ...config };
+  let changed = false;
+  if (!next.analytics_client_id) {
+    next.analytics_client_id = crypto.randomUUID();
+    changed = true;
+  }
+  if (!next.analytics_created_at) {
+    next.analytics_created_at = new Date().toISOString();
+    changed = true;
+  }
+  return { config: next, changed };
+}
+
 function createEncryptedConfigStore({ configPath }) {
   function readRaw() {
     if (!fs.existsSync(configPath)) {
@@ -106,12 +165,23 @@ function createEncryptedConfigStore({ configPath }) {
     fs.renameSync(tmp, configPath);
   }
 
+  function writeEncryptedConfig(config) {
+    assertSensitiveFieldTypes(config);
+    const persisted = cloneConfig(config);
+    const sensitivePaths = getSensitiveFieldPaths(persisted);
+    for (const fieldPath of sensitivePaths) {
+      const value = getValueByPath(persisted, fieldPath);
+      if (value && typeof value === 'string' && !value.startsWith('enc:v1:')) {
+        setValueByPath(persisted, fieldPath, encrypt(value));
+      }
+    }
+    writeRaw(persisted);
+  }
+
   function loadDecrypted() {
     const raw = readRaw();
-    if (!raw) {
-      return normalizeConfig({});
-    }
-    const config = normalizeConfig(raw);
+    const config = normalizeConfig(raw || {});
+    assertSensitiveFieldTypes(config);
     // 解密敏感字段
     const sensitivePaths = getSensitiveFieldPaths(config);
     for (const fieldPath of sensitivePaths) {
@@ -120,7 +190,11 @@ function createEncryptedConfigStore({ configPath }) {
         setValueByPath(config, fieldPath, decrypt(value));
       }
     }
-    return config;
+    const identity = ensureAnalyticsIdentity(config);
+    if (!raw || identity.changed || hasPlaintextSensitiveValue(raw)) {
+      writeEncryptedConfig(identity.config);
+    }
+    return identity.config;
   }
 
   function load() {
@@ -139,7 +213,38 @@ function createEncryptedConfigStore({ configPath }) {
 
   function save(newConfig) {
     const current = loadDecrypted();
-    const merged = normalizeConfig({ ...current, ...newConfig });
+    const incoming = newConfig && typeof newConfig === 'object' ? newConfig : {};
+    const textModelProfiles = mergeProfileMap(current.text_model_profiles, incoming.text_model_profiles);
+    const imageModelProfiles = mergeProfileMap(current.image_model_profiles, incoming.image_model_profiles);
+    const textModelProvider = incoming.text_model_provider || current.text_model_provider;
+    const hasIncomingTextFlatFields = TEXT_MODEL_FLAT_FIELDS.some((field) => (
+      Object.prototype.hasOwnProperty.call(incoming, field)
+    ));
+    const activeTextProfile = textModelProfiles[textModelProvider] || {};
+    const textFlatFields = Object.fromEntries(TEXT_MODEL_FLAT_FIELDS.map((field) => [
+      field,
+      hasIncomingTextFlatFields ? incoming[field] : activeTextProfile[field],
+    ]));
+    const imageModel = Object.prototype.hasOwnProperty.call(incoming, 'image_model')
+      ? { ...(current.image_model || {}), ...(incoming.image_model || {}) }
+      : imageModelProfiles[current.image_model?.provider] || current.image_model;
+
+    const merged = normalizeConfig({
+      ...current,
+      ...incoming,
+      ...textFlatFields,
+      text_model_provider: textModelProvider,
+      text_model_profiles: textModelProfiles,
+      image_model: imageModel,
+      image_model_profiles: imageModelProfiles,
+      agent_mode_scenarios: {
+        ...current.agent_mode_scenarios,
+        ...(incoming.agent_mode_scenarios || {}),
+      },
+      // Analytics 身份由服务端生成并保持稳定，不能被浏览器回传值覆盖。
+      analytics_client_id: current.analytics_client_id,
+      analytics_created_at: current.analytics_created_at,
+    });
     // 加密敏感字段
     const sensitivePaths = getSensitiveFieldPaths(merged);
     for (const fieldPath of sensitivePaths) {
@@ -154,8 +259,11 @@ function createEncryptedConfigStore({ configPath }) {
         }
       }
     }
-    writeRaw(merged);
-    return load();
+    writeEncryptedConfig(merged);
+    return {
+      success: true,
+      message: '配置已保存',
+    };
   }
 
   return { load, loadDecrypted, save };

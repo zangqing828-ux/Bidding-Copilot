@@ -85,39 +85,22 @@ function removeLegacyClientId() {
   }
 }
 
-async function migrateLegacyClientId(config: ClientConfig) {
+async function retireLegacyAnalyticsIdentity(config: ClientConfig) {
   const legacyClientId = getLegacyClientId();
   if (!legacyClientId) {
     return config;
   }
 
-  if (config.analytics_client_id === legacyClientId) {
+  if (config.analytics_client_id) {
     removeLegacyClientId();
-    return config;
   }
-
-  const migratedConfig: ClientConfig = {
-    ...config,
-    analytics_client_id: legacyClientId,
-  };
-
-  try {
-    const result = await window.yibiao?.config.save(migratedConfig);
-    if (result?.success) {
-      removeLegacyClientId();
-      return migratedConfig;
-    }
-  } catch {
-    // 保存失败时保留旧 localStorage，后续启动继续尝试迁移。
-  }
-
-  return migratedConfig;
+  return config;
 }
 
-function getAnalyticsIdentity() {
+export function getAnalyticsIdentity() {
   if (!identityPromise) {
     identityPromise = window.yibiao?.config.load()
-      .then((config) => migrateLegacyClientId(config))
+      .then((config) => retireLegacyAnalyticsIdentity(config))
       .then((config) => ({
         clientId: config?.analytics_client_id || '',
         clientCreatedAt: config?.analytics_created_at || '',

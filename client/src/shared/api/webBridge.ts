@@ -1,13 +1,24 @@
 // Web Bridge：在浏览器中实现与 Electron preload 等价的 YibiaoBridge 门面。
-// Sprint 02 阶段：除 openExternal 浏览器降级外，所有业务调用统一走 /api/bridge
-// 并由服务端返回 501 WEB_CAPABILITY_PENDING。订阅方法返回 no-op 取消函数，SSE 留到 Sprint 05。
+// 除 openExternal 浏览器降级外，其余能力走 /api/bridge；事件能力按已知状态直接报错或返回 SSE 退订句柄。
 import type { YibiaoBridge } from '../types/ipc';
 import { httpClient } from './httpClient';
 
-const noopUnsubscribe = () => {};
+type ErrorWithCode = Error & { code?: string };
 
-// 通用 invoke 包装：透传 namespace.method 调用，未实现的由服务端返回 501。
-// 返回 Promise<unknown>；Sprint 02 所有调用最终走 501 reject，运行时不会返回不匹配类型的值。
+function createWebBridgeEventError(code: string, message: string): ErrorWithCode {
+  const error: ErrorWithCode = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function throwWebBridgeEventError(code: string, message: string) {
+  return () => {
+    throw createWebBridgeEventError(code, message);
+  };
+}
+
+// 通用 invoke 包装：透传 namespace.method 调用，pending 能力由服务端返回 501。
+// 返回 Promise<unknown>；实际状态与错误口径以 bridge contract manifest 为准。
 // 对象用 as YibiaoBridge 断言，因为 httpClient.invoke 的返回类型无法从接口方法签名反向推断。
 function bridgeMethod(namespace: string, method: string) {
   return (...args: unknown[]) => httpClient.invoke(namespace, method, args);
@@ -34,13 +45,13 @@ export const webBridge = {
   checkUpdate: bridgeMethod('app', 'checkUpdate'),
   startUpdate: bridgeMethod('app', 'startUpdate'),
   quitAndInstall: bridgeMethod('app', 'quitAndInstall'),
-  onUpdateProgress: () => noopUnsubscribe,
-  onUpdateDownloaded: () => noopUnsubscribe,
-  onUpdateError: () => noopUnsubscribe,
+  onUpdateProgress: throwWebBridgeEventError('WEB_BRIDGE_DESKTOP_ONLY', '更新进度事件仅桌面端可用'),
+  onUpdateDownloaded: throwWebBridgeEventError('WEB_BRIDGE_DESKTOP_ONLY', '更新下载完成事件仅桌面端可用'),
+  onUpdateError: throwWebBridgeEventError('WEB_BRIDGE_DESKTOP_ONLY', '更新错误事件仅桌面端可用'),
   database: {
     // Web 端无本地数据库：直接返回就绪状态，WorkspaceDatabaseGate 放行进入工作台。
     getStatus: async () => ({ phase: 'ready', ready: true, message: '本地数据库已就绪', updatedAt: new Date().toISOString() }),
-    onStatus: () => noopUnsubscribe,
+    onStatus: throwWebBridgeEventError('WEB_CAPABILITY_PENDING', '数据库状态事件暂未在 Web 提供'),
   },
   config: {
     load: bridgeMethod('config', 'load'),
@@ -58,7 +69,7 @@ export const webBridge = {
     chat: bridgeMethod('ai', 'chat'),
     requestJson: bridgeMethod('ai', 'requestJson'),
     testImageModel: bridgeMethod('ai', 'testImageModel'),
-    onHttpError: () => noopUnsubscribe,
+    onHttpError: throwWebBridgeEventError('WEB_CAPABILITY_PENDING', 'AI HTTP 错误事件暂未在 Web 提供'),
   },
   agent: {
     listRuntimes: bridgeMethod('agent', 'listRuntimes'),
@@ -67,13 +78,13 @@ export const webBridge = {
     exportSelfCheckReport: bridgeMethod('agent', 'exportSelfCheckReport'),
     getStatus: bridgeMethod('agent', 'getStatus'),
     restart: bridgeMethod('agent', 'restart'),
-    onStatus: () => noopUnsubscribe,
+    onStatus: throwWebBridgeEventError('WEB_CAPABILITY_PENDING', 'Agent 状态事件暂未在 Web 提供'),
   },
   developerTokenStats: {
     openWindow: bridgeMethod('developerTokenStats', 'openWindow'),
     get: bridgeMethod('developerTokenStats', 'get'),
     reset: bridgeMethod('developerTokenStats', 'reset'),
-    onChanged: () => noopUnsubscribe,
+    onChanged: throwWebBridgeEventError('WEB_CAPABILITY_PENDING', '开发者 Token 统计事件暂未在 Web 提供'),
   },
   developerExpansionReplaceTest: {
     run: bridgeMethod('developerExpansionReplaceTest', 'run'),
@@ -97,7 +108,7 @@ export const webBridge = {
     readMarkdown: bridgeMethod('knowledgeBase', 'readMarkdown'),
     readItems: bridgeMethod('knowledgeBase', 'readItems'),
     readAnalysis: bridgeMethod('knowledgeBase', 'readAnalysis'),
-    onEvent: () => noopUnsubscribe,
+    onEvent: throwWebBridgeEventError('WEB_CAPABILITY_PENDING', '知识库增量事件暂未在 Web 提供'),
   },
   technicalPlan: {
     loadState: bridgeMethod('technicalPlan', 'loadState'),
@@ -180,7 +191,7 @@ export const webBridge = {
   export: {
     exportWord: bridgeMethod('export', 'exportWord'),
     openFile: bridgeMethod('export', 'openFile'),
-    onWordExportProgress: () => noopUnsubscribe,
+    onWordExportProgress: throwWebBridgeEventError('WEB_CAPABILITY_PENDING', '导出进度事件暂未在 Web 提供'),
   },
   systemFonts: {
     list: bridgeMethod('systemFonts', 'list'),

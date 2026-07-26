@@ -92,3 +92,10 @@ export interface ClientConfig extends AiConfig {
   analytics_client_id?: string;
   analytics_created_at?: string;
 }
+
+export type ModelListKind = 'text' | 'image';
+
+export type ModelListConfig = ClientConfig & {
+  model_kind?: ModelListKind;
+  model_provider?: ConfiguredTextModelProvider | ImageModelProvider;
+};

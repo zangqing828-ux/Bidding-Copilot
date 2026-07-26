@@ -5,10 +5,25 @@ const BRIDGE_ENDPOINT = '/api/bridge';
 
 export class WebCapabilityPendingError extends Error {
   readonly code = 'WEB_CAPABILITY_PENDING';
+  readonly status = 501;
 
   constructor(message: string) {
     super(message);
     this.name = 'WebCapabilityPendingError';
+  }
+}
+
+class WebCapabilityError extends Error {
+  readonly code: string;
+  readonly status: number;
+  readonly retryAfterSeconds: number | null;
+
+  constructor(code: string, message: string, status: number, retryAfterSeconds: number | null) {
+    super(message);
+    this.name = 'WebCapabilityError';
+    this.code = code;
+    this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -37,12 +52,20 @@ async function invoke<T = unknown>(namespace: string, method: string, args: unkn
     throw new Error(`Web 响应解析失败（HTTP ${response.status}）`);
   }
 
-  if (response.status === 501 || payload.code === 'WEB_CAPABILITY_PENDING') {
+  if (payload.code === 'WEB_CAPABILITY_PENDING') {
     throw new WebCapabilityPendingError(payload.message || '该功能尚未在 Web 端提供');
   }
 
   if (!response.ok) {
-    throw new Error(payload.message || `Web 请求错误（HTTP ${response.status}）`);
+    const errorCode = typeof payload.code === 'string' ? payload.code : `HTTP_${response.status}`;
+    const retryAfter = Number(response.headers.get('Retry-After'));
+    const retryAfterSeconds = Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : null;
+    throw new WebCapabilityError(
+      errorCode,
+      payload.message || `Web 请求错误（HTTP ${response.status}）`,
+      response.status,
+      retryAfterSeconds,
+    );
   }
 
   return (payload.data ?? payload) as T;
@@ -96,21 +119,4 @@ async function uploadMultiple(files: File[]): Promise<{ files: UploadResult[] }>
   return response.json();
 }
 
-// 创建下载令牌并返回下载 URL
-async function createDownloadUrl(filePath: string, fileName?: string): Promise<string> {
-  const response = await fetch('/api/downloads', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filePath, fileName }),
-  });
-
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null);
-    throw new Error(payload?.message || `下载创建失败（HTTP ${response.status}）`);
-  }
-
-  const { downloadId } = await response.json();
-  return `/api/downloads/${downloadId}`;
-}
-
-export const httpClient = { invoke, upload, uploadMultiple, createDownloadUrl };
+export const httpClient = { invoke, upload, uploadMultiple };

@@ -30,6 +30,10 @@ export function AiHttpErrorDialogProvider({ children }: { children: ReactNode })
   const htmlPayload = useMemo(() => isHtmlPayload(currentError), [currentError]);
 
   useEffect(() => {
+    if (window.yibiao?.platform === 'web') {
+      return undefined;
+    }
+
     const unsubscribe = window.yibiao?.ai?.onHttpError?.((event) => {
       setErrors((prev) => [...prev, { ...event, body: String(event.body || '') }]);
     });

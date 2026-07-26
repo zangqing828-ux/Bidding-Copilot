@@ -1,83 +1,242 @@
-// Workspace 上下文：每账号独立的 db、stores 和 configStore。
-// 由 workspaceRegistry 按需创建并缓存。
 const path = require('node:path');
 const fs = require('node:fs');
-const { createSqliteDatabase } = require('../../electron/services/sqliteDatabase.cjs');
-const { createTechnicalPlanStore } = require('../../electron/services/technicalPlanStore.cjs');
-const { createKnowledgeBaseStore } = require('../../electron/services/knowledgeBaseStore.cjs');
-const { createDuplicateCheckStore } = require('../../electron/services/duplicateCheckStore.cjs');
-const { createRejectionCheckStore } = require('../../electron/services/rejectionCheckStore.cjs');
-const { createTemplateStore } = require('../../electron/services/templateStore.cjs');
-const { createTaskService } = require('../../electron/services/taskService.cjs');
-const { resolveWorkspacePaths } = require('../../shared/workspacePaths.cjs');
-const { createEncryptedConfigStore } = require('../config/encryptedConfigStore.cjs');
-const {
-  createWebAiServiceStub,
-  createWebAgentServiceStub,
-  createWebKnowledgeBaseServiceStub,
-  createWebDuplicateCheckServiceStub,
-} = require('./webServices.cjs');
+const { resolveWorkspacePaths } = require('../../core/workspacePaths.cjs');
+const { createWorkspaceRuntimeFactory } = require('./workspaceRuntimeFactory.cjs');
 
-function createWorkspaceContext({ workspaceId, dataDir }) {
+function getCloseCandidate(target, label) {
+  if (!target || typeof target !== 'object') {
+    return { label, owner: null, resource: null, closeFn: null, cause: null };
+  }
+
+  try {
+    const closeFn = target.close;
+    if (typeof closeFn !== 'function') {
+      return {
+        label,
+        owner: target,
+        resource: target,
+        closeFn: null,
+        cause: new Error(`${label} 缺少 close 方法`),
+      };
+    }
+
+    return {
+      label,
+      owner: target,
+      resource: target,
+      closeFn,
+      cause: null,
+    };
+  } catch (error) {
+    return {
+      label,
+      owner: target,
+      resource: target,
+      closeFn: null,
+      cause: error,
+    };
+  }
+}
+
+function collectFallbackCloseCandidates(runtime) {
+  return [
+    getCloseCandidate(runtime.taskEvents, 'runtime.taskEvents'),
+    getCloseCandidate(runtime.taskService, 'runtime.taskService'),
+    getCloseCandidate(runtime.storeExecutor, 'runtime.storeExecutor'),
+    getCloseCandidate(runtime.aiService || (runtime.ports && runtime.ports.ai), 'runtime.aiService/runtime.ports.ai'),
+    getCloseCandidate((runtime.ports && runtime.ports.agent) || runtime.agent, 'runtime.ports.agent/runtime.agent'),
+    getCloseCandidate(runtime.sqliteDatabase, 'runtime.sqliteDatabase'),
+  ];
+}
+
+function runCloseCandidates(targets) {
+  const errors = [];
+  const seen = new Set();
+
+  for (const target of targets) {
+    if (!target || !target.resource || seen.has(target.resource)) {
+      continue;
+    }
+
+    seen.add(target.resource);
+
+    if (target.cause) {
+      errors.push(target.cause);
+      continue;
+    }
+
+    const closeFn = target.closeFn;
+    if (typeof closeFn !== 'function') {
+      continue;
+    }
+
+    try {
+      const result = closeFn.call(target.owner);
+      if (result && typeof result.then === 'function') {
+        void Promise.resolve(result).catch((error) => {
+          console.warn(`[workspace] ${target.label} 异步清理失败`, error?.message || String(error));
+        });
+      }
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+
+  return errors;
+}
+
+function buildCloseError(errors) {
+  if (!errors.length) {
+    return null;
+  }
+  if (errors.length === 1) {
+    return errors[0];
+  }
+  const first = errors[0];
+  return new AggregateError(
+    errors,
+    `context.close: 关闭失败 (${errors.length} 项)`,
+    { cause: first },
+  );
+}
+
+function countActiveTasks(value) {
+  if (Array.isArray(value)) {
+    return value.length;
+  }
+  if (Number.isFinite(Number(value))) {
+    return Math.max(0, Number(value));
+  }
+  if (value && typeof value === 'object') {
+    return Object.keys(value).length;
+  }
+  return 0;
+}
+
+function createActivitySnapshot(runtime) {
+  function readTaskCount() {
+    if (!runtime.taskService || typeof runtime.taskService.getActiveTasks !== 'function') {
+      return 0;
+    }
+    return countActiveTasks(runtime.taskService.getActiveTasks());
+  }
+
+  function readQueueStatus(methodName) {
+    if (!runtime.aiService || typeof runtime.aiService[methodName] !== 'function') {
+      return { active: 0, queued: 0 };
+    }
+    const status = runtime.aiService[methodName]();
+    return {
+      active: Math.max(0, Number(status?.active) || 0),
+      queued: Math.max(0, Number(status?.queued) || 0),
+    };
+  }
+
+  try {
+    const activeTaskCount = readTaskCount();
+    const text = readQueueStatus('getTextQueueStatus');
+    const image = readQueueStatus('getImageQueueStatus');
+    const store = runtime.storeExecutor && typeof runtime.storeExecutor.getStatus === 'function'
+      ? runtime.storeExecutor.getStatus()
+      : {};
+    const aiActiveCount = text.active + image.active;
+    const aiQueuedCount = text.queued + image.queued;
+    const storeActiveCount = Math.max(0, Number(store?.active) || 0)
+      + Math.max(0, Number(store?.queued) || 0);
+    return {
+      activeTaskCount,
+      aiActiveCount,
+      aiQueuedCount,
+      storeActiveCount,
+      active: activeTaskCount > 0 || aiActiveCount > 0 || aiQueuedCount > 0 || storeActiveCount > 0,
+      unknown: false,
+    };
+  } catch {
+    // 无法确认资源状态时保守地阻止 TTL 回收，等待下一次检查。
+    return {
+      activeTaskCount: 0,
+      aiActiveCount: 0,
+      aiQueuedCount: 0,
+      storeActiveCount: 0,
+      active: true,
+      unknown: true,
+    };
+  }
+}
+
+function createWorkspaceContext({
+  workspaceId,
+  dataDir,
+  runtimeFactory = createWorkspaceRuntimeFactory,
+}) {
   const workspaceRoot = path.join(dataDir, 'users', workspaceId, 'workspace');
   const userDir = path.join(dataDir, 'users', workspaceId);
   const paths = resolveWorkspacePaths(workspaceRoot);
 
-  // 创建目录
   fs.mkdirSync(workspaceRoot, { recursive: true });
   fs.mkdirSync(paths.uploadsDir, { recursive: true });
 
-  // 初始化 SQLite（复用 Electron 的 migration 逻辑，不传 app）
-  const sqliteDatabase = createSqliteDatabase(null, { workspaceRoot });
-
-  // 初始化加密配置
-  const configStore = createEncryptedConfigStore({
+  const runtime = runtimeFactory({
+    workspaceId,
+    userDir,
+    workspaceRoot,
+    paths,
+    databasePath: paths.databasePath,
     configPath: path.join(userDir, 'config.enc.json'),
+    dataDir,
   });
 
-  // 初始化 Stores（传 workspaceRoot，不传 app）
-  const technicalPlanStore = createTechnicalPlanStore({ db: sqliteDatabase.db, workspaceRoot });
-  const knowledgeBaseStore = createKnowledgeBaseStore({ db: sqliteDatabase.db, workspaceRoot });
-  const duplicateCheckStore = createDuplicateCheckStore({ db: sqliteDatabase.db, workspaceRoot });
-  const rejectionCheckStore = createRejectionCheckStore({ db: sqliteDatabase.db, workspaceRoot, technicalPlanStore });
-  const templateStore = createTemplateStore({ db: sqliteDatabase.db });
+  if (!runtime || typeof runtime !== 'object') {
+    throw new Error('runtimeFactory 必须返回对象');
+  }
 
-  // 初始化 Web 端占位服务（真实 AI/Agent 留到后续 Sprint）
-  const aiService = createWebAiServiceStub();
-  const agentService = createWebAgentServiceStub();
-  const knowledgeBaseService = createWebKnowledgeBaseServiceStub({ knowledgeBaseStore });
-  const duplicateCheckService = createWebDuplicateCheckServiceStub({ duplicateCheckStore });
+  const runtimeCloseCandidate = getCloseCandidate(runtime, 'runtime.close');
+  if (runtimeCloseCandidate.cause || !runtimeCloseCandidate.closeFn) {
+    const closeErrors = runCloseCandidates(collectFallbackCloseCandidates(runtime));
+    if (runtimeCloseCandidate.cause) {
+      closeErrors.unshift(runtimeCloseCandidate.cause);
+    } else {
+      closeErrors.push(new Error('runtime 缺少 close 方法'));
+    }
 
-  // 初始化 taskService（复用 Electron 逻辑，per-workspace 独立实例）
-  const taskService = createTaskService({
-    aiService,
-    agentService,
-    technicalPlanStore,
-    rejectionCheckStore,
-    duplicateCheckStore,
-    knowledgeBaseService,
-    duplicateCheckService,
-  });
+    const closeError = buildCloseError(closeErrors);
+    throw closeError || new Error('runtime 关闭能力无效');
+  }
+
+  let closePromise = null;
+  const close = () => {
+    if (closePromise) {
+      return closePromise;
+    }
+
+    const attempt = (async () => {
+      await runtimeCloseCandidate.closeFn.call(runtimeCloseCandidate.owner);
+    })();
+    closePromise = attempt;
+    void attempt.catch(() => {
+      if (closePromise === attempt) {
+        closePromise = null;
+      }
+    });
+    return attempt;
+  };
 
   return {
     workspaceId,
     workspaceRoot,
     paths,
-    db: sqliteDatabase.db,
-    sqliteDatabase,
-    configStore,
-    taskService,
-    stores: {
-      technicalPlanStore,
-      knowledgeBaseStore,
-      duplicateCheckStore,
-      rejectionCheckStore,
-      templateStore,
+    db: runtime.db,
+    sqliteDatabase: runtime.sqliteDatabase,
+    configStore: runtime.configStore,
+    storeExecutor: runtime.storeExecutor,
+    aiService: runtime.aiService || (runtime.ports && runtime.ports.ai),
+    stores: runtime.stores,
+    taskService: runtime.taskService,
+    taskEvents: runtime.taskEvents,
+    getActivitySnapshot() {
+      return createActivitySnapshot(runtime);
     },
-    close() {
-      agentService.close?.();
-      sqliteDatabase.close();
-    },
+    close,
   };
 }
 

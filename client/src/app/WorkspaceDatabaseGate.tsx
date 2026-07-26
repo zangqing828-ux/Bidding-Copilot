@@ -35,9 +35,12 @@ function WorkspaceDatabaseGate({ children }: WorkspaceDatabaseGateProps) {
     }
 
     let mounted = true;
-    const unsubscribe = database.onStatus((nextStatus) => {
-      if (mounted) setStatus(nextStatus);
-    });
+    const isWeb = window.yibiao?.platform === 'web';
+    const unsubscribe = !isWeb
+      ? database.onStatus((nextStatus) => {
+        if (mounted) setStatus(nextStatus);
+      })
+      : undefined;
 
     database.getStatus()
       .then((nextStatus) => {
@@ -54,7 +57,7 @@ function WorkspaceDatabaseGate({ children }: WorkspaceDatabaseGateProps) {
 
     return () => {
       mounted = false;
-      unsubscribe();
+      unsubscribe?.();
     };
   }, []);
 

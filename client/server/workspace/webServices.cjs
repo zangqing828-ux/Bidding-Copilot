@@ -1,6 +1,66 @@
-// Web 端最小占位服务：为 taskService 提供所需接口形状。
-// 真实 AI 请求和 Agent Runtime 留到后续 Sprint 实现。
-// 占位服务的方法存在但调用时抛 WEB_CAPABILITY_PENDING，确保 taskService 能实例化但任务执行不伪造成功。
+// Web 端 task/agent 最小占位服务：为后续业务包保留接口形状。
+// AI 真实运行时由 core/aiRuntime.cjs 装配；这里的 AI stub 仅保留兼容导出，不能用于 live wiring。
+// 占位服务的方法存在但调用时抛 WEB_CAPABILITY_PENDING，确保任务执行不会伪造成功。
+
+function createWebTaskServiceStub() {
+  const callbacks = new Set();
+
+  function createPendingError() {
+    return new Error('该能力在 Web 端尚未提供');
+  }
+
+  function subscribeCallback(callback) {
+    callbacks.add(callback);
+    return () => callbacks.delete(callback);
+  }
+
+  function unsubscribeCallback(callback) {
+    callbacks.delete(callback);
+  }
+
+  function close() {
+    callbacks.clear();
+  }
+
+  return {
+    getActiveTasks() {
+      return [];
+    },
+    subscribeCallback,
+    unsubscribeCallback,
+    close,
+    subscribe() {
+      throw createPendingError();
+    },
+    startBidSectionExtraction() {
+      return Promise.reject(createPendingError());
+    },
+    startBidAnalysis() {
+      return Promise.reject(createPendingError());
+    },
+    startOutlineGeneration() {
+      return Promise.reject(createPendingError());
+    },
+    startGlobalFactsGeneration() {
+      return Promise.reject(createPendingError());
+    },
+    startContentGeneration() {
+      return Promise.reject(createPendingError());
+    },
+    startRejectionItemsExtraction() {
+      return Promise.reject(createPendingError());
+    },
+    startRejectionCheck() {
+      return Promise.reject(createPendingError());
+    },
+    startDuplicateAnalysis() {
+      return Promise.reject(createPendingError());
+    },
+    pauseContentGeneration() {
+      return Promise.reject(createPendingError());
+    },
+  };
+}
 
 function createWebAiServiceStub() {
   const stubScope = {
@@ -60,6 +120,7 @@ function createWebDuplicateCheckServiceStub({ duplicateCheckStore }) {
 }
 
 module.exports = {
+  createWebTaskServiceStub,
   createWebAiServiceStub,
   createWebAgentServiceStub,
   createWebKnowledgeBaseServiceStub,

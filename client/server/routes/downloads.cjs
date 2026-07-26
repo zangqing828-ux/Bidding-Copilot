@@ -1,9 +1,7 @@
 // 下载路由：一次性下载 ID，映射到 workspace 内文件，不接受任意路径参数。
 const express = require('express');
 const crypto = require('node:crypto');
-const path = require('node:path');
 const fs = require('node:fs');
-const { getWorkspaceContext } = require('../workspace/workspaceRegistry.cjs');
 
 const router = express.Router();
 
@@ -31,30 +29,6 @@ function consumeDownloadToken(id, workspaceId) {
   downloadTokens.delete(id);
   return entry;
 }
-
-// POST /api/downloads — 创建下载令牌（服务端内部或 bridge dispatcher 调用）。
-router.post('/downloads', (req, res) => {
-  const { filePath, fileName } = req.body || {};
-  if (!filePath) {
-    return res.status(400).json({ code: 'DOWNLOAD_ERROR', message: '缺少文件路径' });
-  }
-
-  const ctx = getWorkspaceContext(req.workspaceId);
-  // 安全校验：文件必须在 workspace 内，用 path.relative 避免 startsWith 前缀混淆。
-  const resolved = path.resolve(filePath);
-  const workspaceRoot = path.resolve(ctx.workspaceRoot);
-  const relative = path.relative(workspaceRoot, resolved);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    return res.status(403).json({ code: 'DOWNLOAD_ERROR', message: '文件路径越界' });
-  }
-
-  if (!fs.existsSync(resolved)) {
-    return res.status(404).json({ code: 'DOWNLOAD_ERROR', message: '文件不存在' });
-  }
-
-  const id = createDownloadToken(req.workspaceId, resolved, fileName || path.basename(resolved));
-  res.json({ downloadId: id });
-});
 
 // GET /api/downloads/:id — 通过令牌下载文件。
 router.get('/downloads/:id', (req, res) => {
