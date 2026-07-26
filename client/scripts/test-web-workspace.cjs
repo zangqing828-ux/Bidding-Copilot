@@ -101,6 +101,52 @@ async function runTests() {
     assert(rawFile.includes('enc:v1:'), '配置文件含加密标记');
   }
 
+  // 测试 5.1：活动生图模型 Key 同样加密、脱敏，并能重写旧明文副本
+  {
+    const configPath = path.join(tmpDir, 'test-image-model-config.enc.json');
+    const store = createEncryptedConfigStore({ configPath });
+    const imageKey = 'img-secret-key-6789';
+    store.save({
+      image_model: {
+        provider: 'custom',
+        base_url: 'https://images.example.test/v1',
+        api_key: imageKey,
+        model_name: 'image-test-model',
+      },
+    });
+
+    const masked = store.load();
+    assert(masked.image_model.api_key === '****6789', '活动生图模型 Key 返回脱敏值');
+    const rawFile = fs.readFileSync(configPath, 'utf-8');
+    assert(!rawFile.includes(imageKey), '活动生图模型 Key 不以明文落盘');
+
+    const legacyPath = path.join(tmpDir, 'legacy-image-model-config.enc.json');
+    const legacyKey = 'legacy-image-secret-2468';
+    fs.writeFileSync(legacyPath, JSON.stringify({
+      analytics_client_id: 'legacy-analytics-id',
+      analytics_created_at: '2026-07-25T00:00:00.000Z',
+      image_model: {
+        provider: 'custom',
+        base_url: 'https://images.example.test/v1',
+        api_key: legacyKey,
+        model_name: 'legacy-image-model',
+      },
+      image_model_profiles: {
+        custom: {
+          provider: 'custom',
+          base_url: 'https://images.example.test/v1',
+          api_key: legacyKey,
+          model_name: 'legacy-image-model',
+        },
+      },
+    }), 'utf-8');
+    const legacyStore = createEncryptedConfigStore({ configPath: legacyPath });
+    const legacyMasked = legacyStore.load();
+    const rewrittenLegacy = fs.readFileSync(legacyPath, 'utf-8');
+    assert(legacyMasked.image_model.api_key === '****2468', '旧活动生图模型 Key 读取后返回脱敏值');
+    assert(!rewrittenLegacy.includes(legacyKey), '旧活动生图模型 Key 会被重写为密文');
+  }
+
   // 测试 6：两个 workspace 隔离
   {
     const { createWorkspaceContext } = require('../server/workspace/workspaceContext.cjs');

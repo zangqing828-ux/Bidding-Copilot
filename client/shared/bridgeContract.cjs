@@ -398,9 +398,9 @@ const rawMethods = {
   },
   duplicateCheck: {
     loadState: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'duplicateCheck.loadState' }),
-    saveFiles: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'duplicateCheck.saveFiles' }),
+    saveFiles: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-D', contractRef: 'duplicateCheck.saveFiles' }),
     saveUiState: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'duplicateCheck.saveUiState' }),
-    updateState: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'duplicateCheck.updateState' }),
+    updateState: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-D', contractRef: 'duplicateCheck.updateState' }),
     clear: createContractEntry({ status: 'implemented', owner: 'workflow', workPackage: 'WP-A', contractRef: 'duplicateCheck.clear' }),
   },
   rejectionCheck: {

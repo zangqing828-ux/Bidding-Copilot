@@ -33,7 +33,18 @@ function getSensitiveFieldPaths(config) {
     }
   }
 
+  if (config.image_model?.api_key) {
+    paths.push('image_model.api_key');
+  }
+
   return paths;
+}
+
+function hasPlaintextSensitiveValue(config) {
+  return getSensitiveFieldPaths(config || {}).some((fieldPath) => {
+    const value = getValueByPath(config, fieldPath);
+    return value && typeof value === 'string' && !value.startsWith('enc:v1:');
+  });
 }
 
 function getValueByPath(obj, fieldPath) {
@@ -148,7 +159,7 @@ function createEncryptedConfigStore({ configPath }) {
       }
     }
     const identity = ensureAnalyticsIdentity(config);
-    if (!raw || identity.changed) {
+    if (!raw || identity.changed || hasPlaintextSensitiveValue(raw)) {
       writeEncryptedConfig(identity.config);
     }
     return identity.config;
