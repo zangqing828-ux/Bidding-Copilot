@@ -426,7 +426,7 @@ const rawMethods = {
   },
   agent: {
     listRuntimes: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.listRuntimes', input: [], output: 'AgentRuntimeDescriptor[]' }),
-    run: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.run', input: [contractArg('payload', 'AgentRunPayload'), contractArg('runtimeId', 'string', { required: false })], output: 'AgentRunResult', errors: ['AGENT_RUNTIME_UNAVAILABLE', 'AGENT_TIMEOUT', 'AGENT_ABORTED'] }),
+    run: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.run', input: [contractArg('payload', 'AgentRunPayload'), contractArg('runtimeId', 'string', { required: false })], output: { type: 'AgentRunResult' }, errors: ['WEB_CAPABILITY_PENDING'] }),
     selfCheck: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.selfCheck', input: [contractArg('runtimeId', 'string', { required: false })], output: 'AgentSelfCheckResult' }),
     exportSelfCheckReport: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.exportSelfCheckReport' }),
     getStatus: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.getStatus', input: [contractArg('runtimeId', 'string', { required: false })], output: 'AgentRuntimeStatus' }),
@@ -762,7 +762,7 @@ const rawMethods = {
   },
   tasks: {
     startBidSectionExtraction: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startBidSectionExtraction' }),
-    startBidAnalysis: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-E', contractRef: 'tasks.startBidAnalysis', input: [contractArg('payload', 'unknown')], output: 'unknown', errors: ['AGENT_RUNTIME_UNAVAILABLE', 'AGENT_TIMEOUT'] }),
+    startBidAnalysis: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-E', contractRef: 'tasks.startBidAnalysis', input: [contractArg('payload', 'unknown')], output: { type: 'unknown' }, errors: ['WEB_CAPABILITY_PENDING'] }),
     startOutlineGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startOutlineGeneration' }),
     startGlobalFactsGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startGlobalFactsGeneration' }),
     startContentGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startContentGeneration' }),

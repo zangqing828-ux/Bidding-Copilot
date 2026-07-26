@@ -18,6 +18,7 @@ import { DEFAULT_EXPORT_FORMAT } from '../../../shared/types/exportFormat';
 import type { SectionId } from '../../../shared/types/navigation';
 import { buildExportFormatCssVars } from '../../../shared/utils/exportFormatCss';
 import { countReadableWords } from '../../../shared/utils/wordCount';
+import { httpClient } from '../../../shared/api/httpClient';
 
 interface TechnicalPlanHomeProps {
   workflowKind: TechnicalPlanWorkflowKind;
@@ -142,6 +143,8 @@ interface ExportProgressState {
   warnings: string[];
   mermaidCount: number;
   filePath?: string;
+  downloadUrl?: string;
+  fileName?: string;
   error?: string;
 }
 
@@ -927,6 +930,8 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
         message: result?.message || 'Word 已导出，请打开文档核对图片、表格和版式。',
         warnings: result?.warnings || prev.warnings,
         filePath: result?.path,
+        downloadUrl: result?.downloadUrl,
+        fileName: result?.fileName,
       }));
       showToast(result?.message || 'Word 已导出', result?.warnings?.length ? 'info' : 'success');
     } catch (error) {
@@ -946,6 +951,18 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
   };
 
   const handleOpenExportedFile = async () => {
+    if (window.yibiao?.platform === 'web') {
+      if (!exportProgress.downloadUrl) return;
+      try {
+        await httpClient.downloadFile(exportProgress.downloadUrl, exportProgress.fileName);
+        setExportProgress((prev) => ({ ...prev, downloadUrl: undefined }));
+        showToast('Word 下载已开始', 'success');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '下载文件失败';
+        showToast(message, 'error');
+      }
+      return;
+    }
     if (!exportProgress.filePath) return;
 
     try {
@@ -1444,8 +1461,12 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
             </div>
             {!exportProgress.running && (
               <div className="content-regenerate-actions">
-                {!exportProgress.error && exportProgress.filePath && <button className="primary-action" type="button" onClick={() => { void handleOpenExportedFile(); }}>打开文件</button>}
-                <Dialog.Close className={exportProgress.filePath && !exportProgress.error ? 'secondary-action' : 'primary-action'} type="button">知道了</Dialog.Close>
+                {!exportProgress.error && (exportProgress.filePath || exportProgress.downloadUrl) && (
+                  <button className="primary-action" type="button" onClick={() => { void handleOpenExportedFile(); }}>
+                    {window.yibiao?.platform === 'web' ? '下载 Word' : '打开文件'}
+                  </button>
+                )}
+                <Dialog.Close className={(exportProgress.filePath || exportProgress.downloadUrl) && !exportProgress.error ? 'secondary-action' : 'primary-action'} type="button">知道了</Dialog.Close>
               </div>
             )}
           </Dialog.Content>

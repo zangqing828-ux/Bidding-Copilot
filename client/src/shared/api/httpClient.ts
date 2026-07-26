@@ -85,18 +85,58 @@ const DOCUMENT_ACCEPT = '.doc,.docx,.pdf,.txt,.md,.xlsx';
 function chooseFiles({ multiple = false, accept = DOCUMENT_ACCEPT }: { multiple?: boolean; accept?: string } = {}): Promise<File[]> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
+    let settled = false;
+    let focusTimer: number | null = null;
+    const cleanup = () => {
+      if (focusTimer !== null) window.clearTimeout(focusTimer);
+      window.removeEventListener('focus', onWindowFocus);
+      input.remove();
+    };
+    const finish = (files: File[]) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(files);
+    };
+    const onWindowFocus = () => {
+      focusTimer = window.setTimeout(() => finish(Array.from(input.files || [])), 300);
+    };
     input.type = 'file';
     input.multiple = multiple;
     input.accept = accept;
     input.style.display = 'none';
-    input.addEventListener('change', () => {
-      const files = Array.from(input.files || []);
-      input.remove();
-      resolve(files);
-    }, { once: true });
+    input.addEventListener('change', () => finish(Array.from(input.files || [])), { once: true });
+    input.addEventListener('cancel', () => finish([]), { once: true });
+    window.addEventListener('focus', onWindowFocus, { once: true });
     document.body.appendChild(input);
     input.click();
   });
+}
+
+async function downloadFile(downloadUrl: string, fileName = '投标技术文件.docx'): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(downloadUrl, { method: 'GET', credentials: 'same-origin' });
+  } catch (error) {
+    throw new Error(`下载失败：${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!response.ok) {
+    const message = await response.text().catch(() => '');
+    throw new Error(message || `下载失败（HTTP ${response.status}）`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = fileName;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  try {
+    anchor.click();
+  } finally {
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  }
 }
 
 // 上传单文件
@@ -151,4 +191,4 @@ async function chooseAndUpload(options: { multiple?: boolean; accept?: string } 
   return [await upload(files[0])];
 }
 
-export const httpClient = { invoke, upload, uploadMultiple, chooseAndUpload };
+export const httpClient = { invoke, upload, uploadMultiple, chooseAndUpload, downloadFile };

@@ -162,7 +162,6 @@ const bridgeBindingMetadata = Object.freeze({
 
   agent: Object.freeze({
     listRuntimes: createDirectBinding((ctx) => ctx.agentService.listRuntimes(), 'agent.listRuntimes'),
-    run: createDirectBinding((ctx, args, options) => ctx.agentService.runTask(args[0], options), 'agent.run'),
     selfCheck: createDirectBinding((ctx) => ctx.agentService.selfCheck(), 'agent.selfCheck'),
     getStatus: createDirectBinding((ctx) => ctx.agentService.getStatus(), 'agent.getStatus'),
     restart: createDirectBinding((ctx) => ctx.agentService.restart(), 'agent.restart'),
@@ -170,7 +169,6 @@ const bridgeBindingMetadata = Object.freeze({
 
   tasks: Object.freeze({
     getActiveTasks: createDirectBinding((ctx) => ctx.taskService.getActiveTasks(), 'tasks.getActiveTasks'),
-    startBidAnalysis: createDirectBinding((ctx) => ctx.taskService.startBidAnalysis(), 'tasks.startBidAnalysis'),
   }),
 
   export: Object.freeze({
@@ -180,11 +178,11 @@ const bridgeBindingMetadata = Object.freeze({
   technicalPlan: Object.freeze({
     loadState: createStoreBinding('technicalPlanStore', 'loadTechnicalPlan', 'technicalPlan.loadState'),
     importTenderDocument: createDirectBinding(
-      (ctx, args) => ctx.stores.technicalPlanStore.importTenderDocument(args[0]),
+      (ctx, args, options) => ctx.stores.technicalPlanStore.importTenderDocument(args[0], options),
       'technicalPlan.importTenderDocument',
     ),
     importOriginalPlanDocument: createDirectBinding(
-      (ctx, args) => ctx.stores.technicalPlanStore.importOriginalPlanDocument(args[0]),
+      (ctx, args, options) => ctx.stores.technicalPlanStore.importOriginalPlanDocument(args[0], options),
       'technicalPlan.importOriginalPlanDocument',
     ),
     readTenderMarkdown: createStoreBinding('technicalPlanStore', 'readTenderMarkdown', 'technicalPlan.readTenderMarkdown'),
@@ -207,7 +205,7 @@ const bridgeBindingMetadata = Object.freeze({
   knowledgeBase: Object.freeze({
     list: createDirectBinding((ctx) => ctx.knowledgeBaseService.list(), 'knowledgeBase.list'),
     createFolder: createDirectBinding((ctx, args) => ctx.knowledgeBaseService.createFolder(args[0]), 'knowledgeBase.createFolder'),
-    uploadDocuments: createDirectBinding((ctx, args) => ctx.knowledgeBaseService.uploadDocuments(args[0], args[1]), 'knowledgeBase.uploadDocuments'),
+    uploadDocuments: createDirectBinding((ctx, args, options) => ctx.knowledgeBaseService.uploadDocuments(args[0], args[1], options), 'knowledgeBase.uploadDocuments'),
     getMigrationStatus: createStoreBinding('knowledgeBaseStore', 'getMigrationStatus', 'knowledgeBase.getMigrationStatus'),
     migrateLegacy: createStoreBinding('knowledgeBaseStore', 'migrateLegacy', 'knowledgeBase.migrateLegacy'),
     renameFolder: createStoreBinding('knowledgeBaseStore', 'renameFolder', 'knowledgeBase.renameFolder'),
@@ -247,7 +245,7 @@ const bridgeBindingMetadata = Object.freeze({
   rejectionCheck: Object.freeze({
     loadState: createStoreBinding('rejectionCheckStore', 'loadRejectionCheck', 'rejectionCheck.loadState'),
     importDocument: createDirectBinding(
-      (ctx, args) => ctx.stores.rejectionCheckStore.importDocument(args[0], args[1]),
+      (ctx, args, options) => ctx.stores.rejectionCheckStore.importDocument(args[0], args[1], options),
       'rejectionCheck.importDocument',
     ),
     removeDocument: createStoreBinding('rejectionCheckStore', 'removeDocument', 'rejectionCheck.removeDocument'),

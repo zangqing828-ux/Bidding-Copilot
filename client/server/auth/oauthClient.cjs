@@ -21,6 +21,10 @@ function isMockMode() {
   return config.oauth.mode === 'mock';
 }
 
+function oauthEndpoint(pathname) {
+  return new URL(String(pathname || '').replace(/^\/+/, ''), `${config.oauth.baseUrl}/`).toString();
+}
+
 // 构造 authorize URL（mock 模式返回 mock 登录页地址）。
 function getAuthorizeUrl(state) {
   if (isMockMode()) {
@@ -34,7 +38,9 @@ function getAuthorizeUrl(state) {
     state,
   });
 
-  return `${config.oauth.baseUrl}/oauth/authorize?${params.toString()}`;
+  const url = new URL(oauthEndpoint('oauth/authorize'));
+  url.search = params.toString();
+  return url.toString();
 }
 
 // 交换授权码（mock 模式直接用 code 作为 email）。
@@ -44,7 +50,7 @@ async function exchangeCode(code, redirectUri) {
     return { accessToken: `mock-token-${Date.now()}`, code };
   }
 
-  const response = await requestOAuth(`${config.oauth.baseUrl}/oauth/token`, {
+  const response = await requestOAuth(oauthEndpoint('oauth/token'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -76,7 +82,7 @@ async function getUserInfo(accessToken, mockPayload) {
     };
   }
 
-  const response = await requestOAuth(`${config.oauth.baseUrl}/oauth/me`, {
+  const response = await requestOAuth(oauthEndpoint('oauth/me'), {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 

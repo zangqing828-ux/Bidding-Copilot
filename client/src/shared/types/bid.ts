@@ -1,6 +1,7 @@
 export interface LocalFileSelection {
   id: string;
   file_name: string;
+  // Electron 为本地路径；Web 固定为 upload:<fileId>，不得作为服务端路径使用。
   file_path: string;
   extension: string;
   size: number;

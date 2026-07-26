@@ -32,6 +32,7 @@ import {
 import { buildExportFormatCssVars } from '../../../shared/utils/exportFormatCss';
 import { formatOutlineNumber, formatOutlineTitle } from '../../../shared/utils/outlineNumbering';
 import type { OutlineItem, WordExportProgressEvent } from '../../../shared/types';
+import { httpClient } from '../../../shared/api/httpClient';
 import {
   EXPORT_LAYOUT_PRESETS,
   EXPORT_THEME_PRESETS,
@@ -66,6 +67,8 @@ interface ExportProgressState {
   warnings: string[];
   mermaidCount: number;
   filePath?: string;
+  downloadUrl?: string;
+  fileName?: string;
   error?: string;
 }
 
@@ -588,6 +591,8 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
         message: result?.message || 'Word 已导出，请打开文档核对版式。',
         warnings: result?.warnings || prev.warnings,
         filePath: result?.path,
+        downloadUrl: result?.downloadUrl,
+        fileName: result?.fileName,
       }));
       showToast(result?.message || 'Word 已导出', result?.warnings?.length ? 'info' : 'success');
     } catch (error) {
@@ -607,6 +612,18 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
   }, [config, showToast]);
 
   const handleOpenExportedFile = useCallback(async () => {
+    if (window.yibiao?.platform === 'web') {
+      if (!exportProgress.downloadUrl) return;
+      try {
+        await httpClient.downloadFile(exportProgress.downloadUrl, exportProgress.fileName);
+        setExportProgress((prev) => ({ ...prev, downloadUrl: undefined }));
+        showToast('Word 下载已开始', 'success');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '下载文件失败';
+        showToast(message, 'error');
+      }
+      return;
+    }
     if (!exportProgress.filePath) return;
 
     try {
@@ -615,7 +632,7 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
       const message = error instanceof Error ? error.message : '打开文件失败';
       showToast(message, 'error');
     }
-  }, [exportProgress.filePath, showToast]);
+  }, [exportProgress.downloadUrl, exportProgress.fileName, exportProgress.filePath, showToast]);
 
   const toggleHeading = useCallback((index: number) => {
     setExpandedHeadings((prev) => {
@@ -1375,8 +1392,12 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
             </div>
             {!exportProgress.running && (
               <div className="content-regenerate-actions">
-                {!exportProgress.error && exportProgress.filePath && <button className="primary-action" type="button" onClick={() => { void handleOpenExportedFile(); }}>打开文件</button>}
-                <Dialog.Close className={exportProgress.filePath && !exportProgress.error ? 'secondary-action' : 'primary-action'} type="button">知道了</Dialog.Close>
+                {!exportProgress.error && (exportProgress.filePath || exportProgress.downloadUrl) && (
+                  <button className="primary-action" type="button" onClick={() => { void handleOpenExportedFile(); }}>
+                    {window.yibiao?.platform === 'web' ? '下载 Word' : '打开文件'}
+                  </button>
+                )}
+                <Dialog.Close className={(exportProgress.filePath || exportProgress.downloadUrl) && !exportProgress.error ? 'secondary-action' : 'primary-action'} type="button">知道了</Dialog.Close>
               </div>
             )}
           </Dialog.Content>

@@ -45,6 +45,8 @@ export interface BackgroundTaskState {
   started_at: string;
   updated_at: string;
   error?: string;
+  error_code?: string;
+  retryable?: boolean;
   stats?: {
     outline?: {
       phase: 'generating' | 'reviewing' | 'word-adjusting' | 'second-review' | 'done';

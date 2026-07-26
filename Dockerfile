@@ -54,6 +54,7 @@ COPY client/shared/ ./client/shared/
 COPY client/core/ ./client/core/
 COPY client/electron/ ./client/electron/
 COPY client/scripts/prepare-opencode-binary.cjs ./client/scripts/prepare-opencode-binary.cjs
+COPY client/scripts/opencode-checksums.json ./client/scripts/opencode-checksums.json
 COPY client/package.json ./client/
 
 # 构建期固定下载指定版本的 Linux OpenCode binary；不依赖容器启动时联网。

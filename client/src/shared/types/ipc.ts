@@ -32,6 +32,8 @@ export interface WordExportResult {
   success: boolean;
   canceled?: boolean;
   path?: string;
+  downloadUrl?: string;
+  fileName?: string;
   message?: string;
   warnings?: string[];
 }

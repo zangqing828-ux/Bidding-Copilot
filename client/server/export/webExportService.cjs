@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { createDownloadToken } = require('../routes/downloads.cjs');
+const { createDownloadToken, revokeWorkspaceDownloads } = require('../routes/downloads.cjs');
 const { buildSimpleDocxResult } = require('./simpleDocxBuilder.cjs');
 
 function safeFileName(value) {
@@ -27,11 +27,16 @@ function createWebExportService({ workspaceId, workspaceRoot }) {
         success: true,
         message: result.warnings.length ? `Word 已生成，含 ${result.warnings.length} 条图片警告。` : 'Word 已生成，可开始下载。',
         warnings: result.warnings,
-        download_id: downloadId,
-        download_url: `/api/downloads/${downloadId}`,
+        downloadUrl: `/api/downloads/${downloadId}`,
+        fileName,
       };
     },
-    close() {},
+    close() {
+      revokeWorkspaceDownloads(workspaceId);
+      if (fs.existsSync(exportsDir)) {
+        fs.rmSync(exportsDir, { recursive: true, force: true });
+      }
+    },
   };
 }
 

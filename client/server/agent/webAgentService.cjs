@@ -63,14 +63,34 @@ function getRuntimeTools(env) {
   return raw.split(',').map((item) => item.trim()).filter(Boolean);
 }
 
-function buildOpenCodeConfig(proxyBaseUrl) {
+function buildOpenCodeConfig(proxyBaseUrl, outputFile = 'result.md') {
   return {
     $schema: 'https://opencode.ai/config.json',
     autoupdate: false,
     plugin: [],
     mcp: {},
     instructions: [],
-    permission: { external_directory: 'deny' },
+    permission: {
+      '*': 'deny',
+      read: {
+        '*': 'allow',
+        '.runtime/**': 'deny',
+      },
+      glob: 'allow',
+      grep: 'allow',
+      edit: {
+        '*': 'deny',
+        [outputFile]: 'allow',
+      },
+      bash: 'deny',
+      webfetch: 'deny',
+      websearch: 'deny',
+      task: 'deny',
+      skill: 'deny',
+      lsp: 'deny',
+      question: 'deny',
+      external_directory: 'deny',
+    },
     model: 'yibiao/default',
     small_model: 'yibiao/default',
     provider: {
@@ -177,6 +197,23 @@ function terminateProcess(child) {
     } catch {}
   }, 2_000);
   forceTimer.unref?.();
+}
+
+function waitForProcessExit(child, timeoutMs = 4_000) {
+  if (!child || child.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    timer.unref?.();
+    child.once('exit', finish);
+    child.once('error', finish);
+  });
 }
 
 function runOpenCode({ binary, taskDir, configPath, proxyToken, prompt, timeoutMs, signal, env, onChild }) {
@@ -289,6 +326,7 @@ function createWebAgentService({ workspaceId, workspaceRoot, aiService, env = pr
 
   async function runTask(payload = {}, options = {}) {
     if (closing) throw createProcessError('Agent 服务正在关闭', 'AGENT_CLOSING');
+    if (activeTask) throw createProcessError('Agent 当前有任务正在运行，请稍后重试', 'AGENT_BUSY');
     const taskId = safeTaskSegment(payload.task_id);
     const title = String(payload.title || '易标智能体任务').slice(0, 160);
     const task = String(payload.task || payload.prompt || '').trim();
@@ -317,7 +355,7 @@ function createWebAgentService({ workspaceId, workspaceRoot, aiService, env = pr
     ].join('\n'), { encoding: 'utf8', mode: 0o600 });
 
     const proxy = await createOpenAiProxy({ aiService, scopeId: `${workspaceId}:${runId}` });
-    fs.writeFileSync(configPath, JSON.stringify(buildOpenCodeConfig(proxy.baseUrl), null, 2), { encoding: 'utf8', mode: 0o600 });
+    fs.writeFileSync(configPath, JSON.stringify(buildOpenCodeConfig(proxy.baseUrl, outputFile), null, 2), { encoding: 'utf8', mode: 0o600 });
     activeTask = { task_id: taskId, title, stage: 'running', progress_text: 'OpenCode 正在生成', started_at: nowIso(), last_activity_at: nowIso(), elapsed_seconds: 0, idle_seconds: 0 };
     try {
       const result = await runOpenCode({
@@ -351,8 +389,14 @@ function createWebAgentService({ workspaceId, workspaceRoot, aiService, env = pr
     selfCheck,
     getStatus,
     restart: async () => getStatus(),
-    close: async () => { closing = true; activeChildren.forEach(terminateProcess); activeChildren.clear(); },
+    close: async () => {
+      closing = true;
+      const children = Array.from(activeChildren);
+      children.forEach(terminateProcess);
+      await Promise.all(children.map((child) => waitForProcessExit(child)));
+      activeChildren.clear();
+    },
   };
 }
 
-module.exports = { WEB_RUNTIME_ID, createWebAgentService, getRuntimeBinary, safeRelativePath };
+module.exports = { WEB_RUNTIME_ID, buildOpenCodeConfig, createWebAgentService, getRuntimeBinary, safeRelativePath };

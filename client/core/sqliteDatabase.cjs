@@ -3,7 +3,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 
 
-const schemaVersion = 19;
+const schemaVersion = 20;
 
 function createInitialSchema(db) {
   db.exec(`
@@ -63,6 +63,8 @@ function createInitialSchema(db) {
       logs_json TEXT,
       stats_json TEXT,
       error TEXT,
+      error_code TEXT,
+      retryable INTEGER NOT NULL DEFAULT 0,
       pause_requested INTEGER NOT NULL DEFAULT 0,
       started_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -179,6 +181,11 @@ function createUploadRegistrySchema(db) {
     CREATE INDEX IF NOT EXISTS idx_upload_registry_hash
     ON upload_registry(sha256, size, status);
   `);
+}
+
+function addTechnicalPlanTaskRecoveryFields(db) {
+  addColumnIfMissing(db, 'technical_plan_tasks', 'error_code', 'TEXT');
+  addColumnIfMissing(db, 'technical_plan_tasks', 'retryable', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 function addTechnicalPlanBidSectionV6Compat(db) {
@@ -1166,6 +1173,14 @@ const schemaHealthColumnGroups = [
       updated_at: 'TEXT',
     },
   },
+  {
+    version: 20,
+    table: 'technical_plan_tasks',
+    columns: {
+      error_code: 'TEXT',
+      retryable: 'INTEGER NOT NULL DEFAULT 0',
+    },
+  },
 ];
 
 function quoteIdentifier(value) {
@@ -1324,6 +1339,11 @@ const migrations = [
     version: 19,
     description: '新增 Web 上传文件注册表',
     up: createUploadRegistrySchema,
+  },
+  {
+    version: 20,
+    description: '技术方案任务新增重启恢复错误字段',
+    up: addTechnicalPlanTaskRecoveryFields,
   },
 ];
 

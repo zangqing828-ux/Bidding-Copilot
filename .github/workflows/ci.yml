@@ -92,6 +92,12 @@ jobs:
         env:
           CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser Web export gate
+        run: npm run test:web-browser
+
       - name: Run Electron native smoke
         run: xvfb-run -a npm run smoke:electron-native
 
@@ -154,7 +160,7 @@ jobs:
             -d '{"namespace":"export","method":"exportWord","args":[{"project_name":"CI 投标技术文件","outline":[{"id":"ci-outline-1","title":"第一章","content":"容器端到端导出验证内容","children":[]}]}]}' \
             -o /tmp/yibiao-export.json \
             http://127.0.0.1:3000/api/bridge
-          download_url="$(node -e "const fs = require('node:fs'); const result = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); const url = result.code === 'OK' && result.data?.success === true ? result.data.download_url : ''; if (!/^\\/api\\/downloads\\/[0-9a-f-]+$/i.test(url)) process.exit(1); process.stdout.write(url);" /tmp/yibiao-export.json)"
+          download_url="$(node -e "const fs = require('node:fs'); const result = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); const url = result.code === 'OK' && result.data?.success === true ? result.data.downloadUrl : ''; if (!/^\\/api\\/downloads\\/[0-9a-f-]+$/i.test(url)) process.exit(1); process.stdout.write(url);" /tmp/yibiao-export.json)"
           curl -fsS -b /tmp/yibiao-mock-cookies \
             -o /tmp/yibiao-export.docx \
             "http://127.0.0.1:3000${download_url}"

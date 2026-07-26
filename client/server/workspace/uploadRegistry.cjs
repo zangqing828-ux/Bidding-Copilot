@@ -50,6 +50,7 @@ function createUploadRegistry({ db, uploadsDir }) {
     VALUES (@file_id, @stored_name, @original_name, @extension, @mime_type, @size, @sha256, 'ready', @created_at, @updated_at)
   `);
   const touch = db.prepare('UPDATE upload_registry SET claimed_at = ?, claim_count = claim_count + 1, updated_at = ? WHERE file_id = ?');
+  const invalidate = db.prepare("UPDATE upload_registry SET status = 'missing', updated_at = ? WHERE file_id = ?");
 
   function toPublicRecord(row) {
     return {
@@ -61,20 +62,17 @@ function createUploadRegistry({ db, uploadsDir }) {
     };
   }
 
-  function register({ fileId, storedName, originalName, mimeType, size }) {
+  function prepareCandidate({ fileId, storedName, originalName, mimeType, size }) {
     if (!FILE_ID_PATTERN.test(String(fileId || ''))) throw createUploadError('UPLOAD_FILE_INVALID', '上传文件标识无效');
     const filePath = assertStoredPath(uploadsDir, storedName);
     const normalizedSize = Number(size || 0);
     const stat = fs.statSync(filePath);
     if (!Number.isFinite(normalizedSize) || normalizedSize !== stat.size) throw createUploadError('UPLOAD_FILE_INVALID', '上传文件大小无效');
     const sha256 = hashFile(filePath);
-    const existing = findByHash.get(sha256, stat.size);
-    if (existing) {
-      fs.rmSync(filePath, { force: true });
-      return { record: toPublicRecord(existing), deduplicated: true };
-    }
     const timestamp = new Date().toISOString();
-    const row = {
+    return {
+      filePath,
+      row: {
       file_id: fileId,
       stored_name: storedName,
       original_name: String(originalName || '未命名文件').slice(0, 255),
@@ -84,9 +82,48 @@ function createUploadRegistry({ db, uploadsDir }) {
       sha256,
       created_at: timestamp,
       updated_at: timestamp,
+      },
     };
-    insert.run(row);
-    return { record: toPublicRecord(row), deduplicated: false };
+  }
+
+  const registerTransaction = db.transaction((prepared) => {
+    const batchByHash = new Map();
+    return prepared.map((candidate) => {
+      const { row } = candidate;
+      const key = `${row.sha256}:${row.size}`;
+      let existing = findByHash.get(row.sha256, row.size);
+      if (existing) {
+        try {
+          assertStoredPath(uploadsDir, existing.stored_name);
+        } catch {
+          invalidate.run(new Date().toISOString(), existing.file_id);
+          existing = null;
+        }
+      }
+      existing = existing || batchByHash.get(key) || null;
+      if (existing) {
+        return { record: toPublicRecord(existing), deduplicated: true, duplicatePath: candidate.filePath };
+      }
+      insert.run(row);
+      batchByHash.set(key, row);
+      return { record: toPublicRecord(row), deduplicated: false, duplicatePath: null };
+    });
+  });
+
+  function registerMany(files) {
+    if (!Array.isArray(files) || files.length === 0) {
+      throw createUploadError('UPLOAD_FILE_INVALID', '上传文件列表为空');
+    }
+    const prepared = files.map(prepareCandidate);
+    const registered = registerTransaction(prepared);
+    for (const item of registered) {
+      if (item.duplicatePath) fs.rmSync(item.duplicatePath, { force: true });
+    }
+    return registered.map(({ record, deduplicated }) => ({ record, deduplicated }));
+  }
+
+  function register(file) {
+    return registerMany([file])[0];
   }
 
   function resolve(fileId) {
@@ -110,7 +147,7 @@ function createUploadRegistry({ db, uploadsDir }) {
     for (const fileId of new Set(fileIds || [])) touch.run(timestamp, timestamp, fileId);
   }
 
-  return { register, resolve, resolveMany, markClaimed };
+  return { register, registerMany, resolve, resolveMany, markClaimed };
 }
 
 module.exports = { FILE_ID_PATTERN, createUploadRegistry, createUploadError };

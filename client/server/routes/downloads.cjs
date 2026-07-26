@@ -9,12 +9,32 @@ const router = express.Router();
 // 5 分钟过期。生产可换 Redis。
 const downloadTokens = new Map();
 const TOKEN_TTL_MS = 5 * 60 * 1000;
+const MAX_WORKSPACE_DOWNLOADS = 10;
+
+function removeFile(filePath) {
+  if (!filePath) return;
+  fs.rm(filePath, { force: true }, () => {});
+}
 
 function createDownloadToken(workspaceId, filePath, fileName) {
+  const workspaceEntries = [...downloadTokens.entries()]
+    .filter(([, entry]) => entry.workspaceId === workspaceId)
+    .sort((left, right) => left[1].createdAt - right[1].createdAt);
+  while (workspaceEntries.length >= MAX_WORKSPACE_DOWNLOADS) {
+    const [expiredId, expiredEntry] = workspaceEntries.shift();
+    downloadTokens.delete(expiredId);
+    removeFile(expiredEntry.filePath);
+  }
   const id = crypto.randomUUID();
   const entry = { workspaceId, filePath, fileName, createdAt: Date.now() };
   downloadTokens.set(id, entry);
-  setTimeout(() => downloadTokens.delete(id), TOKEN_TTL_MS);
+  const timer = setTimeout(() => {
+    const expired = downloadTokens.get(id);
+    if (!expired) return;
+    downloadTokens.delete(id);
+    removeFile(expired.filePath);
+  }, TOKEN_TTL_MS);
+  timer.unref?.();
   return id;
 }
 
@@ -24,14 +44,23 @@ function consumeDownloadToken(id, workspaceId) {
   if (entry.workspaceId !== workspaceId) return null;
   if (Date.now() - entry.createdAt > TOKEN_TTL_MS) {
     downloadTokens.delete(id);
+    removeFile(entry.filePath);
     return null;
   }
   downloadTokens.delete(id);
   return entry;
 }
 
+function revokeWorkspaceDownloads(workspaceId) {
+  for (const [id, entry] of downloadTokens.entries()) {
+    if (entry.workspaceId !== workspaceId) continue;
+    downloadTokens.delete(id);
+    removeFile(entry.filePath);
+  }
+}
+
 // GET /api/downloads/:id — 通过令牌下载文件。
-router.get('/downloads/:id', (req, res) => {
+router.get('/downloads/:id', (req, res, next) => {
   const { id } = req.params;
   const entry = consumeDownloadToken(id, req.workspaceId);
   if (!entry) {
@@ -42,8 +71,12 @@ router.get('/downloads/:id', (req, res) => {
     return res.status(404).type('text').send('文件不存在');
   }
 
-  res.download(entry.filePath, entry.fileName);
+  res.download(entry.filePath, entry.fileName, (error) => {
+    removeFile(entry.filePath);
+    if (error) next(error);
+  });
 });
 
 module.exports = router;
 module.exports.createDownloadToken = createDownloadToken;
+module.exports.revokeWorkspaceDownloads = revokeWorkspaceDownloads;

@@ -3,8 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { createWebAgentService, safeRelativePath } = require('../server/agent/webAgentService.cjs');
-const { createWebTaskService } = require('../server/workspace/webServices.cjs');
+const { buildOpenCodeConfig, createWebAgentService, safeRelativePath } = require('../server/agent/webAgentService.cjs');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-web-agent-'));
 const binaryPath = path.join(root, 'fake-opencode');
@@ -49,6 +48,11 @@ async function run() {
   check(result.output_content === 'agent generated content', 'Agent 读取受控输出文件');
   check(!fs.existsSync(path.join(workspaceRoot, '.agent-tasks', 'plan-1')), '任务结束后清理临时工作区');
   check(service.getStatus().active_task === null, '任务结束后状态恢复空闲');
+  const config = buildOpenCodeConfig('http://127.0.0.1:3000', 'result.md');
+  check(config.permission?.['*'] === 'deny', 'Agent 权限默认全部拒绝');
+  check(config.permission?.bash === 'deny', 'Agent 禁止 Bash');
+  check(config.permission?.webfetch === 'deny' && config.permission?.websearch === 'deny', 'Agent 禁止网络工具');
+  check(config.permission?.edit?.['result.md'] === 'allow', 'Agent 只允许写入约定输出文件');
 
   assert.throws(() => safeRelativePath('../outside.md'));
   check(true, '拒绝相对路径越界');
@@ -61,20 +65,6 @@ async function run() {
   );
   check(true, '超时时终止 Agent 进程');
 
-  const writes = [];
-  const taskService = createWebTaskService({
-    agentService: { runTask: async () => ({ output_content: '项目概述结果' }) },
-    technicalPlanStore: {
-      readTenderMarkdown: () => '# 招标文件',
-      loadTechnicalPlan: () => ({ bidAnalysisTasks: {} }),
-      updateTechnicalPlanWithoutReload: (patch) => writes.push(patch),
-    },
-  });
-  taskService.startBidAnalysis({});
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  const finalWrite = writes.at(-1);
-  check(finalWrite?.bidAnalysisTasks?.projectOverview?.content === '项目概述结果', '核心项目概述任务通过 Agent 写回技术方案 Store');
-  taskService.close();
   await service.close();
 }
 

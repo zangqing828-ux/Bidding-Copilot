@@ -67,10 +67,11 @@ async function runTests() {
     assert(res.statusCode === 200, 'export.exportWord 返回 200');
     const body = JSON.parse(res.body);
     assert(body.data?.success === true, 'export.exportWord 生成 Word');
-    assert(typeof body.data?.download_url === 'string', 'export.exportWord 返回下载地址');
-    const download = await httpRequest('GET', body.data.download_url, { cookie: cookieStr });
+    assert(typeof body.data?.downloadUrl === 'string', 'export.exportWord 返回下载地址');
+    assert(/^测试投标文件_.*\.docx$/.test(body.data?.fileName || ''), 'export.exportWord 返回浏览器文件名');
+    const download = await httpRequest('GET', body.data.downloadUrl, { cookie: cookieStr });
     assert(download.statusCode === 200, '当前账号可下载生成的 Word');
-    const secondDownload = await httpRequest('GET', body.data.download_url, { cookie: cookieStr });
+    const secondDownload = await httpRequest('GET', body.data.downloadUrl, { cookie: cookieStr });
     assert(secondDownload.statusCode === 404, '下载令牌只能使用一次');
   }
 

@@ -2,7 +2,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { parseDocumentWithConfig } = require('../../core/documentParser.cjs');
+const { parseDocumentInWorker } = require('./documentParseExecutor.cjs');
 
 function createId(prefix) {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -24,7 +24,10 @@ function createWebFileService({ uploadRegistry, configStore }) {
     const errors = [];
     for (const upload of uploads) {
       try {
-        const parsed = await parseDocumentWithConfig(upload.filePath, config, { timeoutMs: options.timeoutMs });
+        const parsed = await parseDocumentInWorker(upload.filePath, config, {
+          timeoutMs: options.timeoutMs,
+          signal: options.signal,
+        });
         if (!parsed.markdown) throw new Error('解析结果为空');
         results.push({
           id: upload.fileId,
@@ -46,8 +49,8 @@ function createWebFileService({ uploadRegistry, configStore }) {
     return { uploads, documents: results, errors };
   }
 
-  async function importDocument({ fileIds, multiple = false } = {}) {
-    const { documents, errors } = await parseFiles(fileIds, { min: 1, max: multiple ? 10 : 1 });
+  async function importDocument({ fileIds, multiple = false } = {}, options = {}) {
+    const { documents, errors } = await parseFiles(fileIds, { min: 1, max: multiple ? 10 : 1, signal: options.signal });
     if (!documents.length) return { success: false, message: errors[0]?.message || '文件解析失败', errors };
     const first = documents[0];
     return {
@@ -60,14 +63,14 @@ function createWebFileService({ uploadRegistry, configStore }) {
     };
   }
 
-  async function importTechnicalPlanDocument(label, { fileIds, multiple = false } = {}) {
-    const result = await importDocument({ fileIds, multiple });
+  async function importTechnicalPlanDocument(label, { fileIds, multiple = false } = {}, options = {}) {
+    const result = await importDocument({ fileIds, multiple }, options);
     if (!result.success) return result;
     return { ...result, message: `${label || '文件'}已导入` };
   }
 
-  async function importRejectionCheckDocument(role, { fileIds } = {}) {
-    const result = await importDocument({ fileIds, multiple: role === 'bid' });
+  async function importRejectionCheckDocument(role, { fileIds } = {}, options = {}) {
+    const result = await importDocument({ fileIds, multiple: role === 'bid' }, options);
     return result;
   }
 
@@ -78,17 +81,18 @@ function createWebFileService({ uploadRegistry, configStore }) {
       id: item.fileId,
       file_id: item.fileId,
       file_name: item.fileName,
-      file_path: item.filePath,
+      // Core Store 仍保留桌面兼容字段；Web 只写入不可解析的 file ID 引用。
+      file_path: `upload:${item.fileId}`,
       extension: item.extension,
       size: item.size,
       modified_at: item.uploadedAt,
     }));
   }
 
-  async function uploadKnowledgeBaseDocuments({ folderId, fileIds, knowledgeBaseStore }) {
+  async function uploadKnowledgeBaseDocuments({ folderId, fileIds, knowledgeBaseStore, signal }) {
     const folder = knowledgeBaseStore.list().folders.find((item) => item.id === folderId);
     if (!folder) throw new Error('请先选择知识库文件夹');
-    const { documents, errors } = await parseFiles(fileIds, { min: 1, max: 10 });
+    const { documents, errors } = await parseFiles(fileIds, { min: 1, max: 10, signal });
     const created = [];
     for (const documentInput of documents) {
       const documentId = createId('doc');

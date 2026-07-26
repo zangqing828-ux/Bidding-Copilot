@@ -104,19 +104,17 @@ function sendUploadError(res, error) {
 
 async function registerUploadedFiles(req, files) {
   const ctx = getWorkspaceContext(req.workspaceId);
-  const registered = [];
   try {
     for (const file of files) {
       await validateUploadedFile(file);
-      registered.push(ctx.uploadRegistry.register({
+    }
+    return ctx.uploadRegistry.registerMany(files.map((file) => ({
         fileId: file.uploadFileId,
         storedName: file.filename,
         originalName: normalizeOriginalName(file.originalname),
         mimeType: file.mimetype,
         size: file.size,
-      }));
-    }
-    return registered;
+      })));
   } catch (error) {
     await removeUploadedFiles(files);
     throw error;

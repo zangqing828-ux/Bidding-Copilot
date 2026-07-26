@@ -563,6 +563,7 @@ function BidAnalysisPage({
     : hasExtractedBidSections
       ? selectedSectionTitle ? '更换' : '选择标段'
       : bidSectionExtractionStatus === 'error' ? '重新识别标段' : '识别标段';
+  const webBidAnalysisPending = window.yibiao?.platform === 'web';
 
   return (
     <div className="plan-step-body bid-analysis-page">
@@ -660,7 +661,7 @@ function BidAnalysisPage({
             <div className="bid-analysis-reader-actions">
               <span className={`bid-analysis-status is-${activeTaskStatus}`}>{statusLabel[activeTaskStatus]}</span>
               {activeTaskStatus === 'error' && (
-                <button type="button" className="secondary-action" onClick={retryActiveTask} disabled={taskRunning || !hasTenderFile}>重新解析此项</button>
+                <button type="button" className="secondary-action" onClick={retryActiveTask} disabled={webBidAnalysisPending || taskRunning || !hasTenderFile}>重新解析此项</button>
               )}
               <button type="button" className="secondary-action" onClick={copyActiveResult} disabled={!activeTaskContent}>复制</button>
             </div>
@@ -679,7 +680,11 @@ function BidAnalysisPage({
           ) : (
             <div className="markdown-empty-state bid-analysis-empty">
               <strong>{activeTaskStatus === 'error' ? activeTaskState?.error || '解析失败' : '等待解析结果'}</strong>
-              <p>{activeTaskStatus === 'idle' ? '点击开始解析后，左侧任务会并发运行；选择任一任务查看实时输出。' : '正在等待模型返回内容。'}</p>
+              <p>{webBidAnalysisPending
+                ? 'Web 版招标文件解析链路正在完善，当前可先保存解析配置。'
+                : activeTaskStatus === 'idle'
+                  ? '点击开始解析后，左侧任务会并发运行；选择任一任务查看实时输出。'
+                  : '正在等待模型返回内容。'}</p>
             </div>
           )}
         </article>
@@ -809,9 +814,10 @@ function BidAnalysisPage({
                 type="button"
                 className="primary-action"
                 onClick={() => { void startAnalysis(undefined, draftSelectedTaskIds); }}
-                disabled={taskRunning || !hasTenderFile}
+                disabled={webBidAnalysisPending || taskRunning || !hasTenderFile}
+                title={webBidAnalysisPending ? 'Web 版招标文件解析链路正在完善' : undefined}
               >
-                开始解析
+                {webBidAnalysisPending ? 'Web 版暂未开放' : '开始解析'}
               </button>
             </div>
           </Dialog.Content>

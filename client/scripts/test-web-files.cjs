@@ -87,6 +87,13 @@ function multipartFile(fieldName, fileName, contentType, content, boundary = '--
   };
 }
 
+function multipartFiles(files, boundary = '----testmultiboundary') {
+  const parts = files.map(({ fileName, contentType, content }) => (
+    `--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="${fileName}"\r\nContent-Type: ${contentType}\r\n\r\n${content}\r\n`
+  ));
+  return { boundary, body: `${parts.join('')}--${boundary}--\r\n` };
+}
+
 async function loginMock(email, name) {
   const loginRes = await httpRequest('GET', '/api/auth/login');
   const setCookies = loginRes.headers['set-cookie'];
@@ -195,6 +202,9 @@ async function runTests() {
     const duplicate = parseJson(duplicateRes.body);
     assert(duplicateRes.statusCode === 200, '查重文件通过 file ID 保存成功');
     assert(duplicate?.data?.tenderFiles?.length === 1 && duplicate?.data?.bidFiles?.length === 1, '查重 Store 只保存当前账号文件');
+    const duplicatePayload = JSON.stringify(duplicate?.data || {});
+    assert(!duplicatePayload.includes(tmpDir) && !duplicatePayload.includes('/uploads/'), '查重状态不返回服务器绝对路径');
+    assert(duplicatePayload.includes(`upload:${uploadedFileId}`), '查重状态仅保留不可解析的上传引用');
 
     const rejectionTenderRes = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
       namespace: 'rejectionCheck',
@@ -233,6 +243,35 @@ async function runTests() {
     });
     const knowledgeList = parseJson(knowledgeListRes.body);
     assert(knowledgeList?.data?.documents?.length === 1, '知识库导入后可从 Store 恢复');
+  }
+
+  // 0f. 多文件批次任一文件不合法时，Registry 与物理文件一起回滚。
+  {
+    const { getSystemDb } = require('../server/database/systemDatabase.cjs');
+    const { getWorkspaceContext } = require('../server/workspace/workspaceRegistry.cjs');
+    const account = getSystemDb().prepare('SELECT workspace_id FROM accounts WHERE email = ?').get('files@test.com');
+    const context = getWorkspaceContext(account.workspace_id);
+    const beforeCount = context.db.prepare("SELECT COUNT(*) AS count FROM upload_registry WHERE original_name = '事务合法文件.txt' AND status = 'ready'").get().count;
+    const { boundary, body } = multipartFiles([
+      { fileName: '事务合法文件.txt', contentType: 'text/plain', content: '事务回滚后的合法内容' },
+      { fileName: '事务伪装文件.pdf', contentType: 'application/pdf', content: 'plain text' },
+    ]);
+    const failedBatch = await httpRequest('POST', '/api/uploads/multiple', {
+      'content-type': `multipart/form-data; boundary=${boundary}`,
+      cookie: cookieStr,
+    }, body);
+    assert(failedBatch.statusCode === 400, '合法加非法文件批次整体失败');
+    const afterCount = context.db.prepare("SELECT COUNT(*) AS count FROM upload_registry WHERE original_name = '事务合法文件.txt' AND status = 'ready'").get().count;
+    assert(afterCount === beforeCount, '失败批次不留下 ready Registry 记录');
+
+    const retry = multipartFile('file', '事务合法文件.txt', 'text/plain', '事务回滚后的合法内容', '----transactionretry');
+    const retryRes = await httpRequest('POST', '/api/uploads', {
+      'content-type': `multipart/form-data; boundary=${retry.boundary}`,
+      cookie: cookieStr,
+    }, retry.body);
+    const retryPayload = parseJson(retryRes.body);
+    assert(retryRes.statusCode === 200 && retryPayload?.deduplicated === false, '失败后重新上传合法文件可正常注册');
+    assert(context.uploadRegistry.resolve(retryPayload.fileId).fileName === '事务合法文件.txt', '重新上传的 file ID 可正常解析');
   }
 
   // 0e. 另一账号无法借用 file ID，也不能提交路径替代 file ID。

@@ -158,7 +158,6 @@ function createWebWorkspaceRuntime({
     const { createSqliteDatabase } = require('../../core/sqliteDatabase.cjs');
     const {
       createWebTaskServiceStub,
-      createWebTaskService,
       createWebKnowledgeBaseService,
       createWebDuplicateCheckServiceStub,
     } = require('./webServices.cjs');
@@ -175,8 +174,19 @@ function createWebWorkspaceRuntime({
     const uploadRegistry = createUploadRegistry({ db: sqliteDatabase.db, uploadsDir: paths.uploadsDir });
     const fileService = createWebFileService({ uploadRegistry, configStore });
     const technicalPlanStore = createTechnicalPlanStore({ db: sqliteDatabase.db, workspaceRoot, fileService });
+    technicalPlanStore.recoverInterruptedTasks();
     const knowledgeBaseStore = createKnowledgeBaseStore({ db: sqliteDatabase.db, workspaceRoot });
     const duplicateCheckStore = createDuplicateCheckStore({ db: sqliteDatabase.db, workspaceRoot });
+    sqliteDatabase.db.prepare(`
+      UPDATE duplicate_check_files
+      SET file_path = 'upload:' || file_id
+      WHERE file_path NOT LIKE 'upload:%'
+    `).run();
+    sqliteDatabase.db.prepare(`
+      UPDATE duplicate_check_content_files
+      SET content_path = NULL
+      WHERE content_path IS NOT NULL
+    `).run();
     const rejectionCheckStore = createRejectionCheckStore({ db: sqliteDatabase.db, workspaceRoot, technicalPlanStore, fileService });
     const templateStore = createTemplateStore({ db: sqliteDatabase.db });
     const storeExecutor = createWorkspaceStoreExecutor({
@@ -218,7 +228,7 @@ function createWebWorkspaceRuntime({
 
     const knowledgeBaseService = createWebKnowledgeBaseService({ knowledgeBaseStore, fileService });
     const duplicateCheckService = createWebDuplicateCheckServiceStub({ duplicateCheckStore });
-    const taskService = createWebTaskService({ technicalPlanStore, agentService });
+    const taskService = createWebTaskServiceStub();
     pushCloseHandler(closeHandlers, createCloseHandler(taskService), 'taskService');
 
     const taskEvents = createTaskEventPortAndTrack(taskService, closeHandlers);
