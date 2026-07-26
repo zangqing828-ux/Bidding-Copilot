@@ -22,6 +22,8 @@ const SAFE_ERROR_CODES = new Set([
   'AI_RESPONSE_INVALID',
   'AI_RESPONSE_PARSE_ERROR',
   'AI_ENDPOINT_NOT_ALLOWED',
+  'AGENT_PROXY_BAD_REQUEST',
+  'AGENT_PROTOCOL_UNSUPPORTED',
   'WEB_CAPABILITY_PENDING',
 ]);
 const CHAT_BODY_FIELDS = Object.freeze([
@@ -41,6 +43,19 @@ const CHAT_BODY_FIELDS = Object.freeze([
   'frequency_penalty',
   'n',
   'user',
+]);
+const RAW_CHAT_BODY_FIELDS = Object.freeze(CHAT_BODY_FIELDS.filter((field) => field !== 'model'));
+const RAW_CHAT_FORBIDDEN_FIELDS = Object.freeze([
+  'model',
+  'base_url',
+  'baseUrl',
+  'api_key',
+  'apiKey',
+  'provider',
+  'text_model_provider',
+  'text_model_profiles',
+  'queueScopeId',
+  'queue_scope_id',
 ]);
 
 function normalizePositiveInteger(value, fallback) {
@@ -376,6 +391,46 @@ function buildChatBody(modelConfig, request) {
   }
 
   return body;
+}
+
+function buildRawChatBody(modelSnapshot, request) {
+  const source = request && typeof request === 'object' ? request : {};
+  for (const field of RAW_CHAT_FORBIDDEN_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(source, field)) {
+      throw createRuntimeError(`Agent Proxy 不允许传入 ${field}`, 'AGENT_PROXY_BAD_REQUEST');
+    }
+  }
+  if (source.stream === true) {
+    throw createRuntimeError('Agent 暂不支持 streaming Chat Completions', 'AGENT_PROTOCOL_UNSUPPORTED');
+  }
+
+  const body = {};
+  for (const field of RAW_CHAT_BODY_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(source, field)) {
+      body[field] = source[field];
+    }
+  }
+  body.model = modelSnapshot.modelName;
+  body.stream = false;
+
+  if (!Array.isArray(body.messages)) {
+    throw createRuntimeError('AI 请求缺少 messages', 'AGENT_PROXY_BAD_REQUEST');
+  }
+  if (!normalizeText(body.model)) {
+    throw createRuntimeError('Agent 模型快照缺少模型名称', 'AGENT_PROXY_BAD_REQUEST');
+  }
+
+  return body;
+}
+
+function createTextModelSnapshot(modelConfig) {
+  return Object.freeze({
+    provider: modelConfig.provider,
+    baseUrl: modelConfig.baseUrl,
+    modelName: modelConfig.modelName,
+    apiKey: modelConfig.apiKey,
+    capturedAt: new Date().toISOString(),
+  });
 }
 
 function extractMessageContent(message) {
@@ -864,10 +919,7 @@ function createAiRuntime(options = {}) {
     return modelConfig;
   }
 
-  async function executeChat(request, executionOptions = {}) {
-    const config = loadConfigSafely();
-    const modelConfig = requireModelConfig(config);
-    const body = buildChatBody(modelConfig, request);
+  async function executeChatCompletion(modelConfig, analyticsConfig, body, executionOptions = {}) {
     const url = appendEndpoint(modelConfig.baseUrl, 'chat/completions');
     const requestOptions = {
       method: 'POST',
@@ -887,20 +939,53 @@ function createAiRuntime(options = {}) {
       );
       const usage = normalizeTokenUsage(responseData?.usage);
       textTokenStats.record(usage);
-      trackSafely(modelConfig, config, usage);
+      trackSafely(modelConfig, analyticsConfig, usage);
       tracked = true;
-
-      const content = extractMessageContent(responseData?.choices?.[0]?.message);
-      if (!content) {
-        throw createRuntimeError('AI 响应缺少文本内容', 'AI_RESPONSE_INVALID');
-      }
-      return content;
+      return responseData;
     } catch (error) {
       if (!tracked) {
-        trackSafely(modelConfig, config, undefined);
+        trackSafely(modelConfig, analyticsConfig, undefined);
       }
       throw sanitizeRuntimeError(error);
     }
+  }
+
+  async function executeChat(request, executionOptions = {}) {
+    const config = loadConfigSafely();
+    const modelConfig = requireModelConfig(config);
+    const responseData = await executeChatCompletion(
+      modelConfig,
+      config,
+      buildChatBody(modelConfig, request),
+      executionOptions,
+    );
+    const content = extractMessageContent(responseData?.choices?.[0]?.message);
+    if (!content) {
+      throw createRuntimeError('AI 响应缺少文本内容', 'AI_RESPONSE_INVALID');
+    }
+    return content;
+  }
+
+  async function executeRawChat(modelSnapshot, request, executionOptions = {}) {
+    const snapshot = modelSnapshot && typeof modelSnapshot === 'object' ? modelSnapshot : null;
+    if (!snapshot) {
+      throw createRuntimeError('Agent 模型快照无效', 'AGENT_PROXY_BAD_REQUEST');
+    }
+    const modelConfig = {
+      provider: normalizeText(snapshot.provider),
+      baseUrl: trimBaseUrl(snapshot.baseUrl),
+      modelName: normalizeText(snapshot.modelName),
+      apiKey: normalizeText(snapshot.apiKey),
+    };
+    if (!modelConfig.provider || !modelConfig.baseUrl || !modelConfig.modelName || !modelConfig.apiKey) {
+      throw createRuntimeError('Agent 模型快照无效', 'AGENT_PROXY_BAD_REQUEST');
+    }
+    return executeChatCompletion(
+      modelConfig,
+      null,
+      buildRawChatBody(modelConfig, request),
+      executionOptions,
+    );
   }
 
   async function executeListModels(configOverride, executionOptions = {}) {
@@ -960,14 +1045,31 @@ function createAiRuntime(options = {}) {
     }
   }
 
-  function enqueueText(request, runner, scopeId, executionOptions = {}) {
+  function enqueueText(request, runner, scopeId, executionOptions = {}, { trustedScopeOnly = false } = {}) {
     return queue.enqueue('text', runner, {
-      scopeId: getScopeId(request, scopeId),
+      scopeId: trustedScopeOnly ? normalizeScopeId(scopeId) : getScopeId(request, scopeId),
       signal: executionOptions.signal,
     });
   }
 
   const service = {
+    captureTextModelSnapshot() {
+      const config = loadConfigSafely();
+      return createTextModelSnapshot(requireModelConfig(config));
+    },
+
+    chatCompletionsRaw(request, executionOptions = {}) {
+      const { modelSnapshot, ...requestOptions } = executionOptions || {};
+      const trustedScopeId = normalizeScopeId(requestOptions.queueScopeId || requestOptions.queue_scope_id);
+      return enqueueText(
+        request,
+        (signal) => executeRawChat(modelSnapshot, request, { ...requestOptions, signal }),
+        trustedScopeId,
+        requestOptions,
+        { trustedScopeOnly: true },
+      );
+    },
+
     chat(request, executionOptions = {}) {
       return enqueueText(request, (signal) => executeChat(request, { ...executionOptions, signal }), undefined, executionOptions);
     },
@@ -1046,6 +1148,12 @@ function createAiRuntime(options = {}) {
       const normalizedScopeId = normalizeScopeId(scopeId);
       return {
         ...service,
+        chatCompletionsRaw(request, executionOptions = {}) {
+          return service.chatCompletionsRaw(
+            request,
+            { ...executionOptions, queueScopeId: normalizedScopeId, modelSnapshot: executionOptions.modelSnapshot },
+          );
+        },
         chat(request, executionOptions = {}) {
           return service.chat({ ...(request || {}), queueScopeId: getScopeId(request, normalizedScopeId) || normalizedScopeId }, executionOptions);
         },

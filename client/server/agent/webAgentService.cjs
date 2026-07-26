@@ -1,8 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const http = require('node:http');
 const { spawn } = require('node:child_process');
+const { createAgentOpenAiProxy } = require('./agentOpenAiProxy.cjs');
 
 const WEB_RUNTIME_ID = 'opencode';
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
@@ -110,77 +110,6 @@ function buildOpenCodeConfig(proxyBaseUrl, outputFile = 'result.md') {
   };
 }
 
-function readRequestBody(req, maxBytes = MAX_OUTPUT_BYTES) {
-  return new Promise((resolve, reject) => {
-    let total = 0;
-    const chunks = [];
-    req.on('data', (chunk) => {
-      total += chunk.length;
-      if (total > maxBytes) {
-        reject(createProcessError('Agent proxy 请求体过大', 'AGENT_PROXY_BODY_TOO_LARGE'));
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on('end', () => {
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
-      } catch {
-        reject(createProcessError('Agent proxy 请求 JSON 无效', 'AGENT_PROXY_BAD_REQUEST'));
-      }
-    });
-    req.on('error', reject);
-  });
-}
-
-function createOpenAiProxy({ aiService, scopeId }) {
-  const token = crypto.randomBytes(24).toString('base64url');
-  const scopedAi = aiService.withQueueScope(scopeId);
-  const server = http.createServer(async (req, res) => {
-    if (req.headers.authorization !== `Bearer ${token}`) {
-      res.writeHead(401).end();
-      return;
-    }
-    if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
-      res.writeHead(404).end();
-      return;
-    }
-    try {
-      const body = await readRequestBody(req);
-      const content = await scopedAi.chat({
-        messages: Array.isArray(body.messages) ? body.messages : [],
-        temperature: body.temperature,
-        max_tokens: body.max_tokens || body.max_completion_tokens,
-      });
-      const payload = {
-        id: `yibiao-${crypto.randomUUID()}`,
-        object: 'chat.completion',
-        created: Math.floor(Date.now() / 1000),
-        model: 'yibiao/default',
-        choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }],
-      };
-      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(payload));
-    } catch (error) {
-      res.writeHead(502, { 'content-type': 'application/json' }).end(JSON.stringify({
-        error: { message: error?.message || 'Agent AI proxy 请求失败', type: error?.code || 'agent_proxy_error' },
-      }));
-    }
-  });
-
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      resolve({
-        token,
-        baseUrl: `http://127.0.0.1:${address.port}`,
-        close: () => new Promise((done) => server.close(() => done())),
-      });
-    });
-  });
-}
-
 function terminateProcess(child) {
   if (!child || child.exitCode !== null || child.killed) return;
   try {
@@ -272,7 +201,7 @@ function runOpenCode({ binary, taskDir, configPath, proxyToken, prompt, timeoutM
   });
 }
 
-function createWebAgentService({ workspaceId, workspaceRoot, aiService, env = process.env }) {
+function createWebAgentService({ workspaceId, workspaceRoot, aiService, agentCoordinator = null, agentWorkspaceLease = null, env = process.env }) {
   const activeChildren = new Set();
   let closing = false;
   let activeTask = null;
@@ -289,6 +218,13 @@ function createWebAgentService({ workspaceId, workspaceRoot, aiService, env = pr
       queued_count: 0,
       queued_tasks: [],
     };
+  }
+
+  function getActivitySnapshot() {
+    if (!agentCoordinator || typeof agentCoordinator.getWorkspaceSnapshot !== 'function') {
+      return { reserved: 0, admitting: 0, active: 0, queued: 0, cleanup: 0 };
+    }
+    return agentWorkspaceLease?.getSnapshot?.() || agentCoordinator.getWorkspaceSnapshot(workspaceId);
   }
 
   function listRuntimes() {
@@ -354,7 +290,8 @@ function createWebAgentService({ workspaceId, workspaceRoot, aiService, env = pr
       `请将最终业务结果写入 ${outputFile}。`,
     ].join('\n'), { encoding: 'utf8', mode: 0o600 });
 
-    const proxy = await createOpenAiProxy({ aiService, scopeId: `${workspaceId}:${runId}` });
+    const modelSnapshot = aiService.captureTextModelSnapshot();
+    const proxy = await createAgentOpenAiProxy({ aiService, modelSnapshot, scopeId: `${workspaceId}:${runId}` });
     fs.writeFileSync(configPath, JSON.stringify(buildOpenCodeConfig(proxy.baseUrl, outputFile), null, 2), { encoding: 'utf8', mode: 0o600 });
     activeTask = { task_id: taskId, title, stage: 'running', progress_text: 'OpenCode 正在生成', started_at: nowIso(), last_activity_at: nowIso(), elapsed_seconds: 0, idle_seconds: 0 };
     try {
@@ -388,9 +325,22 @@ function createWebAgentService({ workspaceId, workspaceRoot, aiService, env = pr
     runTask,
     selfCheck,
     getStatus,
+    getActivitySnapshot,
+    cancelWorkspace(reason) {
+      return typeof agentCoordinator?.cancelWorkspace === 'function'
+        ? agentCoordinator.cancelWorkspace(workspaceId, reason, agentWorkspaceLease ? { generation: agentWorkspaceLease.generation } : undefined)
+        : 0;
+    },
     restart: async () => getStatus(),
     close: async () => {
       closing = true;
+      if (typeof agentWorkspaceLease?.close === 'function') {
+        await agentWorkspaceLease.close();
+      } else if (typeof agentCoordinator?.closeWorkspace === 'function') {
+        await agentCoordinator.closeWorkspace(workspaceId);
+      } else if (typeof agentCoordinator?.cancelWorkspace === 'function') {
+        agentCoordinator.cancelWorkspace(workspaceId);
+      }
       const children = Array.from(activeChildren);
       children.forEach(terminateProcess);
       await Promise.all(children.map((child) => waitForProcessExit(child)));

@@ -8,6 +8,7 @@ const { createTaskEventPort } = require('../../core/taskEventPort.cjs');
 const { assertPort } = require('../../core/ports.cjs');
 const { createAiRuntime } = require('../../core/aiRuntime.cjs');
 const { getGlobalAiCoordinator } = require('../ai/globalAiCoordinator.cjs');
+const { getGlobalAgentCoordinator } = require('../agent/globalAgentCoordinator.cjs');
 const { createAiAnalyticsTracker } = require('../ai/aiAnalytics.cjs');
 const { createWebEndpointPolicy } = require('../ai/webEndpointPolicy.cjs');
 const { createWorkspaceStoreExecutor } = require('./storeBridgeExecutor.cjs');
@@ -143,6 +144,7 @@ function createWebWorkspaceRuntime({
   databasePath,
   configPath,
   sharedCoordinator,
+  sharedAgentCoordinator,
   aiRuntimeOptions = {},
   aiServiceOverride,
 }) {
@@ -242,7 +244,18 @@ function createWebWorkspaceRuntime({
     }
     const aiService = aiServiceOverride || (useBidAnalysisTestAi ? createBidAnalysisTestAiService() : createAiRuntime(runtimeAiOptions));
     pushCloseHandler(closeHandlers, createCloseHandler(aiService), 'aiService');
-    const agentService = createWebAgentService({ workspaceId, workspaceRoot, aiService });
+    const agentCoordinator = sharedAgentCoordinator || getGlobalAgentCoordinator();
+    const agentWorkspaceLease = typeof agentCoordinator.registerWorkspace === 'function'
+      ? agentCoordinator.registerWorkspace(workspaceId)
+      : null;
+    pushCloseHandler(closeHandlers, createCloseHandler(agentWorkspaceLease), 'agentWorkspaceLease');
+    const agentService = createWebAgentService({
+      workspaceId,
+      workspaceRoot,
+      aiService,
+      agentCoordinator,
+      agentWorkspaceLease,
+    });
     if (!agentService || typeof agentService.close !== 'function') {
       throw new Error('agentService 缺少 close 方法');
     }
@@ -338,6 +351,7 @@ function createWorkspaceRuntimeFactory(runtimeOptions = {}) {
     configPath,
     adapter = 'web',
     sharedCoordinator,
+    sharedAgentCoordinator,
     aiRuntimeOptions,
   } = runtimeOptions;
 
@@ -353,6 +367,7 @@ function createWorkspaceRuntimeFactory(runtimeOptions = {}) {
     databasePath,
     configPath,
     sharedCoordinator,
+    sharedAgentCoordinator,
     aiRuntimeOptions,
     aiServiceOverride: runtimeOptions.aiServiceOverride,
   });

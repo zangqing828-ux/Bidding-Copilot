@@ -14,7 +14,7 @@ PRAGMA busy_timeout = 5000;
 
 -- 目标完整结构版本。
 -- 运行时代码应通过 PRAGMA user_version 判断是否需要自动升级。
-PRAGMA user_version = 18;
+PRAGMA user_version = 22;
 
 -- ============================================================================
 -- 技术方案 technical_plan_*（v1 已落地）
@@ -775,3 +775,25 @@ CREATE TABLE IF NOT EXISTS export_templates (
 
 CREATE INDEX IF NOT EXISTS idx_export_templates_updated
 ON export_templates(updated_at DESC);
+
+-- ============================================================================
+-- Agent 结果幂等账本（v22）
+-- ============================================================================
+
+-- 每个 workspace 内，同一 executionId 的业务结果只允许提交一次。
+-- 账本只保存受限定位信息与摘要，不保存 Agent 输出正文或服务器路径。
+CREATE TABLE IF NOT EXISTS agent_result_applications (
+  idempotency_key TEXT PRIMARY KEY,
+  execution_id TEXT NOT NULL UNIQUE,
+  run_id TEXT NOT NULL,
+  task_spec_id TEXT NOT NULL,
+  task_spec_version INTEGER NOT NULL,
+  input_revision INTEGER NOT NULL,
+  input_sha256 TEXT NOT NULL,
+  output_sha256 TEXT NOT NULL,
+  result_locator_json TEXT NOT NULL,
+  applied_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_result_applications_applied_at
+ON agent_result_applications(applied_at DESC);

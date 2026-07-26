@@ -143,12 +143,26 @@ function createActivitySnapshot(runtime) {
     const aiQueuedCount = text.queued + image.queued;
     const storeActiveCount = Math.max(0, Number(store?.active) || 0)
       + Math.max(0, Number(store?.queued) || 0);
+    const agent = runtime.agentService && typeof runtime.agentService.getActivitySnapshot === 'function'
+      ? runtime.agentService.getActivitySnapshot()
+      : {};
+    const agentReservedCount = Math.max(0, Number(agent?.reserved) || 0);
+    const agentAdmittingCount = Math.max(0, Number(agent?.admitting) || 0);
+    const agentActiveCount = Math.max(0, Number(agent?.active) || 0);
+    const agentQueuedCount = Math.max(0, Number(agent?.queued) || 0);
+    const agentCleanupCount = Math.max(0, Number(agent?.cleanup) || 0);
     return {
       activeTaskCount,
       aiActiveCount,
       aiQueuedCount,
       storeActiveCount,
-      active: activeTaskCount > 0 || aiActiveCount > 0 || aiQueuedCount > 0 || storeActiveCount > 0,
+      agentReservedCount,
+      agentAdmittingCount,
+      agentActiveCount,
+      agentQueuedCount,
+      agentCleanupCount,
+      active: activeTaskCount > 0 || aiActiveCount > 0 || aiQueuedCount > 0 || storeActiveCount > 0
+        || agentReservedCount > 0 || agentAdmittingCount > 0 || agentActiveCount > 0 || agentQueuedCount > 0 || agentCleanupCount > 0,
       unknown: false,
     };
   } catch {
@@ -158,6 +172,11 @@ function createActivitySnapshot(runtime) {
       aiActiveCount: 0,
       aiQueuedCount: 0,
       storeActiveCount: 0,
+      agentReservedCount: 0,
+      agentAdmittingCount: 0,
+      agentActiveCount: 0,
+      agentQueuedCount: 0,
+      agentCleanupCount: 0,
       active: true,
       unknown: true,
     };

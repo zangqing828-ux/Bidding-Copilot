@@ -58,9 +58,14 @@ function readActivitySnapshot(context) {
         activeTaskCount: Math.max(0, Number(snapshot?.activeTaskCount) || 0),
         aiActiveCount: Math.max(0, Number(snapshot?.aiActiveCount) || 0),
         aiQueuedCount: Math.max(0, Number(snapshot?.aiQueuedCount) || 0),
+        agentReservedCount: Math.max(0, Number(snapshot?.agentReservedCount) || 0),
+        agentAdmittingCount: Math.max(0, Number(snapshot?.agentAdmittingCount) || 0),
+        agentActiveCount: Math.max(0, Number(snapshot?.agentActiveCount) || 0),
+        agentQueuedCount: Math.max(0, Number(snapshot?.agentQueuedCount) || 0),
+        agentCleanupCount: Math.max(0, Number(snapshot?.agentCleanupCount) || 0),
       };
     } catch {
-      return { active: true, unknown: true, activeTaskCount: 0, aiActiveCount: 0, aiQueuedCount: 0 };
+      return { active: true, unknown: true, activeTaskCount: 0, aiActiveCount: 0, aiQueuedCount: 0, agentReservedCount: 0, agentAdmittingCount: 0, agentActiveCount: 0, agentQueuedCount: 0, agentCleanupCount: 0 };
     }
   }
 
@@ -82,9 +87,14 @@ function readActivitySnapshot(context) {
       activeTaskCount,
       aiActiveCount,
       aiQueuedCount,
+      agentReservedCount: 0,
+      agentAdmittingCount: 0,
+      agentActiveCount: 0,
+      agentQueuedCount: 0,
+      agentCleanupCount: 0,
     };
   } catch {
-    return { active: true, unknown: true, activeTaskCount: 0, aiActiveCount: 0, aiQueuedCount: 0 };
+    return { active: true, unknown: true, activeTaskCount: 0, aiActiveCount: 0, aiQueuedCount: 0, agentReservedCount: 0, agentAdmittingCount: 0, agentActiveCount: 0, agentQueuedCount: 0, agentCleanupCount: 0 };
   }
 }
 

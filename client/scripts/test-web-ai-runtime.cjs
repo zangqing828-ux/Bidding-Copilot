@@ -216,6 +216,70 @@ async function main() {
       assertNoSecret(chatRequest.body, 'chat 请求体');
     });
 
+    await run('server internal raw chat 冻结模型快照并完整保留 tool-call 协议', async () => {
+      let activeConfig = createConfig(mock.baseUrl, API_KEY);
+      const capturedRequests = [];
+      const rawRuntime = createAiRuntime({
+        workspaceKey: 'raw-chat-runtime',
+        loadConfig: () => activeConfig,
+        sharedCoordinator: createAiFairCoordinator(),
+        fetch: async (_url, options) => {
+          capturedRequests.push(JSON.parse(options.body));
+          return createResponse(200, {
+            id: 'chatcmpl-tool-call',
+            object: 'chat.completion',
+            created: 1,
+            model: 'runtime-test-model',
+            choices: [{
+              index: 0,
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [{
+                  id: 'call_1',
+                  type: 'function',
+                  function: { name: 'read_input', arguments: '{"path":"input/tender.md"}' },
+                }],
+              },
+              finish_reason: 'tool_calls',
+            }],
+            usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 },
+          });
+        },
+      });
+      const snapshot = rawRuntime.captureTextModelSnapshot();
+      activeConfig = { ...createConfig('https://changed.example/v1', 'sk-changed-key'), model_name: 'changed-model' };
+      const response = await rawRuntime.chatCompletionsRaw({
+        messages: [{ role: 'user', content: '读取输入' }],
+        tools: [{ type: 'function', function: { name: 'read_input', parameters: { type: 'object' } } }],
+        tool_choice: 'auto',
+        parallel_tool_calls: true,
+      }, { modelSnapshot: snapshot });
+      assert.equal(capturedRequests.length, 1);
+      assert.equal(capturedRequests[0].model, 'runtime-test-model');
+      assert.deepEqual(capturedRequests[0].tools, [{ type: 'function', function: { name: 'read_input', parameters: { type: 'object' } } }]);
+      assert.equal(response.choices[0].finish_reason, 'tool_calls');
+      assert.equal(response.choices[0].message.tool_calls[0].function.name, 'read_input');
+      assert.deepEqual(response.usage, { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 });
+      await assert.rejects(
+        rawRuntime.chatCompletionsRaw({ model: 'attacker-model', messages: [] }, { modelSnapshot: snapshot }),
+        (error) => error?.code === 'AGENT_PROXY_BAD_REQUEST',
+      );
+      await assert.rejects(
+        rawRuntime.withQueueScope('trusted-execution').chatCompletionsRaw(
+          { queueScopeId: 'attacker-scope', messages: [] },
+          { modelSnapshot: snapshot },
+        ),
+        (error) => error?.code === 'AGENT_PROXY_BAD_REQUEST',
+      );
+      await assert.rejects(
+        rawRuntime.chatCompletionsRaw({ stream: true, messages: [] }, { modelSnapshot: snapshot }),
+        (error) => error?.code === 'AGENT_PROTOCOL_UNSUPPORTED',
+      );
+      await rawRuntime.chatCompletionsRaw({ stream: false, messages: [] }, { modelSnapshot: snapshot });
+      await rawRuntime.close();
+    });
+
     await run('requestJson 支持 fenced JSON 与平衡 JSON', async () => {
       const parsed = await runtime.requestJson({
         messages: [{ role: 'user', content: 'json please' }],
