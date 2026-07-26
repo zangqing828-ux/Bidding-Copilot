@@ -161,15 +161,15 @@ async function runTests() {
     assert(res.statusCode === 401, '未登录访问 SSE 返回 401');
   }
 
-  // 5. bridge tasks.startBidAnalysis → 501（待能力未实现）
+  // 5. 未导入招标文件时，已接通的项目概述任务拒绝启动。
   {
     const res = await httpRequest('POST', '/api/bridge', {
       'content-type': 'application/json',
       cookie: cookieStr,
     }, { namespace: 'tasks', method: 'startBidAnalysis', args: [{}] });
-    assert(res.statusCode === 501, 'tasks.startBidAnalysis 返回 501（待能力未实现）');
+    assert(res.statusCode === 400, 'tasks.startBidAnalysis 缺少招标文件时返回 400');
     const body = JSON.parse(res.body);
-    assert(body.code === 'WEB_CAPABILITY_PENDING', 'tasks.startBidAnalysis 返回 WEB_CAPABILITY_PENDING');
+    assert(body.code === 'INVALID_BRIDGE_ARGUMENTS', 'tasks.startBidAnalysis 返回 INVALID_BRIDGE_ARGUMENTS');
   }
 
   // 5b. bridge technicalPlan.loadState → 200（Store 数据操作已实现）

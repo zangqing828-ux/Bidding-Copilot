@@ -10,6 +10,8 @@ const VENDOR_ROOT = path.join(ROOT, 'vendor', 'opencode');
 const VERSION_FILE = path.join(VENDOR_ROOT, 'VERSION');
 
 const ASSET_PATTERNS = {
+  'linux-x64': [/^opencode-linux-x64(?:-baseline)?\.tar\.gz$/i, /opencode.*linux.*x64.*\.tar\.gz$/i],
+  'linux-arm64': [/^opencode-linux-arm64\.tar\.gz$/i, /opencode.*linux.*arm64.*\.tar\.gz$/i],
   'win32-x64': [/opencode-(windows|win32|win)-x64.*\.zip$/i, /opencode.*(windows|win32|win).*x64.*\.zip$/i, /opencode.*(windows|win32|win).*amd64.*\.zip$/i],
   'darwin-arm64': [/^opencode-darwin-arm64\.zip$/i, /opencode.*darwin.*arm64.*\.zip$/i, /opencode.*mac.*arm64.*\.zip$/i],
   'darwin-x64': [/^opencode-darwin-x64\.zip$/i, /opencode.*darwin.*x64.*\.zip$/i, /opencode.*mac.*x64.*\.zip$/i],
@@ -117,7 +119,7 @@ async function main() {
   const key = `${platform}-${arch}`;
   const version = readVersion();
   const binaryName = platform === 'win32' ? 'opencode.exe' : 'opencode';
-  if (!ASSET_PATTERNS[key]) throw new Error(`第一版只支持 win32-x64、darwin-x64、darwin-arm64，当前为 ${key}`);
+  if (!ASSET_PATTERNS[key]) throw new Error(`不支持的 OpenCode 平台：${key}`);
 
   const release = await requestJson(`https://api.github.com/repos/${REPO}/releases/tags/${encodeURIComponent(version)}`);
   const asset = findAsset(release, key);
@@ -127,7 +129,13 @@ async function main() {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
   fs.mkdirSync(extractDir, { recursive: true });
   await downloadFile(asset.browser_download_url, zipPath);
-  new AdmZip(zipPath).extractAllTo(extractDir, true);
+  if (/\.zip$/i.test(asset.name)) {
+    new AdmZip(zipPath).extractAllTo(extractDir, true);
+  } else if (/\.tar\.gz$/i.test(asset.name)) {
+    execFileSync('tar', ['-xzf', zipPath, '-C', extractDir]);
+  } else {
+    throw new Error(`不支持的 OpenCode 压缩包格式：${asset.name}`);
+  }
 
   fs.rmSync(VENDOR_ROOT, { recursive: true, force: true });
   const targetBinary = path.join(VENDOR_ROOT, key, binaryName);

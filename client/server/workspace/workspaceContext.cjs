@@ -232,6 +232,7 @@ function createWorkspaceContext({
     fileService: runtime.fileService,
     storeExecutor: runtime.storeExecutor,
     aiService: runtime.aiService || (runtime.ports && runtime.ports.ai),
+    agentService: runtime.agentService || (runtime.ports && runtime.ports.agent),
     stores: runtime.stores,
     knowledgeBaseService: runtime.knowledgeBaseService,
     taskService: runtime.taskService,

@@ -157,11 +157,12 @@ function createWebWorkspaceRuntime({
   try {
     const { createSqliteDatabase } = require('../../core/sqliteDatabase.cjs');
     const {
-      createWebAgentServiceStub,
       createWebTaskServiceStub,
+      createWebTaskService,
       createWebKnowledgeBaseService,
       createWebDuplicateCheckServiceStub,
     } = require('./webServices.cjs');
+    const { createWebAgentService } = require('../agent/webAgentService.cjs');
 
     const sqliteDatabase = createSqliteDatabase({ databasePath });
     if (!sqliteDatabase || typeof sqliteDatabase.close !== 'function') {
@@ -206,7 +207,7 @@ function createWebWorkspaceRuntime({
     delete runtimeAiOptions.analyticsFetch;
     const aiService = createAiRuntime(runtimeAiOptions);
     pushCloseHandler(closeHandlers, createCloseHandler(aiService), 'aiService');
-    const agentService = createWebAgentServiceStub();
+    const agentService = createWebAgentService({ workspaceId, workspaceRoot, aiService });
     if (!agentService || typeof agentService.close !== 'function') {
       throw new Error('agentService 缺少 close 方法');
     }
@@ -214,7 +215,7 @@ function createWebWorkspaceRuntime({
 
     const knowledgeBaseService = createWebKnowledgeBaseService({ knowledgeBaseStore, fileService });
     const duplicateCheckService = createWebDuplicateCheckServiceStub({ duplicateCheckStore });
-    const taskService = createWebTaskServiceStub();
+    const taskService = createWebTaskService({ technicalPlanStore, agentService });
     pushCloseHandler(closeHandlers, createCloseHandler(taskService), 'taskService');
 
     const taskEvents = createTaskEventPortAndTrack(taskService, closeHandlers);
@@ -227,6 +228,7 @@ function createWebWorkspaceRuntime({
       fileService,
       storeExecutor,
       aiService,
+      agentService,
       taskService,
       taskEvents,
       knowledgeBaseService,

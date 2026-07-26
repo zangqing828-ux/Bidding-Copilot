@@ -160,6 +160,19 @@ const bridgeBindingMetadata = Object.freeze({
     listModels: createDirectBinding((ctx, args, options) => ctx.aiService.listModels(args[0], options), 'config.listModels'),
   }),
 
+  agent: Object.freeze({
+    listRuntimes: createDirectBinding((ctx) => ctx.agentService.listRuntimes(), 'agent.listRuntimes'),
+    run: createDirectBinding((ctx, args, options) => ctx.agentService.runTask(args[0], options), 'agent.run'),
+    selfCheck: createDirectBinding((ctx) => ctx.agentService.selfCheck(), 'agent.selfCheck'),
+    getStatus: createDirectBinding((ctx) => ctx.agentService.getStatus(), 'agent.getStatus'),
+    restart: createDirectBinding((ctx) => ctx.agentService.restart(), 'agent.restart'),
+  }),
+
+  tasks: Object.freeze({
+    getActiveTasks: createDirectBinding((ctx) => ctx.taskService.getActiveTasks(), 'tasks.getActiveTasks'),
+    startBidAnalysis: createDirectBinding((ctx) => ctx.taskService.startBidAnalysis(), 'tasks.startBidAnalysis'),
+  }),
+
   technicalPlan: Object.freeze({
     loadState: createStoreBinding('technicalPlanStore', 'loadTechnicalPlan', 'technicalPlan.loadState'),
     importTenderDocument: createDirectBinding(
@@ -260,9 +273,6 @@ const bridgeBindingMetadata = Object.freeze({
     delete: createStoreBinding('templateStore', 'deleteTemplate', 'templates.delete'),
   }),
 
-  tasks: Object.freeze({
-    getActiveTasks: createDirectBinding((ctx) => ctx.taskService.getActiveTasks(), 'tasks.getActiveTasks'),
-  }),
 });
 
 function buildDispatchers(meta) {
@@ -451,6 +461,14 @@ router.post('/bridge', (req, res) => {
           message: 'AI 请求队列繁忙，请稍后重试',
           retryable: true,
         });
+    }
+    if (typeof err?.code === 'string' && err.code.startsWith('AGENT_')) {
+      const unavailable = err.code === 'AGENT_RUNTIME_UNAVAILABLE' || err.code === 'AGENT_CLOSING';
+      return res.status(unavailable ? 503 : 400).json({
+        code: err.code,
+        message: err.message || 'Agent Runtime 请求失败',
+        retryable: unavailable || err.code === 'AGENT_TIMEOUT',
+      });
     }
     if (typeof err?.code === 'string' && err.code.startsWith('UPLOAD_FILE_')) {
       return res.status(400).json({

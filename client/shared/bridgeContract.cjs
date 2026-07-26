@@ -425,12 +425,12 @@ const rawMethods = {
     testImageModel: createContractEntry({ status: 'pending', owner: 'runtime', workPackage: 'WP-C', contractRef: 'ai.testImageModel' }),
   },
   agent: {
-    listRuntimes: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.listRuntimes' }),
-    run: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.run' }),
-    selfCheck: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.selfCheck' }),
+    listRuntimes: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.listRuntimes', input: [], output: 'AgentRuntimeDescriptor[]' }),
+    run: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.run', input: [contractArg('payload', 'AgentRunPayload'), contractArg('runtimeId', 'string', { required: false })], output: 'AgentRunResult', errors: ['AGENT_RUNTIME_UNAVAILABLE', 'AGENT_TIMEOUT', 'AGENT_ABORTED'] }),
+    selfCheck: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.selfCheck', input: [contractArg('runtimeId', 'string', { required: false })], output: 'AgentSelfCheckResult' }),
     exportSelfCheckReport: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.exportSelfCheckReport' }),
-    getStatus: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.getStatus' }),
-    restart: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.restart' }),
+    getStatus: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.getStatus', input: [contractArg('runtimeId', 'string', { required: false })], output: 'AgentRuntimeStatus' }),
+    restart: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-E', contractRef: 'agent.restart', input: [contractArg('reason', 'string', { required: false }), contractArg('runtimeId', 'string', { required: false })], output: 'AgentRuntimeStatus' }),
   },
   developerTokenStats: {
     openWindow: createContractEntry({
@@ -762,7 +762,7 @@ const rawMethods = {
   },
   tasks: {
     startBidSectionExtraction: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startBidSectionExtraction' }),
-    startBidAnalysis: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startBidAnalysis' }),
+    startBidAnalysis: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-E', contractRef: 'tasks.startBidAnalysis', input: [contractArg('payload', 'unknown')], output: 'unknown', errors: ['AGENT_RUNTIME_UNAVAILABLE', 'AGENT_TIMEOUT'] }),
     startOutlineGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startOutlineGeneration' }),
     startGlobalFactsGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startGlobalFactsGeneration' }),
     startContentGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startContentGeneration' }),

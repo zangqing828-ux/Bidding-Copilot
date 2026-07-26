@@ -17,6 +17,9 @@ RUN cd client && npm run build:web
 # === Stage 2: 运行时 ===
 FROM node:22-slim AS runtime
 
+ARG OPENCODE_VERSION=v1.17.8
+ARG TARGETARCH
+
 # 安装运行时系统依赖
 # - better-sqlite3 需要 python3 + build-essential（已预装在 node:22-slim 的 node-gyp）
 # - Chromium 用于 Mermaid/HTML 图片渲染（Sprint 05 工包 C，后续启用）
@@ -26,6 +29,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
+    curl \
+    jq \
+    ripgrep \
+    fd-find \
     fonts-noto-cjk \
     fonts-noto-cjk-extra \
     && rm -rf /var/lib/apt/lists/*
@@ -37,13 +44,26 @@ WORKDIR /app
 COPY client/package.json client/package-lock.json ./client/
 RUN cd client && npm ci --omit=dev --ignore-scripts && npm rebuild better-sqlite3 --runtime=node
 
+# Debian 将 fd 命名为 fdfind；为 Agent Runtime 提供稳定的 fd 命令名。
+RUN ln -s /usr/bin/fdfind /usr/local/bin/fd
+
 # 复制构建产物和源码
 COPY --from=builder /app/client/dist ./client/dist
 COPY client/server/ ./client/server/
 COPY client/shared/ ./client/shared/
 COPY client/core/ ./client/core/
 COPY client/electron/ ./client/electron/
+COPY client/scripts/prepare-opencode-binary.cjs ./client/scripts/prepare-opencode-binary.cjs
 COPY client/package.json ./client/
+
+# 构建期固定下载指定版本的 Linux OpenCode binary；不依赖容器启动时联网。
+RUN case "${TARGETARCH:-amd64}" in \
+      amd64) agent_arch=x64 ;; \
+      arm64) agent_arch=arm64 ;; \
+      *) echo "unsupported Docker architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && cd client \
+    && OPENCODE_VERSION="${OPENCODE_VERSION}" node scripts/prepare-opencode-binary.cjs --platform linux --arch "${agent_arch}"
 
 # 创建非 root 用户
 RUN useradd -r -s /bin/false yibiao && \
