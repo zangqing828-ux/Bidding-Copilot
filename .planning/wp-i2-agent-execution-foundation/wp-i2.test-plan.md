@@ -1,7 +1,7 @@
 # WP-I-2 Test Plan
 
-状态：Approved with WP-I-2 Spec  
-基线：`main@cadbf24`  
+状态：Approved with WP-I-2 Spec
+基线：`main@cadbf24`
 对应 Spec：`wp-i2.spec.md`
 
 ## 1. Gate 原则
@@ -213,5 +213,5 @@
 
 ## 12. 合并裁决
 
-任何 P1 测试失败：`REQUEST_CHANGES`。  
+任何 P1 测试失败：`REQUEST_CHANGES`。
 全部 Gate 通过，且浏览器 Agent 仍 pending、生产注册表为空、OS 级隔离边界未夸大：`APPROVE`。

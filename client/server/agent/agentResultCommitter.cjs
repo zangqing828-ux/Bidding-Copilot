@@ -56,6 +56,16 @@ function receiptFromRow(row) {
   });
 }
 
+function isThenable(value) {
+  return Boolean(value && (typeof value === 'object' || typeof value === 'function') && typeof value.then === 'function');
+}
+
+function assertSynchronousFunction(fn, label) {
+  if (typeof fn !== 'function' || fn.constructor?.name === 'AsyncFunction') {
+    throw createAgentError(`${label} 必须是同步函数`, 'AGENT_APPLY_FAILED', { retryable: true });
+  }
+}
+
 function assertSameEnvelope(row, envelope) {
   if (
     row.task_spec_id !== envelope.taskSpecId
@@ -76,6 +86,9 @@ function createAgentResultCommitter({ db, mutationExecutor, readInputRevision, o
   }
   if (typeof readInputRevision !== 'function') {
     throw new Error('createAgentResultCommitter 需要 input revision reader');
+  }
+  for (const [operationId, operation] of Object.entries(operations)) {
+    assertSynchronousFunction(operation, `Agent operation ${operationId}`);
   }
   const selectApplied = db.prepare('SELECT * FROM agent_result_applications WHERE execution_id = ?');
   const insertApplied = db.prepare(`
@@ -119,30 +132,55 @@ function createAgentResultCommitter({ db, mutationExecutor, readInputRevision, o
         if (Number(readInputRevision()) !== normalizedEnvelope.inputRevision) {
           throw createAgentError('Agent 输入已更新，请重新执行', 'AGENT_INPUT_CHANGED', { retryable: true });
         }
+        assertSynchronousFunction(taskSpec.applyResult, 'Task Spec applyResult');
         let declaredOperationApplied = false;
         let locator = null;
+        let transactionCapabilityActive = true;
+        const assertActiveCapability = () => {
+          if (!transactionCapabilityActive) {
+            throw createAgentError('Agent transaction capability 已过期', 'AGENT_APPLY_FAILED', { retryable: true });
+          }
+        };
         const commitTransaction = Object.freeze({
           assertInputRevision(expectedRevision) {
+            assertActiveCapability();
             if (Number(expectedRevision) !== normalizedEnvelope.inputRevision || Number(readInputRevision()) !== normalizedEnvelope.inputRevision) {
               throw createAgentError('Agent 输入已更新，请重新执行', 'AGENT_INPUT_CHANGED', { retryable: true });
             }
           },
           readAppliedExecution(executionId) {
+            assertActiveCapability();
             const row = selectApplied.get(String(executionId || '').trim());
             return row ? receiptFromRow(row) : null;
           },
           applyDeclaredOperation(operationId, payload) {
+            assertActiveCapability();
             if (declaredOperationApplied || operationId !== taskSpec.commitOperationId || typeof operations[operationId] !== 'function') {
               throw createAgentError('Agent 不允许执行该写入操作', 'AGENT_APPLY_FAILED', { retryable: true });
             }
             declaredOperationApplied = true;
-            locator = operations[operationId](payload);
+            const operationResult = operations[operationId](payload);
+            if (isThenable(operationResult)) {
+              void Promise.resolve(operationResult).catch(() => undefined);
+              throw createAgentError('Agent operation 不允许异步返回', 'AGENT_APPLY_FAILED', { retryable: true });
+            }
+            locator = operationResult;
           },
           recordAppliedExecution() {
+            assertActiveCapability();
             throw createAgentError('Task Spec 不允许直接写入 Agent 账本', 'AGENT_APPLY_FAILED', { retryable: true });
           },
         });
-        taskSpec.applyResult(validatedOutput, commitTransaction);
+        let applyResult;
+        try {
+          applyResult = taskSpec.applyResult(validatedOutput, commitTransaction);
+          if (isThenable(applyResult)) {
+            void Promise.resolve(applyResult).catch(() => undefined);
+            throw createAgentError('Task Spec applyResult 不允许异步返回', 'AGENT_APPLY_FAILED', { retryable: true });
+          }
+        } finally {
+          transactionCapabilityActive = false;
+        }
         if (!declaredOperationApplied) {
           throw createAgentError('Task Spec 未执行声明的写入操作', 'AGENT_APPLY_FAILED', { retryable: true });
         }

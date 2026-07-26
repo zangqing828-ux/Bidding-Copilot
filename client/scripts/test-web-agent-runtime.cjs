@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { buildOpenCodeConfig, createWebAgentService, safeRelativePath } = require('../server/agent/webAgentService.cjs');
+const { createAgentOpenAiProxy } = require('../server/agent/agentOpenAiProxy.cjs');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-web-agent-'));
 const binaryPath = path.join(root, 'fake-opencode');
@@ -75,6 +76,33 @@ async function run() {
   check(config.permission?.webfetch === 'deny' && config.permission?.websearch === 'deny', 'Agent 禁止网络工具');
   check(config.permission?.edit?.['result.md'] === 'allow', 'Agent 只允许写入约定输出文件');
 
+  let forwardedStream = null;
+  const protocolProxy = await createAgentOpenAiProxy({
+    scopeId: 'proxy-test',
+    aiService: {
+      captureTextModelSnapshot: () => ({ provider: 'test', baseUrl: 'http://127.0.0.1', modelName: 'test', apiKey: 'test', capturedAt: '2026-07-27T00:00:00.000Z' }),
+      chatCompletionsRaw: async (body) => {
+        forwardedStream = body.stream;
+        const error = new Error('stream unsupported');
+        error.code = 'AGENT_PROTOCOL_UNSUPPORTED';
+        throw error;
+      },
+      withQueueScope() { return this; },
+    },
+  });
+  try {
+    const response = await fetch(`${protocolProxy.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${protocolProxy.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stream: true, messages: [] }),
+    });
+    const payload = await response.json();
+    check(response.status === 502 && payload.error?.type === 'AGENT_PROTOCOL_UNSUPPORTED', 'Proxy 对 stream=true 返回稳定协议错误');
+    check(forwardedStream === true, 'Proxy 不静默改写 stream=true');
+  } finally {
+    await protocolProxy.close();
+  }
+
   assert.throws(() => safeRelativePath('../outside.md'));
   check(true, '拒绝相对路径越界');
   assert.throws(() => safeRelativePath('AGENTS.md'));
@@ -87,6 +115,30 @@ async function run() {
   check(true, '超时时终止 Agent 进程');
 
   await service.close();
+
+  let releaseWorkspaceClose;
+  let closeWorkspaceCalled = false;
+  const workspaceCloseGate = new Promise((resolve) => { releaseWorkspaceClose = resolve; });
+  const lifecycleService = createWebAgentService({
+    workspaceId: 'account-close',
+    workspaceRoot,
+    env: { YIBIAO_WEB_OPENCODE_BIN: binaryPath, YIBIAO_WEB_AGENT_TOOLS: '' },
+    aiService: { captureTextModelSnapshot: () => ({}), withQueueScope: () => ({ chatCompletionsRaw: async () => ({}) }) },
+    agentCoordinator: {
+      getWorkspaceSnapshot: () => ({ reserved: 0, admitting: 0, active: 1, queued: 0, cleanup: 0 }),
+      cancelWorkspace() {},
+      closeWorkspace: async () => {
+        closeWorkspaceCalled = true;
+        await workspaceCloseGate;
+      },
+    },
+  });
+  const lifecycleClose = lifecycleService.close();
+  await new Promise((resolve) => setImmediate(resolve));
+  check(closeWorkspaceCalled, 'Workspace close 调用 Coordinator closeWorkspace');
+  releaseWorkspaceClose();
+  await lifecycleClose;
+  check(true, 'Agent service 等待 Workspace Coordinator 收敛后关闭');
 }
 
 run().catch((error) => {

@@ -265,6 +265,18 @@ async function main() {
         rawRuntime.chatCompletionsRaw({ model: 'attacker-model', messages: [] }, { modelSnapshot: snapshot }),
         (error) => error?.code === 'AGENT_PROXY_BAD_REQUEST',
       );
+      await assert.rejects(
+        rawRuntime.withQueueScope('trusted-execution').chatCompletionsRaw(
+          { queueScopeId: 'attacker-scope', messages: [] },
+          { modelSnapshot: snapshot },
+        ),
+        (error) => error?.code === 'AGENT_PROXY_BAD_REQUEST',
+      );
+      await assert.rejects(
+        rawRuntime.chatCompletionsRaw({ stream: true, messages: [] }, { modelSnapshot: snapshot }),
+        (error) => error?.code === 'AGENT_PROTOCOL_UNSUPPORTED',
+      );
+      await rawRuntime.chatCompletionsRaw({ stream: false, messages: [] }, { modelSnapshot: snapshot });
       await rawRuntime.close();
     });
 

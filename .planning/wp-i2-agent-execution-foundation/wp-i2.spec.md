@@ -1,9 +1,9 @@
 # WP-I-2：Business Agent Execution Foundation Spec
 
-状态：Approved for implementation after engineering review  
-规划基线：`origin/main@cadbf24d79dac7ae358ac462aa8a6b15828004d3`（PR #7 / WP-I-1 已合并）  
-上位 Spec：`.planning/wp-i-business-task-agent-execution/wp-i.spec.md`  
-实施分支：`codex/wp-i2-agent-foundation`（正式开发时另建 worktree）  
+状态：Approved for implementation after engineering review
+规划基线：`origin/main@cadbf24d79dac7ae358ac462aa8a6b15828004d3`（PR #7 / WP-I-1 已合并）
+上位 Spec：`.planning/wp-i-business-task-agent-execution/wp-i.spec.md`
+实施分支：`codex/wp-i2-agent-foundation`（正式开发时另建 worktree）
 规划分支：`codex/wp-i2-agent-foundation-spec`
 
 ## 1. 结论

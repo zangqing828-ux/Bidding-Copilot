@@ -90,6 +90,9 @@ function validateSpec(spec) {
   for (const name of ['captureSnapshot', 'buildInput', 'buildPrompt', 'validateOutput', 'applyResult']) {
     if (typeof source[name] !== 'function') throw createSpecError(`Task Spec ${name} 必须是函数`);
   }
+  if (source.applyResult.constructor?.name === 'AsyncFunction') {
+    throw createSpecError('Task Spec applyResult 必须是同步函数');
+  }
   return deepFreeze({
     id,
     version,

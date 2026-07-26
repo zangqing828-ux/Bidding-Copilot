@@ -37,6 +37,14 @@ function createBusinessAgentExecutor({
   if (typeof runner.run !== 'function' || typeof aiService.captureTextModelSnapshot !== 'function') {
     throw new Error('BusinessAgentExecutor 依赖能力不完整');
   }
+  const inFlightExecutions = new Map();
+
+  function sameEnvelope(left, right) {
+    return left.taskSpecId === right.taskSpecId
+      && left.taskSpecVersion === right.taskSpecVersion
+      && left.inputRevision === right.inputRevision
+      && left.inputHash === right.inputHash;
+  }
 
   async function execute(taskSpecId, executionRequest = {}) {
     const executionId = String(executionRequest.executionId || '').trim();
@@ -57,6 +65,14 @@ function createBusinessAgentExecutor({
       inputRevision: Number(requestedEnvelope.inputRevision),
       inputHash: String(requestedEnvelope.inputHash || ''),
     };
+    const executionKey = `${workspaceId}\u0000${executionId}`;
+    const existingInFlight = inFlightExecutions.get(executionKey);
+    if (existingInFlight) {
+      if (!sameEnvelope(existingInFlight.envelope, provisionalEnvelope)) {
+        throw createAgentError('相同 executionId 的 Agent envelope 不一致', 'AGENT_EXECUTION_CONFLICT');
+      }
+      return existingInFlight.handlePromise;
+    }
     const existingReceipt = committer.findApplied(executionId, provisionalEnvelope);
     if (existingReceipt) {
       await outer.reconcileAppliedExecution(existingReceipt);
@@ -70,24 +86,32 @@ function createBusinessAgentExecutor({
         result: completed,
       });
     }
+    let resolveHandle;
+    let rejectHandle;
+    const handlePromise = new Promise((resolve, reject) => {
+      resolveHandle = resolve;
+      rejectHandle = reject;
+    });
+    void handlePromise.catch(() => undefined);
+    inFlightExecutions.set(executionKey, { envelope: provisionalEnvelope, handlePromise });
     const deadlineAt = Number.isFinite(Number(executionRequest.deadlineAt))
       ? Number(executionRequest.deadlineAt)
       : now() + spec.limits.timeoutMs;
-    const reservation = coordinator.reserve({
-      workspaceId,
-      executionId,
-      envelope: provisionalEnvelope,
-      deadlineAt,
-    });
-    const ownerCancellationToken = executionRequest.ownerCancellationToken;
-    const events = new Set();
-    let runId = null;
-    const publish = (event) => {
-      outer.projectAgentStage?.(event);
-      for (const listener of events) listener(event);
-    };
-
+    let reservation = null;
     try {
+      reservation = coordinator.reserve({
+        workspaceId,
+        executionId,
+        envelope: provisionalEnvelope,
+        deadlineAt,
+      });
+      const ownerCancellationToken = executionRequest.ownerCancellationToken;
+      const events = new Set();
+      let runId = null;
+      const publish = (event) => {
+        outer.projectAgentStage?.(event);
+        for (const listener of events) listener(event);
+      };
       const constrainedReader = Object.freeze({
         getInputRevision: () => snapshotReader.getInputRevision(),
         readBinding(bindingId) {
@@ -141,11 +165,22 @@ function createBusinessAgentExecutor({
         publish({ phase: 'succeeded', executionId, runId: envelope.runId });
         return receipt;
       });
+      const handle = createHandle({ executionId, runId, reservation, events, ownerCancellationToken });
+      void handle.result.finally(() => {
+        if (inFlightExecutions.get(executionKey)?.handlePromise === handlePromise) {
+          inFlightExecutions.delete(executionKey);
+        }
+      }).catch(() => undefined);
+      resolveHandle(handle);
+      return handle;
     } catch (error) {
-      reservation.cancel(error);
+      reservation?.cancel(error);
+      if (inFlightExecutions.get(executionKey)?.handlePromise === handlePromise) {
+        inFlightExecutions.delete(executionKey);
+      }
+      rejectHandle(error);
       throw error;
     }
-    return createHandle({ executionId, runId, reservation, events, ownerCancellationToken });
   }
 
   return Object.freeze({ execute });

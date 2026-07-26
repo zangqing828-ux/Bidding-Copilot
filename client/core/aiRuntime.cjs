@@ -23,6 +23,7 @@ const SAFE_ERROR_CODES = new Set([
   'AI_RESPONSE_PARSE_ERROR',
   'AI_ENDPOINT_NOT_ALLOWED',
   'AGENT_PROXY_BAD_REQUEST',
+  'AGENT_PROTOCOL_UNSUPPORTED',
   'WEB_CAPABILITY_PENDING',
 ]);
 const CHAT_BODY_FIELDS = Object.freeze([
@@ -53,6 +54,8 @@ const RAW_CHAT_FORBIDDEN_FIELDS = Object.freeze([
   'provider',
   'text_model_provider',
   'text_model_profiles',
+  'queueScopeId',
+  'queue_scope_id',
 ]);
 
 function normalizePositiveInteger(value, fallback) {
@@ -396,6 +399,9 @@ function buildRawChatBody(modelSnapshot, request) {
     if (Object.prototype.hasOwnProperty.call(source, field)) {
       throw createRuntimeError(`Agent Proxy 不允许传入 ${field}`, 'AGENT_PROXY_BAD_REQUEST');
     }
+  }
+  if (source.stream === true) {
+    throw createRuntimeError('Agent 暂不支持 streaming Chat Completions', 'AGENT_PROTOCOL_UNSUPPORTED');
   }
 
   const body = {};
@@ -1039,9 +1045,9 @@ function createAiRuntime(options = {}) {
     }
   }
 
-  function enqueueText(request, runner, scopeId, executionOptions = {}) {
+  function enqueueText(request, runner, scopeId, executionOptions = {}, { trustedScopeOnly = false } = {}) {
     return queue.enqueue('text', runner, {
-      scopeId: getScopeId(request, scopeId),
+      scopeId: trustedScopeOnly ? normalizeScopeId(scopeId) : getScopeId(request, scopeId),
       signal: executionOptions.signal,
     });
   }
@@ -1054,11 +1060,13 @@ function createAiRuntime(options = {}) {
 
     chatCompletionsRaw(request, executionOptions = {}) {
       const { modelSnapshot, ...requestOptions } = executionOptions || {};
+      const trustedScopeId = normalizeScopeId(requestOptions.queueScopeId || requestOptions.queue_scope_id);
       return enqueueText(
         request,
         (signal) => executeRawChat(modelSnapshot, request, { ...requestOptions, signal }),
-        undefined,
+        trustedScopeId,
         requestOptions,
+        { trustedScopeOnly: true },
       );
     },
 
@@ -1142,8 +1150,8 @@ function createAiRuntime(options = {}) {
         ...service,
         chatCompletionsRaw(request, executionOptions = {}) {
           return service.chatCompletionsRaw(
-            { ...(request || {}), queueScopeId: getScopeId(request, normalizedScopeId) || normalizedScopeId },
-            { ...executionOptions, modelSnapshot: executionOptions.modelSnapshot },
+            request,
+            { ...executionOptions, queueScopeId: normalizedScopeId, modelSnapshot: executionOptions.modelSnapshot },
           );
         },
         chat(request, executionOptions = {}) {

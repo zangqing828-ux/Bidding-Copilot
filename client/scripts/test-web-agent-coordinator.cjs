@@ -93,6 +93,65 @@ async function main() {
     assert.deepEqual(coordinator.getWorkspaceSnapshot('a'), { reserved: 0, admitting: 0, active: 0, queued: 0, cleanup: 0 });
   });
 
+  await run('running deadline 保留 AGENT_TIMEOUT，忽略 abort 的 runner 不得成功', async () => {
+    const coordinator = createAgentCoordinator();
+    const reservation = coordinator.reserve({
+      workspaceId: 'a',
+      executionId: 'timeout',
+      envelope: envelope('timeout'),
+      deadlineAt: Date.now() + 15,
+    });
+    const completion = reservation.admit(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return 'runner ignored abort';
+    });
+    await assert.rejects(completion, (error) => error?.code === 'AGENT_TIMEOUT');
+  });
+
+  await run('closeWorkspace 拒绝新 reservation、等待运行任务，且不影响兄弟 Workspace', async () => {
+    const coordinator = createAgentCoordinator({ limits: { globalActive: 2, globalQueued: 4, workspaceQueued: 2 } });
+    const started = deferred();
+    const workspaceA = coordinator.reserve({ workspaceId: 'a', executionId: 'close-a', envelope: envelope('close-a') });
+    const workspaceB = coordinator.reserve({ workspaceId: 'b', executionId: 'close-b', envelope: envelope('close-b') });
+    const aDone = workspaceA.admit(async ({ signal }) => {
+      started.resolve();
+      await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+      throw signal.reason;
+    });
+    const bDone = workspaceB.admit(async () => 'workspace-b-ok');
+    await started.promise;
+    const closing = coordinator.closeWorkspace('a');
+    await assert.rejects(aDone, (error) => error?.code === 'AGENT_CLOSING');
+    await closing;
+    assert.equal(await bDone, 'workspace-b-ok');
+    assert.throws(
+      () => coordinator.reserve({ workspaceId: 'a', executionId: 'closed', envelope: envelope('closed') }),
+      (error) => error?.code === 'AGENT_CLOSING',
+    );
+  });
+
+  await run('applying 进入线性化点后，closeWorkspace 等待原子提交完成', async () => {
+    const coordinator = createAgentCoordinator();
+    const applying = deferred();
+    const releaseApply = deferred();
+    const reservation = coordinator.reserve({ workspaceId: 'a', executionId: 'apply', envelope: envelope('apply') });
+    const completion = reservation.admit(async ({ setPhase }) => {
+      setPhase('applying');
+      applying.resolve();
+      await releaseApply.promise;
+      return 'committed';
+    });
+    await applying.promise;
+    const closing = coordinator.closeWorkspace('a');
+    let closed = false;
+    void closing.then(() => { closed = true; });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(closed, false);
+    releaseApply.resolve();
+    assert.equal(await completion, 'committed');
+    await closing;
+  });
+
   await run('beginClosing 取消现存 reservation 并拒绝新 reservation', async () => {
     const coordinator = createAgentCoordinator();
     const reservation = coordinator.reserve({ workspaceId: 'a', executionId: 'close', envelope: envelope('close') });

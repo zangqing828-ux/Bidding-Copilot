@@ -82,6 +82,10 @@ async function main() {
       assert.throws(() => createBusinessAgentTaskRegistry({ specs: [spec], env: { NODE_ENV: 'production' } }));
       const testRegistry = createBusinessAgentTaskRegistry({ specs: [spec], env: { NODE_ENV: 'test' } });
       assert.equal(testRegistry.get('contract-fixture', 1).id, 'contract-fixture');
+      assert.throws(() => createBusinessAgentTaskRegistry({
+        specs: [{ ...spec, applyResult: async () => {} }],
+        env: { NODE_ENV: 'test' },
+      }));
     });
 
     await run('runtime migration 创建 Agent 幂等账本并与 schema 版本一致', async () => {
@@ -130,6 +134,55 @@ async function main() {
         (error) => error?.code === 'AGENT_INPUT_CHANGED',
       );
       assert.equal(db.prepare('SELECT COUNT(*) AS count FROM fixture_results').get().count, 1);
+    });
+
+    await run('异步 applyResult 与异步 operation 均 fail closed，零业务写入', async () => {
+      inputRevision = 4;
+      const asyncApplySpec = {
+        ...spec,
+        applyResult: async (_validated, tx) => {
+          await Promise.resolve();
+          tx.applyDeclaredOperation('fixture-apply', { value: 'escaped' });
+        },
+      };
+      await assert.rejects(
+        committer.commit({
+          envelope: { ...envelope, executionId: 'async-apply', runId: 'async-apply', inputRevision: 4 },
+          taskSpec: asyncApplySpec,
+          validatedOutput: { expectedRevision: 4, value: 'escaped' },
+          outputSha256: hash('async-apply'),
+        }),
+        (error) => error?.code === 'AGENT_APPLY_FAILED',
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(db.prepare('SELECT COUNT(*) AS count FROM fixture_results').get().count, 1);
+      let delayedErrorCode = null;
+      let delayedCall = null;
+      const delayedApplySpec = {
+        ...spec,
+        applyResult(_validated, tx) {
+          delayedCall = Promise.resolve().then(() => tx.applyDeclaredOperation('fixture-apply', { value: 'late' }))
+            .catch((error) => { delayedErrorCode = error.code; });
+        },
+      };
+      await assert.rejects(
+        committer.commit({
+          envelope: { ...envelope, executionId: 'delayed-apply', runId: 'delayed-apply', inputRevision: 4 },
+          taskSpec: delayedApplySpec,
+          validatedOutput: { expectedRevision: 4, value: 'late' },
+          outputSha256: hash('delayed-apply'),
+        }),
+        (error) => error?.code === 'AGENT_APPLY_FAILED',
+      );
+      await delayedCall;
+      assert.equal(delayedErrorCode, 'AGENT_APPLY_FAILED');
+      assert.equal(db.prepare('SELECT COUNT(*) AS count FROM fixture_results').get().count, 1);
+      assert.throws(() => createAgentResultCommitter({
+        db,
+        mutationExecutor,
+        readInputRevision: () => inputRevision,
+        operations: { 'fixture-apply': async () => ({ entityId: 'bad' }) },
+      }), (error) => error?.code === 'AGENT_APPLY_FAILED');
     });
 
     await run('Executor 只经受限端口冻结输入、持久化 envelope 后再调用 runner', async () => {
@@ -187,6 +240,51 @@ async function main() {
       assert.deepEqual(calls.slice(0, 2), [['persist'], ['accepted']]);
       assert.deepEqual(calls.find((entry) => entry[0] === 'runner')[1], { 'input/fixed.txt': 'frozen input' });
       assert.throws(() => handle.cancel({}, new Error('unauthorized')));
+    });
+
+    await run('相同 execution 并发调用只执行一次 preparation 与 runner', async () => {
+      const executionHash = hash('single-flight-input');
+      let captureCount = 0;
+      let persistCount = 0;
+      let buildInputCount = 0;
+      let buildPromptCount = 0;
+      let runnerCount = 0;
+      const gate = new Promise((resolve) => setTimeout(resolve, 10));
+      const singleFlightSpec = {
+        ...createFixtureSpec(),
+        captureSnapshot: async (reader) => {
+          captureCount += 1;
+          await gate;
+          return { inputRevision: reader.getInputRevision(), inputHash: executionHash, readonlySnapshot: { input: 'once' } };
+        },
+        buildInput: async () => { buildInputCount += 1; return { 'input/fixed.txt': 'once' }; },
+        buildPrompt: async () => { buildPromptCount += 1; return 'once'; },
+        validateOutput: async (value) => value,
+      };
+      const registry = createBusinessAgentTaskRegistry({ specs: [singleFlightSpec], env: { NODE_ENV: 'test' } });
+      const executor = createBusinessAgentExecutor({
+        workspaceId: 'workspace-single-flight',
+        registry,
+        coordinator: createAgentCoordinator(),
+        committer: {
+          findApplied: () => null,
+          commit: async ({ envelope: committedEnvelope }) => ({ executionId: committedEnvelope.executionId, outputSha256: hash('single-flight-output'), appliedAt: '2026-07-27T00:00:00.000Z', resultLocator: { entityId: 'once' } }),
+        },
+        snapshotReader: { getInputRevision: () => 9, readBinding: () => 'once' },
+        aiService: { captureTextModelSnapshot: () => ({ provider: 'test', baseUrl: 'http://127.0.0.1', modelName: 'fixture', apiKey: 'test' }) },
+        runner: { run: async () => { runnerCount += 1; return { output: { expectedRevision: 9, value: 'once' }, outputSha256: hash('single-flight-output') }; } },
+      });
+      const request = {
+        executionId: 'single-flight', workspaceId: 'workspace-single-flight', taskSpecVersion: 1,
+        executionEnvelope: { inputRevision: 9, inputHash: executionHash }, ownerCancellationToken: {},
+        taskController: { persistExecutionEnvelope: async () => { persistCount += 1; }, reconcileAppliedExecution: async () => {}, projectAgentStage: () => {} },
+      };
+      const [first, second] = await Promise.all([executor.execute('contract-fixture', request), executor.execute('contract-fixture', { ...request, ownerCancellationToken: {} })]);
+      assert.strictEqual(first, second);
+      await first.result;
+      assert.deepEqual({ captureCount, persistCount, buildInputCount, buildPromptCount, runnerCount }, {
+        captureCount: 1, persistCount: 1, buildInputCount: 1, buildPromptCount: 1, runnerCount: 1,
+      });
     });
   } finally {
     await mutationExecutor.close();

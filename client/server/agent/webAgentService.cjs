@@ -334,7 +334,9 @@ function createWebAgentService({ workspaceId, workspaceRoot, aiService, agentCoo
     restart: async () => getStatus(),
     close: async () => {
       closing = true;
-      if (typeof agentCoordinator?.cancelWorkspace === 'function') {
+      if (typeof agentCoordinator?.closeWorkspace === 'function') {
+        await agentCoordinator.closeWorkspace(workspaceId);
+      } else if (typeof agentCoordinator?.cancelWorkspace === 'function') {
         agentCoordinator.cancelWorkspace(workspaceId);
       }
       const children = Array.from(activeChildren);

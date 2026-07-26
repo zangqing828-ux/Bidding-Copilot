@@ -86,6 +86,8 @@ function createAgentCoordinator(options = {}) {
   const jobs = new Map();
   const workspaceQueues = new Map();
   const workspaceState = new Map();
+  const closingWorkspaces = new Set();
+  const workspaceClosePromises = new Map();
   let lastScheduledWorkspaceId = null;
   let activeCount = 0;
   let closing = false;
@@ -173,6 +175,9 @@ function createAgentCoordinator(options = {}) {
     } else {
       job.resolve(result);
     }
+    if (!job.running) {
+      job.finish();
+    }
   }
 
   function setPhase(job, phase) {
@@ -210,22 +215,28 @@ function createAgentCoordinator(options = {}) {
     const state = getWorkspaceState(job.workspaceId);
     state.active += 1;
     activeCount += 1;
+    job.running = true;
     setPhase(job, 'running');
     try {
       if (job.controller.signal.aborted) {
-        throw createCancelledError();
+        throw job.controller.signal.reason || createCancelledError();
       }
       const result = await job.runner({
         signal: job.controller.signal,
         setPhase: (phase) => setPhase(job, phase),
       });
+      if (job.controller.signal.aborted && job.phase !== 'applying') {
+        throw job.controller.signal.reason || createCancelledError();
+      }
       setPhase(job, 'cleanup');
       state.cleanup += 1;
       finalizeJob(job, null, result);
     } catch (error) {
-      const normalized = job.controller.signal.aborted || error?.code === 'AGENT_ABORTED'
-        ? createCancelledError()
-        : error;
+      const normalized = job.controller.signal.aborted
+        ? (job.controller.signal.reason || createCancelledError())
+        : error?.code === 'AGENT_ABORTED'
+          ? createCancelledError()
+          : error;
       setPhase(job, 'cleanup');
       state.cleanup += 1;
       finalizeJob(job, normalized);
@@ -233,6 +244,8 @@ function createAgentCoordinator(options = {}) {
       state.cleanup = Math.max(0, state.cleanup - 1);
       state.active = Math.max(0, state.active - 1);
       activeCount = Math.max(0, activeCount - 1);
+      job.running = false;
+      job.finish();
       clearWorkspaceStateIfIdle(job.workspaceId);
       pump();
     }
@@ -256,6 +269,9 @@ function createAgentCoordinator(options = {}) {
       finalizeJob(job, reason);
       return true;
     }
+    if (job.phase === 'applying' || job.phase === 'cleanup') {
+      return false;
+    }
     job.controller.abort(reason);
     return true;
   }
@@ -274,7 +290,7 @@ function createAgentCoordinator(options = {}) {
     const workspaceId = normalizeWorkspaceId(input.workspaceId);
     const executionId = normalizeExecutionId(input.executionId);
     const envelope = stableEnvelope(input.envelope);
-    if (closing) {
+    if (closing || closingWorkspaces.has(workspaceId)) {
       throw createAgentError('Agent 调度器正在关闭', 'AGENT_CLOSING', { retryable: true });
     }
     const key = jobKey(workspaceId, executionId);
@@ -310,6 +326,8 @@ function createAgentCoordinator(options = {}) {
       reject: null,
       deadlineTimer: null,
       reservation: null,
+      running: false,
+      finish: null,
     };
     job.completion = new Promise((resolve, reject) => {
       job.resolve = resolve;
@@ -317,6 +335,9 @@ function createAgentCoordinator(options = {}) {
     });
     // A caller may attach after a reservation fails during admission; avoid a process-level unhandled rejection.
     void job.completion.catch(() => undefined);
+    job.finished = new Promise((resolve) => {
+      job.finish = resolve;
+    });
     jobs.set(key, job);
     state.reserved += 1;
     const deadlineDelay = Math.max(1, deadlineAt - Date.now());
@@ -330,7 +351,7 @@ function createAgentCoordinator(options = {}) {
       cancel: (reason) => cancelJob(job, reason || createCancelledError()),
       admit(runner) {
         if (job.settled) return job.completion;
-        if (closing) {
+        if (closing || closingWorkspaces.has(workspaceId)) {
           finalizeJob(job, createAgentError('Agent 调度器正在关闭', 'AGENT_CLOSING', { retryable: true }));
           return job.completion;
         }
@@ -346,9 +367,10 @@ function createAgentCoordinator(options = {}) {
         currentState.admitting += 1;
         setPhase(job, 'admitting');
         job.runner = runner;
-        if (closing || job.controller.signal.aborted) {
+        if (closing || closingWorkspaces.has(workspaceId) || job.controller.signal.aborted) {
           finalizeJob(job, closing
-            ? createAgentError('Agent 调度器正在关闭', 'AGENT_CLOSING', { retryable: true })
+            || closingWorkspaces.has(workspaceId)
+            ? createAgentError('Agent workspace 正在关闭', 'AGENT_CLOSING', { retryable: true })
             : createCancelledError());
           return job.completion;
         }
@@ -391,6 +413,41 @@ function createAgentCoordinator(options = {}) {
     return cancelled;
   }
 
+  async function waitForWorkspaceSettled(workspaceId, timeoutMs) {
+    const deadlineAt = Date.now() + timeoutMs;
+    while (true) {
+      const pending = Array.from(jobs.values())
+        .filter((job) => job.workspaceId === workspaceId)
+        .map((job) => job.finished);
+      if (!pending.length) return;
+      const remainingMs = deadlineAt - Date.now();
+      if (remainingMs <= 0) {
+        throw createAgentError('Agent workspace 关闭超时', 'AGENT_SHUTDOWN_TIMEOUT', { retryable: true });
+      }
+      await Promise.race([
+        Promise.allSettled(pending),
+        new Promise((_, reject) => {
+          const timer = setTimeout(() => reject(createAgentError('Agent workspace 关闭超时', 'AGENT_SHUTDOWN_TIMEOUT', { retryable: true })), remainingMs);
+          timer.unref?.();
+        }),
+      ]);
+    }
+  }
+
+  function closeWorkspace(workspaceId, { timeoutMs = 5_000 } = {}) {
+    const normalizedWorkspaceId = normalizeWorkspaceId(workspaceId);
+    const existing = workspaceClosePromises.get(normalizedWorkspaceId);
+    if (existing) return existing;
+    closingWorkspaces.add(normalizedWorkspaceId);
+    cancelWorkspace(normalizedWorkspaceId, createAgentError('Agent workspace 正在关闭', 'AGENT_CLOSING', { retryable: true }));
+    const attempt = waitForWorkspaceSettled(normalizedWorkspaceId, timeoutMs);
+    workspaceClosePromises.set(normalizedWorkspaceId, attempt);
+    void attempt.finally(() => {
+      workspaceClosePromises.delete(normalizedWorkspaceId);
+    }).catch(() => undefined);
+    return attempt;
+  }
+
   function beginClosing(reason = createAgentError('Agent 调度器正在关闭', 'AGENT_CLOSING', { retryable: true })) {
     closing = true;
     for (const job of Array.from(jobs.values())) {
@@ -401,7 +458,7 @@ function createAgentCoordinator(options = {}) {
   function close({ timeoutMs = 30_000 } = {}) {
     if (closePromise) return closePromise;
     beginClosing();
-    const pending = Array.from(jobs.values()).map((job) => job.completion.catch(() => undefined));
+    const pending = Array.from(jobs.values()).map((job) => job.finished);
     closePromise = Promise.race([
       Promise.allSettled(pending),
       new Promise((_, reject) => {
@@ -415,6 +472,7 @@ function createAgentCoordinator(options = {}) {
   return {
     beginClosing,
     cancelWorkspace,
+    closeWorkspace,
     close,
     getStatus,
     getWorkspaceSnapshot,
