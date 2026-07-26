@@ -40,6 +40,7 @@
     "test:web-contract": "node scripts/test-web-contract.cjs",
     "test:web-contract:strict-guard": "node scripts/test-web-contract-strict-guard.cjs",
     "test:bid-analysis-contract": "node scripts/test-bid-analysis-contract.cjs",
+    "test:electron-task-characterization": "node scripts/test-electron-task-characterization.cjs",
     "test:ai-scheduler": "node scripts/test-ai-scheduler.cjs",
     "test:web-endpoint-policy": "node scripts/test-web-endpoint-policy.cjs",
     "test:web-ai-runtime": "node scripts/test-web-ai-runtime.cjs",

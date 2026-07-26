@@ -201,7 +201,7 @@ function createTask(type, payload) {
   };
 }
 
-function createTaskService({ aiService, agentService, technicalPlanStore, rejectionCheckStore, duplicateCheckStore, knowledgeBaseService, duplicateCheckService }) {
+function createTaskService({ aiService, agentService, technicalPlanStore, rejectionCheckStore, duplicateCheckStore, knowledgeBaseService, duplicateCheckService, taskRunners = {} }) {
   const subscribers = new Set();
   const callbackSubscribers = new Set();
   const activeTasks = new Map();
@@ -395,6 +395,10 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
 
   function getTaskField(type) {
     return getTaskDefinition(type).field;
+  }
+
+  function getTaskRunner(type, fallback) {
+    return typeof taskRunners[type] === 'function' ? taskRunners[type] : fallback;
   }
 
   function getActiveTaskConflict(type, payload) {
@@ -811,7 +815,7 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
     subscribe,
     subscribeCallback,
     startBidSectionExtraction(payload) {
-      return startManagedTask('bid-section-extraction', payload, runBidSectionExtractionTask, {
+      return startManagedTask('bid-section-extraction', payload, getTaskRunner('bid-section-extraction', runBidSectionExtractionTask), {
         bidSectionMode: 'multiple',
         bidSections: [],
         bidSectionExtractionStatus: 'running',
@@ -836,10 +840,10 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
       });
     },
     startBidAnalysis(payload) {
-      return startManagedTask('bid-analysis', payload, runBidAnalysisTask);
+      return startManagedTask('bid-analysis', payload, getTaskRunner('bid-analysis', runBidAnalysisTask));
     },
     startOutlineGeneration(payload) {
-      return startManagedTask('outline-generation', payload, runOutlineGenerationTask, {
+      return startManagedTask('outline-generation', payload, getTaskRunner('outline-generation', runOutlineGenerationTask), {
         outlineMode: 'aligned',
         outlineExpansionMode: payload?.outline_expansion_mode === 'original-only' ? 'original-only' : 'ai-complement',
         outlineWordControlOptions: payload?.word_control_options,
@@ -847,7 +851,7 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
       });
     },
     startGlobalFactsGeneration(payload) {
-      return startManagedTask('global-facts-generation', payload, runGlobalFactsTask, {
+      return startManagedTask('global-facts-generation', payload, getTaskRunner('global-facts-generation', runGlobalFactsTask), {
         globalFacts: [],
         contentGenerationTask: undefined,
         contentGenerationSections: {},
@@ -861,7 +865,7 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
       if (!technicalPlan.outlineWordControlSnapshot) {
         throw new Error('当前目录没有字数控制生效快照，请重新生成目录');
       }
-      return startManagedTask('content-generation', payload, runContentGenerationTask);
+      return startManagedTask('content-generation', payload, getTaskRunner('content-generation', runContentGenerationTask));
     },
     pauseContentGeneration() {
       const task = activeTasks.get('content-generation');
@@ -882,16 +886,16 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
       throw new Error('当前没有正在生成的正文任务。');
     },
     startRejectionItemsExtraction(payload) {
-      return startManagedTask('rejection-items-extraction', payload, runRejectionItemsExtractionTask, payload?.workspaceState || {});
+      return startManagedTask('rejection-items-extraction', payload, getTaskRunner('rejection-items-extraction', runRejectionItemsExtractionTask), payload?.workspaceState || {});
     },
     startRejectionCheck(payload) {
-      return startManagedTask('rejection-check-run', payload, runRejectionCheckTask, payload?.workspaceState || {});
+      return startManagedTask('rejection-check-run', payload, getTaskRunner('rejection-check-run', runRejectionCheckTask), payload?.workspaceState || {});
     },
     startDuplicateAnalysis(payload) {
       if (!duplicateCheckService?.runAnalysisTask) {
         throw new Error('标书查重任务服务尚未初始化');
       }
-      return startManagedTask('duplicate-analysis', payload, duplicateCheckService.runAnalysisTask);
+      return startManagedTask('duplicate-analysis', payload, getTaskRunner('duplicate-analysis', duplicateCheckService.runAnalysisTask));
     },
     getActiveTasks() {
       recoverInterruptedBidSectionExtractionTask();
@@ -907,4 +911,4 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
   };
 }
 
-module.exports = { createTaskService };
+module.exports = { createTask, createTaskService, taskDefinitions };
