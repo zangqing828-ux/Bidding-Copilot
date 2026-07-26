@@ -80,6 +80,30 @@ function httpRequest(method, urlPath, headers = {}, body = null) {
   });
 }
 
+function multipartFile(fieldName, fileName, contentType, content, boundary = '----testboundary') {
+  return {
+    boundary,
+    body: `--${boundary}\r\nContent-Disposition: form-data; name="${fieldName}"; filename="${fileName}"\r\nContent-Type: ${contentType}\r\n\r\n${content}\r\n--${boundary}--\r\n`,
+  };
+}
+
+async function loginMock(email, name) {
+  const loginRes = await httpRequest('GET', '/api/auth/login');
+  const setCookies = loginRes.headers['set-cookie'];
+  const loginCookies = Array.isArray(setCookies) ? setCookies : (setCookies ? [setCookies] : []);
+  const stateCookie = loginCookies.find((cookie) => cookie.startsWith('yibiao_oauth_state='));
+  const stateValue = new URL(loginRes.headers.location, 'http://localhost').searchParams.get('state');
+  const stateCookieValue = stateCookie?.match(/yibiao_oauth_state=([^;]+)/)?.[1];
+  const mockRes = await httpRequest('POST', '/api/auth/mock-callback', {
+    'content-type': 'application/x-www-form-urlencoded',
+    cookie: `yibiao_oauth_state=${stateCookieValue}`,
+  }, `email=${encodeURIComponent(email)}&name=${encodeURIComponent(name)}&state=${encodeURIComponent(stateValue)}`);
+  const cookies = Array.isArray(mockRes.headers['set-cookie']) ? mockRes.headers['set-cookie'] : [mockRes.headers['set-cookie']];
+  const sessionMatch = cookies.find((cookie) => cookie.startsWith('yibiao_session='));
+  const sessionCookie = sessionMatch?.match(/yibiao_session=([^;]+)/)?.[1];
+  return `yibiao_session=${sessionCookie}`;
+}
+
 async function runTests() {
   // 登录
   const loginRes = await httpRequest('GET', '/api/auth/login');
@@ -97,6 +121,141 @@ async function runTests() {
   const sessionMatch = cookies.find((c) => c.startsWith('yibiao_session='));
   const sessionCookie = sessionMatch?.match(/yibiao_session=([^;]+)/)?.[1];
   const cookieStr = `yibiao_session=${sessionCookie}`;
+
+  let uploadedFileId = '';
+  let bidFileId = '';
+
+  // 0. 有效文本上传进入账号内 registry，file ID 不包含真实路径。
+  {
+    const { boundary, body } = multipartFile('file', '招标文件.txt', 'text/plain', '第一章 招标范围');
+    const res = await httpRequest('POST', '/api/uploads', {
+      'content-type': `multipart/form-data; boundary=${boundary}`,
+      cookie: cookieStr,
+    }, body);
+    const parsed = parseJson(res.body);
+    uploadedFileId = parsed?.fileId || '';
+    assert(res.statusCode === 200, '有效文本上传返回 200');
+    assert(/^[0-9a-f-]{36}$/i.test(uploadedFileId), '上传仅返回 UUID file ID');
+    assert(parsed?.fileName === '招标文件.txt', '上传保留原始展示文件名');
+    assert(!JSON.stringify(parsed).includes('workspace'), '上传响应不泄露 workspace 路径');
+  }
+
+  // 0a. 同内容重复上传复用 registry 记录，避免重复占用存储。
+  {
+    const { boundary, body } = multipartFile('file', '重复招标文件.txt', 'text/plain', '第一章 招标范围', '----duplicatecontent');
+    const res = await httpRequest('POST', '/api/uploads', {
+      'content-type': `multipart/form-data; boundary=${boundary}`,
+      cookie: cookieStr,
+    }, body);
+    const parsed = parseJson(res.body);
+    assert(res.statusCode === 200, '重复上传返回 200');
+    assert(parsed?.fileId === uploadedFileId && parsed?.deduplicated === true, '重复上传复用既有 file ID');
+  }
+
+  // 0b. 伪扩展名在落盘后立即清理并拒绝。
+  {
+    const { boundary, body } = multipartFile('file', '伪装.pdf', 'application/pdf', 'plain text', '----fakepdf');
+    const res = await httpRequest('POST', '/api/uploads', {
+      'content-type': `multipart/form-data; boundary=${boundary}`,
+      cookie: cookieStr,
+    }, body);
+    const parsed = parseJson(res.body);
+    assert(res.statusCode === 400, '伪 PDF 上传被拒（400）');
+    assert(parsed?.code === 'UPLOAD_FILE_CONTENT_INVALID', '伪 PDF 返回内容校验错误码');
+  }
+
+  // 0c. 技术方案只接受 file ID，导入后可由 Store 恢复。
+  {
+    const res = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
+      namespace: 'technicalPlan',
+      method: 'importTenderDocument',
+      args: [[uploadedFileId]],
+    });
+    const parsed = parseJson(res.body);
+    assert(res.statusCode === 200, '技术方案通过 file ID 导入成功');
+    assert(parsed?.data?.success === true, '技术方案导入返回成功状态');
+    assert(parsed?.data?.state?.tenderFile?.fileName === '招标文件.txt', '技术方案 Store 保存上传文件结果');
+  }
+
+  // 0d. 其余三个业务入口复用同一个账号 registry，不接收浏览器路径。
+  {
+    const { boundary, body } = multipartFile('file', '投标文件.txt', 'text/plain', '第二章 投标响应', '----bidfile');
+    const uploadRes = await httpRequest('POST', '/api/uploads', {
+      'content-type': `multipart/form-data; boundary=${boundary}`,
+      cookie: cookieStr,
+    }, body);
+    bidFileId = parseJson(uploadRes.body)?.fileId || '';
+    assert(uploadRes.statusCode === 200 && /^[0-9a-f-]{36}$/i.test(bidFileId), '投标文件取得独立 file ID');
+
+    const duplicateRes = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
+      namespace: 'duplicateCheck',
+      method: 'saveFiles',
+      args: [{ tenderFileIds: [uploadedFileId], bidFileIds: [bidFileId], step: 'upload', activeAnalysisTab: 'metadata' }],
+    });
+    const duplicate = parseJson(duplicateRes.body);
+    assert(duplicateRes.statusCode === 200, '查重文件通过 file ID 保存成功');
+    assert(duplicate?.data?.tenderFiles?.length === 1 && duplicate?.data?.bidFiles?.length === 1, '查重 Store 只保存当前账号文件');
+
+    const rejectionTenderRes = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
+      namespace: 'rejectionCheck',
+      method: 'importDocument',
+      args: ['tender', [uploadedFileId]],
+    });
+    const rejectionTender = parseJson(rejectionTenderRes.body);
+    assert(rejectionTenderRes.statusCode === 200 && rejectionTender?.data?.success === true, '废标检查招标文件通过 file ID 导入成功');
+
+    const rejectionBidRes = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
+      namespace: 'rejectionCheck',
+      method: 'importDocument',
+      args: ['bid', [bidFileId]],
+    });
+    const rejectionBid = parseJson(rejectionBidRes.body);
+    assert(rejectionBidRes.statusCode === 200 && rejectionBid?.data?.state?.bidDocuments?.length === 1, '废标检查投标文件通过 file ID 导入成功');
+
+    const folderRes = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
+      namespace: 'knowledgeBase',
+      method: 'createFolder',
+      args: ['测试知识库'],
+    });
+    const folder = parseJson(folderRes.body)?.data;
+    assert(folderRes.statusCode === 200 && typeof folder?.id === 'string', '知识库文件夹创建成功');
+    const knowledgeUploadRes = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
+      namespace: 'knowledgeBase',
+      method: 'uploadDocuments',
+      args: [folder?.id, [uploadedFileId]],
+    });
+    const knowledgeUpload = parseJson(knowledgeUploadRes.body);
+    assert(knowledgeUploadRes.statusCode === 200 && knowledgeUpload?.data?.success === true, '知识库通过 file ID 导入成功');
+    const knowledgeListRes = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
+      namespace: 'knowledgeBase',
+      method: 'list',
+      args: [],
+    });
+    const knowledgeList = parseJson(knowledgeListRes.body);
+    assert(knowledgeList?.data?.documents?.length === 1, '知识库导入后可从 Store 恢复');
+  }
+
+  // 0e. 另一账号无法借用 file ID，也不能提交路径替代 file ID。
+  {
+    const otherCookie = await loginMock('files-other@test.com', 'F2');
+    const crossAccountRes = await httpRequest('POST', '/api/bridge', { cookie: otherCookie }, {
+      namespace: 'technicalPlan',
+      method: 'importTenderDocument',
+      args: [[uploadedFileId]],
+    });
+    const crossAccount = parseJson(crossAccountRes.body);
+    assert(crossAccountRes.statusCode === 400, '另一账号无法导入对方 file ID');
+    assert(crossAccount?.code === 'UPLOAD_FILE_NOT_FOUND', '跨账号 file ID 不暴露归属信息');
+
+    const pathIdRes = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
+      namespace: 'technicalPlan',
+      method: 'importTenderDocument',
+      args: [['/etc/passwd']],
+    });
+    const pathId = parseJson(pathIdRes.body);
+    assert(pathIdRes.statusCode === 400, '绝对路径不能作为 file ID 导入');
+    assert(pathId?.code === 'UPLOAD_FILE_ID_INVALID', '路径冒充 file ID 被拒绝');
+  }
 
   // 1. 上传 .exe 文件 → 被拒
   {

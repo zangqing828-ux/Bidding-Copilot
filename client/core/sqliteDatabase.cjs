@@ -3,7 +3,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 
 
-const schemaVersion = 18;
+const schemaVersion = 19;
 
 function createInitialSchema(db) {
   db.exec(`
@@ -156,6 +156,28 @@ function createTechnicalPlanGlobalFactsSchema(db) {
 
     CREATE INDEX IF NOT EXISTS idx_technical_plan_global_fact_groups_order
     ON technical_plan_global_fact_groups(sort_order);
+  `);
+}
+
+function createUploadRegistrySchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS upload_registry (
+      file_id TEXT PRIMARY KEY,
+      stored_name TEXT NOT NULL UNIQUE,
+      original_name TEXT NOT NULL,
+      extension TEXT NOT NULL,
+      mime_type TEXT,
+      size INTEGER NOT NULL,
+      sha256 TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ready',
+      claim_count INTEGER NOT NULL DEFAULT 0,
+      claimed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_upload_registry_hash
+    ON upload_registry(sha256, size, status);
   `);
 }
 
@@ -971,6 +993,11 @@ const schemaHealthTableGroups = [
     tables: ['export_templates'],
     repair: createExportTemplatesSchema,
   },
+  {
+    version: 19,
+    tables: ['upload_registry'],
+    repair: createUploadRegistrySchema,
+  },
 ];
 
 const schemaHealthColumnGroups = [
@@ -1119,6 +1146,24 @@ const schemaHealthColumnGroups = [
     columns: {
       outline_word_control_options_json: 'TEXT',
       outline_word_control_snapshot_json: 'TEXT',
+    },
+  },
+  {
+    version: 19,
+    table: 'upload_registry',
+    columns: {
+      file_id: 'TEXT',
+      stored_name: 'TEXT',
+      original_name: 'TEXT',
+      extension: 'TEXT',
+      mime_type: 'TEXT',
+      size: 'INTEGER',
+      sha256: 'TEXT',
+      status: "TEXT NOT NULL DEFAULT 'ready'",
+      claim_count: 'INTEGER NOT NULL DEFAULT 0',
+      claimed_at: 'TEXT',
+      created_at: 'TEXT',
+      updated_at: 'TEXT',
     },
   },
 ];
@@ -1274,6 +1319,11 @@ const migrations = [
     version: 18,
     description: '技术方案新增目录字数控制设置和生效快照',
     up: addTechnicalPlanOutlineWordControl,
+  },
+  {
+    version: 19,
+    description: '新增 Web 上传文件注册表',
+    up: createUploadRegistrySchema,
   },
 ];
 

@@ -312,3 +312,12 @@ export interface TechnicalPlanState {
   contentGenerationRuntime?: ContentGenerationRuntimeState;
   outlineData: OutlineData | null;
 }
+
+export interface TechnicalPlanImportResult {
+  success: boolean;
+  message?: string;
+  state?: TechnicalPlanState;
+  markdown?: string;
+  fileName?: string;
+  parserLabel?: string | null;
+}

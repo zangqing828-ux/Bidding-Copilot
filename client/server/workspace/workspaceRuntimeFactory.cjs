@@ -11,6 +11,8 @@ const { getGlobalAiCoordinator } = require('../ai/globalAiCoordinator.cjs');
 const { createAiAnalyticsTracker } = require('../ai/aiAnalytics.cjs');
 const { createWebEndpointPolicy } = require('../ai/webEndpointPolicy.cjs');
 const { createWorkspaceStoreExecutor } = require('./storeBridgeExecutor.cjs');
+const { createUploadRegistry } = require('./uploadRegistry.cjs');
+const { createWebFileService } = require('./webFileService.cjs');
 
 function createCloseHandler(target) {
   if (!target || typeof target.close !== 'function') {
@@ -157,7 +159,7 @@ function createWebWorkspaceRuntime({
     const {
       createWebAgentServiceStub,
       createWebTaskServiceStub,
-      createWebKnowledgeBaseServiceStub,
+      createWebKnowledgeBaseService,
       createWebDuplicateCheckServiceStub,
     } = require('./webServices.cjs');
 
@@ -168,10 +170,12 @@ function createWebWorkspaceRuntime({
     pushCloseHandler(closeHandlers, createCloseHandler(sqliteDatabase), 'sqliteDatabase');
 
     const configStore = createEncryptedConfigStore({ configPath });
-    const technicalPlanStore = createTechnicalPlanStore({ db: sqliteDatabase.db, workspaceRoot });
+    const uploadRegistry = createUploadRegistry({ db: sqliteDatabase.db, uploadsDir: paths.uploadsDir });
+    const fileService = createWebFileService({ uploadRegistry, configStore });
+    const technicalPlanStore = createTechnicalPlanStore({ db: sqliteDatabase.db, workspaceRoot, fileService });
     const knowledgeBaseStore = createKnowledgeBaseStore({ db: sqliteDatabase.db, workspaceRoot });
     const duplicateCheckStore = createDuplicateCheckStore({ db: sqliteDatabase.db, workspaceRoot });
-    const rejectionCheckStore = createRejectionCheckStore({ db: sqliteDatabase.db, workspaceRoot, technicalPlanStore });
+    const rejectionCheckStore = createRejectionCheckStore({ db: sqliteDatabase.db, workspaceRoot, technicalPlanStore, fileService });
     const templateStore = createTemplateStore({ db: sqliteDatabase.db });
     const storeExecutor = createWorkspaceStoreExecutor({
       workspaceId,
@@ -208,7 +212,7 @@ function createWebWorkspaceRuntime({
     }
     pushCloseHandler(closeHandlers, createCloseHandler(agentService), 'agentService');
 
-    const knowledgeBaseService = createWebKnowledgeBaseServiceStub({ knowledgeBaseStore });
+    const knowledgeBaseService = createWebKnowledgeBaseService({ knowledgeBaseStore, fileService });
     const duplicateCheckService = createWebDuplicateCheckServiceStub({ duplicateCheckStore });
     const taskService = createWebTaskServiceStub();
     pushCloseHandler(closeHandlers, createCloseHandler(taskService), 'taskService');
@@ -219,10 +223,13 @@ function createWebWorkspaceRuntime({
       db: sqliteDatabase.db,
       sqliteDatabase,
       configStore,
+      uploadRegistry,
+      fileService,
       storeExecutor,
       aiService,
       taskService,
       taskEvents,
+      knowledgeBaseService,
       stores: {
         technicalPlanStore,
         knowledgeBaseStore,

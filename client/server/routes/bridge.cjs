@@ -162,6 +162,14 @@ const bridgeBindingMetadata = Object.freeze({
 
   technicalPlan: Object.freeze({
     loadState: createStoreBinding('technicalPlanStore', 'loadTechnicalPlan', 'technicalPlan.loadState'),
+    importTenderDocument: createDirectBinding(
+      (ctx, args) => ctx.stores.technicalPlanStore.importTenderDocument(args[0]),
+      'technicalPlan.importTenderDocument',
+    ),
+    importOriginalPlanDocument: createDirectBinding(
+      (ctx, args) => ctx.stores.technicalPlanStore.importOriginalPlanDocument(args[0]),
+      'technicalPlan.importOriginalPlanDocument',
+    ),
     readTenderMarkdown: createStoreBinding('technicalPlanStore', 'readTenderMarkdown', 'technicalPlan.readTenderMarkdown'),
     readTenderSourceMarkdown: createStoreBinding('technicalPlanStore', 'readTenderSourceMarkdown', 'technicalPlan.readTenderSourceMarkdown'),
     readOriginalPlanMarkdown: createStoreBinding('technicalPlanStore', 'readOriginalPlanMarkdown', 'technicalPlan.readOriginalPlanMarkdown'),
@@ -180,6 +188,9 @@ const bridgeBindingMetadata = Object.freeze({
   }),
 
   knowledgeBase: Object.freeze({
+    list: createDirectBinding((ctx) => ctx.knowledgeBaseService.list(), 'knowledgeBase.list'),
+    createFolder: createDirectBinding((ctx, args) => ctx.knowledgeBaseService.createFolder(args[0]), 'knowledgeBase.createFolder'),
+    uploadDocuments: createDirectBinding((ctx, args) => ctx.knowledgeBaseService.uploadDocuments(args[0], args[1]), 'knowledgeBase.uploadDocuments'),
     getMigrationStatus: createStoreBinding('knowledgeBaseStore', 'getMigrationStatus', 'knowledgeBase.getMigrationStatus'),
     migrateLegacy: createStoreBinding('knowledgeBaseStore', 'migrateLegacy', 'knowledgeBase.migrateLegacy'),
     renameFolder: createStoreBinding('knowledgeBaseStore', 'renameFolder', 'knowledgeBase.renameFolder'),
@@ -190,12 +201,38 @@ const bridgeBindingMetadata = Object.freeze({
 
   duplicateCheck: Object.freeze({
     loadState: createStoreBinding('duplicateCheckStore', 'loadDuplicateCheck', 'duplicateCheck.loadState'),
+    saveFiles: createDirectBinding(
+      (ctx, args) => {
+        const payload = args[0] || {};
+        const tenderFiles = ctx.fileService.resolveDuplicateCheckFiles(payload.tenderFileIds || []);
+        const bidFiles = ctx.fileService.resolveDuplicateCheckFiles(payload.bidFileIds || []);
+        const normalized = {
+          tenderFile: tenderFiles[0] || null,
+          tenderFiles,
+          bidFiles,
+          step: payload.step,
+          activeAnalysisTab: payload.activeAnalysisTab,
+        };
+        return executeWorkspaceStore(
+          ctx,
+          'duplicateCheckStore',
+          'saveFiles',
+          [normalized],
+          () => ctx.stores.duplicateCheckStore.saveFiles(normalized),
+        );
+      },
+      'duplicateCheck.saveFiles',
+    ),
     saveUiState: createStoreBinding('duplicateCheckStore', 'saveUiState', 'duplicateCheck.saveUiState'),
     clear: createStoreBinding('duplicateCheckStore', 'clearDuplicateCheck', 'duplicateCheck.clear'),
   }),
 
   rejectionCheck: Object.freeze({
     loadState: createStoreBinding('rejectionCheckStore', 'loadRejectionCheck', 'rejectionCheck.loadState'),
+    importDocument: createDirectBinding(
+      (ctx, args) => ctx.stores.rejectionCheckStore.importDocument(args[0], args[1]),
+      'rejectionCheck.importDocument',
+    ),
     removeDocument: createStoreBinding('rejectionCheckStore', 'removeDocument', 'rejectionCheck.removeDocument'),
     saveUiState: createStoreBinding('rejectionCheckStore', 'saveUiState', 'rejectionCheck.saveUiState'),
     updateState: createDirectBinding(
@@ -414,6 +451,13 @@ router.post('/bridge', (req, res) => {
           message: 'AI 请求队列繁忙，请稍后重试',
           retryable: true,
         });
+    }
+    if (typeof err?.code === 'string' && err.code.startsWith('UPLOAD_FILE_')) {
+      return res.status(400).json({
+        code: err.code,
+        message: err.message || '上传文件无效',
+        retryable: false,
+      });
     }
     console.error(`[bridge] ${namespace}.${method} 执行失败`, err?.message || String(err));
     return res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });

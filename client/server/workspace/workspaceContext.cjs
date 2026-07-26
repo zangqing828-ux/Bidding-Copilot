@@ -228,9 +228,12 @@ function createWorkspaceContext({
     db: runtime.db,
     sqliteDatabase: runtime.sqliteDatabase,
     configStore: runtime.configStore,
+    uploadRegistry: runtime.uploadRegistry,
+    fileService: runtime.fileService,
     storeExecutor: runtime.storeExecutor,
     aiService: runtime.aiService || (runtime.ports && runtime.ports.ai),
     stores: runtime.stores,
+    knowledgeBaseService: runtime.knowledgeBaseService,
     taskService: runtime.taskService,
     taskEvents: runtime.taskEvents,
     getActivitySnapshot() {

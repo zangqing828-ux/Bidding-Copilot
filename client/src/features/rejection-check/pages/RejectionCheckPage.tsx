@@ -3,6 +3,7 @@ import * as Switch from '@radix-ui/react-switch';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { trackPageView } from '../../../shared/analytics/analytics';
 import { FloatingToolbar, isLibreOfficeRequiredMessage, MarkdownEditor, MarkdownFullscreenViewer, MarkdownRenderer, ToolbarArrowLeftIcon, ToolbarArrowRightIcon, useDocumentParseNotice, useToast } from '../../../shared/ui';
+import { httpClient } from '../../../shared/api/httpClient';
 import type { FloatingToolbarGroup } from '../../../shared/ui';
 import type {
   LogicCheckFinding,
@@ -816,7 +817,11 @@ function RejectionCheckPage() {
       }
 
       setBusy(role === 'tender' ? 'tender-upload' : 'bid-upload');
-      const result = await importer(role);
+      const fileIds = window.yibiao?.platform === 'web'
+        ? (await httpClient.chooseAndUpload({ multiple: role === 'bid' })).map((file) => file.fileId)
+        : undefined;
+      if (window.yibiao?.platform === 'web' && !fileIds?.length) return;
+      const result = await importer(role, fileIds);
 
       if (!result?.success) {
         const message = result?.message || `未选择${documentLabel}`;

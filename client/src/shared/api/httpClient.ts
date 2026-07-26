@@ -74,7 +74,29 @@ async function invoke<T = unknown>(namespace: string, method: string, args: unkn
 export interface UploadResult {
   fileId: string;
   fileName: string;
+  extension?: string;
   size: number;
+  uploadedAt?: string;
+  deduplicated?: boolean;
+}
+
+const DOCUMENT_ACCEPT = '.doc,.docx,.pdf,.txt,.md,.xlsx';
+
+function chooseFiles({ multiple = false, accept = DOCUMENT_ACCEPT }: { multiple?: boolean; accept?: string } = {}): Promise<File[]> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = multiple;
+    input.accept = accept;
+    input.style.display = 'none';
+    input.addEventListener('change', () => {
+      const files = Array.from(input.files || []);
+      input.remove();
+      resolve(files);
+    }, { once: true });
+    document.body.appendChild(input);
+    input.click();
+  });
 }
 
 // 上传单文件
@@ -119,4 +141,14 @@ async function uploadMultiple(files: File[]): Promise<{ files: UploadResult[] }>
   return response.json();
 }
 
-export const httpClient = { invoke, upload, uploadMultiple };
+async function chooseAndUpload(options: { multiple?: boolean; accept?: string } = {}): Promise<UploadResult[]> {
+  const files = await chooseFiles(options);
+  if (!files.length) return [];
+  if (options.multiple) {
+    const result = await uploadMultiple(files);
+    return result.files || [];
+  }
+  return [await upload(files[0])];
+}
+
+export const httpClient = { invoke, upload, uploadMultiple, chooseAndUpload };

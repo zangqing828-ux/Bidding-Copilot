@@ -13,6 +13,10 @@ export interface FileSelectionResult {
   files?: LocalFileSelection[];
 }
 
+export type DuplicateCheckSaveFilesRequest = Pick<DuplicateCheckWorkspaceState, 'tenderFile' | 'tenderFiles' | 'bidFiles'>
+  & Partial<Pick<DuplicateCheckWorkspaceState, 'step' | 'activeAnalysisTab'>>
+  & { tenderFileIds?: string[]; bidFileIds?: string[] };
+
 export type DuplicateCheckStep = 'upload' | 'analysis';
 
 export type DuplicateAnalysisTabId = 'metadata' | 'outline' | 'content' | 'image';

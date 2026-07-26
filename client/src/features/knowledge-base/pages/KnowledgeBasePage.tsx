@@ -2,6 +2,7 @@ import { Profiler, startTransition, useEffect, useLayoutEffect, useMemo, useRef,
 import * as Dialog from '@radix-ui/react-dialog';
 import { trackPageView } from '../../../shared/analytics/analytics';
 import { isLibreOfficeRequiredMessage, MarkdownFullscreenViewer, MarkdownRenderer, useDocumentParseNotice, useToast } from '../../../shared/ui';
+import { httpClient } from '../../../shared/api/httpClient';
 import type { KnowledgeAnalysisSnapshot, KnowledgeBaseIndex, KnowledgeBaseMigrationStatus, KnowledgeDocument, KnowledgeItem } from '../types';
 
 declare global {
@@ -650,7 +651,11 @@ function KnowledgeBasePage() {
 
     try {
       setLoading(true);
-      const result = await window.yibiao?.knowledgeBase.uploadDocuments(activeFolder.id);
+      const fileIds = window.yibiao?.platform === 'web'
+        ? (await httpClient.chooseAndUpload({ multiple: true })).map((file) => file.fileId)
+        : undefined;
+      if (window.yibiao?.platform === 'web' && !fileIds?.length) return;
+      const result = await window.yibiao?.knowledgeBase.uploadDocuments(activeFolder.id, fileIds);
       if (!result?.success) {
         const message = result?.message || '未选择文档';
         if (isLibreOfficeRequiredMessage(message)) {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { trackPageView } from '../../../shared/analytics/analytics';
 import { FloatingToolbar, isLibreOfficeRequiredMessage, ToolbarArrowLeftIcon, ToolbarArrowRightIcon, useDocumentParseNotice, useToast } from '../../../shared/ui';
+import { httpClient } from '../../../shared/api/httpClient';
 import type { FloatingToolbarGroup } from '../../../shared/ui';
 import type { DuplicateAnalysisStatus, DuplicateAnalysisTabId, DuplicateCheckStep, DuplicateCheckTaskState, DuplicateCheckWorkspaceState, DuplicateContentAnalysisState, DuplicateImageAnalysisState, DuplicateMetadataAnalysisState, DuplicateOutlineAnalysisState, LocalFileSelection } from '../../../shared/types';
 
@@ -764,6 +765,21 @@ function DuplicateCheckPage() {
   }, [bidFiles, contentAnalysis?.status, currentAnalysisSignature, imageAnalysis?.status, metadataAnalysis?.signature, metadataAnalysis?.status, outlineAnalysis?.status, showToast, step, tenderFiles]);
 
   const selectFiles = async (multiple: boolean) => {
+    if (window.yibiao?.platform === 'web') {
+      const uploaded = await httpClient.chooseAndUpload({ multiple });
+      return {
+        success: Boolean(uploaded.length),
+        message: uploaded.length ? '文件已上传' : '已取消选择',
+        files: uploaded.map((file) => ({
+          id: file.fileId,
+          file_name: file.fileName,
+          file_path: `upload:${file.fileId}`,
+          extension: file.extension || '',
+          size: file.size,
+          modified_at: file.uploadedAt || '',
+        })),
+      };
+    }
     const selector = window.yibiao?.file?.selectDuplicateCheckFiles;
     if (typeof selector !== 'function') {
       throw new Error('文件选择接口尚未加载，请重启应用后重试');
@@ -776,7 +792,17 @@ function DuplicateCheckPage() {
     if (typeof saver !== 'function') {
       throw new Error('标书查重缓存接口尚未加载，请重启应用后重试');
     }
-    const state = await saver({ tenderFile: nextTenderFiles[0] || null, tenderFiles: nextTenderFiles, bidFiles: nextBidFiles, step: nextStep, activeAnalysisTab });
+    const state = await saver(window.yibiao?.platform === 'web'
+      ? {
+        tenderFile: null,
+        tenderFiles: [],
+        bidFiles: [],
+        tenderFileIds: nextTenderFiles.map((file) => file.id),
+        bidFileIds: nextBidFiles.map((file) => file.id),
+        step: nextStep,
+        activeAnalysisTab,
+      }
+      : { tenderFile: nextTenderFiles[0] || null, tenderFiles: nextTenderFiles, bidFiles: nextBidFiles, step: nextStep, activeAnalysisTab });
     applyDuplicateCheckState(state);
     setStartingAnalysis(false);
     startedMetadataSignatureRef.current = null;

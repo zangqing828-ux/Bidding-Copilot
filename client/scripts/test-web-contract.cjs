@@ -72,7 +72,7 @@ const REQUIRED_WEB_BRIDGE_META_KEYS = [
 ];
 
 const requiredMetaFields = ['status', 'owner', 'workPackage', 'transport', 'contractRef', 'input', 'output', 'errors'];
-const IMPLEMENTED_BRIDGE_RPC_COUNT = 40;
+const IMPLEMENTED_BRIDGE_RPC_COUNT = 47;
 const COMMON_IMPLEMENTED_BRIDGE_ERRORS = [
   'UNAUTHORIZED',
   'INVALID_BRIDGE_ARGUMENTS',
@@ -1388,11 +1388,11 @@ async function runBridgeBehavior(inject, context) {
     assert(error.status === 500, 'HTTP 500 保留 status');
   }
 
-  const pendingRes = await statusPayload({ namespace: 'technicalPlan', method: 'importTenderDocument', args: [] });
-  assert(pendingRes.response.statusCode === 501, 'pending 方法返回 501');
-  assert(pendingRes.payload.code === 'WEB_CAPABILITY_PENDING', 'pending 方法返回 WEB_CAPABILITY_PENDING');
+  const missingFileIdsRes = await statusPayload({ namespace: 'technicalPlan', method: 'importTenderDocument', args: [] });
+  assert(missingFileIdsRes.response.statusCode === 400, '导入缺少 file ID 返回 400');
+  assert(missingFileIdsRes.payload.code === 'UPLOAD_FILE_ID_INVALID', '导入缺少 file ID 保留安全错误码');
 
-  for (const method of ['saveFiles', 'updateState']) {
+  for (const method of ['updateState']) {
     const contractKey = `duplicateCheck.${method}`;
     const pendingDuplicateCheckRes = await statusPayload({ namespace: 'duplicateCheck', method, args: [{ file_path: '/outside/workspace.txt', content_path: '/outside/content.txt' }] });
     assert(pendingDuplicateCheckRes.response.statusCode === 501, `${contractKey} 返回 501`);
@@ -1404,6 +1404,16 @@ async function runBridgeBehavior(inject, context) {
       `${contractKey} 无 route dispatcher`
     );
   }
+
+  const protectedDuplicateCheckRes = await statusPayload({
+    namespace: 'duplicateCheck',
+    method: 'saveFiles',
+    args: [{ tenderFileIds: [], bidFileIds: [], file_path: '/outside/workspace.txt', content_path: '/outside/content.txt' }],
+  });
+  assert(protectedDuplicateCheckRes.response.statusCode === 400, 'duplicateCheck.saveFiles 拒绝空 file ID 列表');
+  assert(protectedDuplicateCheckRes.payload.code === 'UPLOAD_FILE_ID_INVALID', 'duplicateCheck.saveFiles 不接受浏览器路径字段');
+  assert(Boolean(bindingMetadata.get('duplicateCheck.saveFiles')), 'duplicateCheck.saveFiles 有 binding spec');
+  assert(typeof routeDispatchers?.duplicateCheck?.saveFiles === 'function', 'duplicateCheck.saveFiles 有 route dispatcher');
 
   for (const method of KB_PENDING_METHODS) {
     const contractKey = `knowledgeBase.${method}`;
@@ -1487,7 +1497,7 @@ async function runBridgeBehavior(inject, context) {
     assert(wsPendingRes.response.statusCode === 501, 'pending 能力返回 501，且不触发 workspace');
     assert(workspaceResolved === 0, 'pending 能力未初始化 workspace');
 
-    for (const method of ['saveFiles', 'updateState']) {
+    for (const method of ['updateState']) {
       const wsDuplicateCheckPendingRes = await statusPayload({ namespace: 'duplicateCheck', method, args: [{ file_path: '/outside/workspace.txt', content_path: '/outside/content.txt' }] });
       assert(wsDuplicateCheckPendingRes.response.statusCode === 501, `duplicateCheck.${method} 返回 501 且不触发 workspace`);
       assert(workspaceResolved === 0, `duplicateCheck.${method} 不初始化 workspace`);
@@ -1782,6 +1792,7 @@ async function closeServer() {
   }
 
   if (result.failedCount > 0) {
+    failed.forEach((message) => console.error(`FAIL: ${message}`));
     if (result.isStrictPendingOnlyFailure && !result.strictCleanupFailure) {
       console.log('CONTRACT_STRICT_GUARD=EXPECTED_PENDING_FAILURE');
     }

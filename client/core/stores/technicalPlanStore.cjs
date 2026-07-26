@@ -1739,12 +1739,12 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     return loadTechnicalPlan();
   }
 
-  async function importTenderDocument() {
+  async function importTenderDocument(fileIds) {
     if (!fileService?.importDocument) {
       throw new Error('文件导入服务尚未初始化');
     }
 
-    const result = await fileService.importDocument({ multiple: true });
+    const result = await fileService.importDocument({ fileIds, multiple: true });
     if (!result?.success || !result.file_content) {
       return {
         success: false,
@@ -1770,15 +1770,15 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     });
   }
 
-  async function importOriginalPlanDocument() {
+  async function importOriginalPlanDocument(fileIds) {
     const importer = fileService?.importTechnicalPlanDocument || fileService?.importDocument;
     if (!importer) {
       throw new Error('文件导入服务尚未初始化');
     }
 
     const result = fileService.importTechnicalPlanDocument
-      ? await fileService.importTechnicalPlanDocument('原方案')
-      : await importer();
+      ? await fileService.importTechnicalPlanDocument('原方案', { fileIds })
+      : await importer({ fileIds });
     if (!result?.success || !result.file_content) {
       return {
         success: false,

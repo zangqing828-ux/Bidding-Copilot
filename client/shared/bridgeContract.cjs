@@ -468,8 +468,8 @@ const rawMethods = {
       output: 'KnowledgeBaseMigrationResult',
       errors: ['KNOWLEDGE_PATH_OUTSIDE_WORKSPACE'],
     }),
-    list: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.list' }),
-    createFolder: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.createFolder' }),
+    list: implementedBridgeContract({ owner: 'knowledge', workPackage: 'WP-D', contractRef: 'knowledgeBase.list', input: [], output: 'KnowledgeBaseIndex' }),
+    createFolder: implementedBridgeContract({ owner: 'knowledge', workPackage: 'WP-D', contractRef: 'knowledgeBase.createFolder', input: [contractArg('name', 'string')], output: 'KnowledgeFolder' }),
     renameFolder: implementedBridgeContract({
       owner: 'knowledge',
       workPackage: 'WP-A',
@@ -484,7 +484,7 @@ const rawMethods = {
     deleteFolder: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.deleteFolder' }),
     deleteDocument: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.deleteDocument' }),
     moveDocument: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.moveDocument' }),
-    uploadDocuments: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-D', contractRef: 'knowledgeBase.uploadDocuments' }),
+    uploadDocuments: implementedBridgeContract({ owner: 'knowledge', workPackage: 'WP-D', contractRef: 'knowledgeBase.uploadDocuments', input: [contractArg('folderId', 'string'), contractArg('fileIds', 'string[]', { required: false })], output: 'KnowledgeBaseUploadResult' }),
     retryDocument: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.retryDocument' }),
     startMatching: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.startMatching' }),
     readMarkdown: implementedBridgeContract({
@@ -519,8 +519,8 @@ const rawMethods = {
       input: [],
       output: 'TechnicalPlanState',
     }),
-    importTenderDocument: createContractEntry({ status: 'pending', owner: 'technical-plan', workPackage: 'WP-D', contractRef: 'technicalPlan.importTenderDocument' }),
-    importOriginalPlanDocument: createContractEntry({ status: 'pending', owner: 'technical-plan', workPackage: 'WP-D', contractRef: 'technicalPlan.importOriginalPlanDocument' }),
+    importTenderDocument: implementedBridgeContract({ owner: 'technical-plan', workPackage: 'WP-D', contractRef: 'technicalPlan.importTenderDocument', input: [contractArg('fileIds', 'string[]', { required: false })], output: 'TechnicalPlanImportResult' }),
+    importOriginalPlanDocument: implementedBridgeContract({ owner: 'technical-plan', workPackage: 'WP-D', contractRef: 'technicalPlan.importOriginalPlanDocument', input: [contractArg('fileIds', 'string[]', { required: false })], output: 'TechnicalPlanImportResult' }),
     checkBidSections: implementedBridgeContract({
       owner: 'technical-plan',
       workPackage: 'WP-A',
@@ -652,7 +652,10 @@ const rawMethods = {
       input: [],
       output: 'DuplicateCheckWorkspaceState',
     }),
-    saveFiles: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-D', contractRef: 'duplicateCheck.saveFiles' }),
+    saveFiles: implementedBridgeContract({
+      owner: 'workflow', workPackage: 'WP-D', contractRef: 'duplicateCheck.saveFiles',
+      input: [contractArg('payload', 'DuplicateCheckSaveFilesRequest')], output: 'DuplicateCheckWorkspaceState',
+    }),
     saveUiState: implementedBridgeContract({
       owner: 'workflow',
       workPackage: 'WP-A',
@@ -677,7 +680,7 @@ const rawMethods = {
       input: [],
       output: 'RejectionCheckWorkspaceState',
     }),
-    importDocument: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-D', contractRef: 'rejectionCheck.importDocument' }),
+    importDocument: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-D', contractRef: 'rejectionCheck.importDocument', input: [contractArg('role', 'RejectionDocumentRole', { enum: contractEnums.RejectionDocumentRole }), contractArg('fileIds', 'string[]', { required: false })], output: '{ success: boolean; message?: string; state: RejectionCheckWorkspaceState }' }),
     importTenderFromTechnicalPlan: implementedBridgeContract({
       owner: 'workflow',
       workPackage: 'WP-A',

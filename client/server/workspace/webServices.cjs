@@ -103,10 +103,18 @@ function createWebAgentServiceStub() {
   };
 }
 
-function createWebKnowledgeBaseServiceStub({ knowledgeBaseStore }) {
+function createWebKnowledgeBaseService({ knowledgeBaseStore, fileService }) {
   return {
     store: knowledgeBaseStore,
-    // 真实方法留到后续 Sprint
+    list() {
+      return knowledgeBaseStore.list();
+    },
+    createFolder(name) {
+      return knowledgeBaseStore.createFolder(name);
+    },
+    uploadDocuments(folderId, fileIds) {
+      return fileService.uploadKnowledgeBaseDocuments({ folderId, fileIds, knowledgeBaseStore });
+    },
   };
 }
 
@@ -123,6 +131,6 @@ module.exports = {
   createWebTaskServiceStub,
   createWebAiServiceStub,
   createWebAgentServiceStub,
-  createWebKnowledgeBaseServiceStub,
+  createWebKnowledgeBaseService,
   createWebDuplicateCheckServiceStub,
 };

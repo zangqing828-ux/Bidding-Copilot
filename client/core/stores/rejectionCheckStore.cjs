@@ -693,12 +693,12 @@ function createRejectionCheckStore({ db, fileService, technicalPlanStore, worksp
     return updateRejectionCheck(state || {});
   }
 
-  async function importDocument(role) {
+  async function importDocument(role, fileIds) {
     if (!fileService?.importRejectionCheckDocument) {
       throw new Error('文件导入服务尚未初始化');
     }
     const documentRole = normalizeDocumentRole(role);
-    const result = await fileService.importRejectionCheckDocument(documentRole);
+    const result = await fileService.importRejectionCheckDocument(documentRole, { fileIds });
     const importedDocuments = Array.isArray(result?.documents)
       ? result.documents
       : result?.file_content
