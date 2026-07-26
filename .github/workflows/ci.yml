@@ -128,7 +128,9 @@ jobs:
           curl -fsS http://127.0.0.1:3000/api/readiness
           curl -sS -D /tmp/yibiao-mock-login-headers -c /tmp/yibiao-mock-cookies \
             -o /dev/null http://127.0.0.1:3000/api/auth/login
-          oauth_state="$(sed -n 's#^[Ll]ocation: /api/auth/mock-login?state=\\([^[:space:]]*\\).*#\\1#p' /tmp/yibiao-mock-login-headers | tr -d '\r')"
+          oauth_state="$(grep -i '^location:' /tmp/yibiao-mock-login-headers \
+            | sed -E 's#.*[?&]state=([^&[:space:]]+).*#\1#' \
+            | tr -d '\r')"
           test -n "$oauth_state"
           curl -sS -b /tmp/yibiao-mock-cookies -c /tmp/yibiao-mock-cookies \
             -o /dev/null -X POST \
