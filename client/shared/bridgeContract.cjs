@@ -779,7 +779,7 @@ const rawMethods = {
     }),
   },
   export: {
-    exportWord: createContractEntry({ status: 'pending', owner: 'export', workPackage: 'WP-F', contractRef: 'export.exportWord' }),
+    exportWord: implementedBridgeContract({ owner: 'export', workPackage: 'WP-F', contractRef: 'export.exportWord', input: [contractArg('payload', 'unknown')], output: 'WordExportResult' }),
     openFile: createContractEntry({
       status: 'removed',
       owner: 'desktop',

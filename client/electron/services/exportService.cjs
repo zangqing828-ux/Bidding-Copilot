@@ -1,7 +1,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { fileURLToPath } = require('node:url');
-const { app, dialog, nativeImage } = require('electron');
+let electron = {};
+try { electron = require('electron'); } catch {}
+const { app, dialog, nativeImage } = electron;
 const cheerio = require('cheerio');
 const { imageSize } = require('image-size');
 const { compactLogError, createDeveloperLogger, textMetrics } = require('../utils/developerLog.cjs');

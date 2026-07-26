@@ -173,6 +173,10 @@ const bridgeBindingMetadata = Object.freeze({
     startBidAnalysis: createDirectBinding((ctx) => ctx.taskService.startBidAnalysis(), 'tasks.startBidAnalysis'),
   }),
 
+  export: Object.freeze({
+    exportWord: createDirectBinding((ctx, args) => ctx.exportService.exportWord(args[0]), 'export.exportWord'),
+  }),
+
   technicalPlan: Object.freeze({
     loadState: createStoreBinding('technicalPlanStore', 'loadTechnicalPlan', 'technicalPlan.loadState'),
     importTenderDocument: createDirectBinding(

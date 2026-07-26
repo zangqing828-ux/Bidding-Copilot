@@ -163,6 +163,7 @@ function createWebWorkspaceRuntime({
       createWebDuplicateCheckServiceStub,
     } = require('./webServices.cjs');
     const { createWebAgentService } = require('../agent/webAgentService.cjs');
+    const { createWebExportService } = require('../export/webExportService.cjs');
 
     const sqliteDatabase = createSqliteDatabase({ databasePath });
     if (!sqliteDatabase || typeof sqliteDatabase.close !== 'function') {
@@ -212,6 +213,8 @@ function createWebWorkspaceRuntime({
       throw new Error('agentService 缺少 close 方法');
     }
     pushCloseHandler(closeHandlers, createCloseHandler(agentService), 'agentService');
+    const exportService = createWebExportService({ workspaceId, workspaceRoot });
+    pushCloseHandler(closeHandlers, createCloseHandler(exportService), 'exportService');
 
     const knowledgeBaseService = createWebKnowledgeBaseService({ knowledgeBaseStore, fileService });
     const duplicateCheckService = createWebDuplicateCheckServiceStub({ duplicateCheckStore });
@@ -229,6 +232,7 @@ function createWebWorkspaceRuntime({
       storeExecutor,
       aiService,
       agentService,
+      exportService,
       taskService,
       taskEvents,
       knowledgeBaseService,
@@ -246,6 +250,7 @@ function createWebWorkspaceRuntime({
         },
         ai: aiService,
         agent: agentService,
+        exporter: exportService,
         taskEvents,
       },
       close() {
