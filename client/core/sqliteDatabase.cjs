@@ -3,7 +3,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 
 
-const schemaVersion = 21;
+const schemaVersion = 22;
 
 function createInitialSchema(db) {
   db.exec(`
@@ -184,6 +184,26 @@ function createUploadRegistrySchema(db) {
 
     CREATE INDEX IF NOT EXISTS idx_upload_registry_hash
     ON upload_registry(sha256, size, status);
+  `);
+}
+
+function createAgentResultApplicationsSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agent_result_applications (
+      idempotency_key TEXT PRIMARY KEY,
+      execution_id TEXT NOT NULL UNIQUE,
+      run_id TEXT NOT NULL,
+      task_spec_id TEXT NOT NULL,
+      task_spec_version INTEGER NOT NULL,
+      input_revision INTEGER NOT NULL,
+      input_sha256 TEXT NOT NULL,
+      output_sha256 TEXT NOT NULL,
+      result_locator_json TEXT NOT NULL,
+      applied_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_result_applications_applied_at
+    ON agent_result_applications(applied_at DESC);
   `);
 }
 
@@ -1208,6 +1228,22 @@ const schemaHealthColumnGroups = [
       retryable: 'INTEGER NOT NULL DEFAULT 0',
     },
   },
+  {
+    version: 22,
+    table: 'agent_result_applications',
+    columns: {
+      idempotency_key: 'TEXT',
+      execution_id: 'TEXT',
+      run_id: 'TEXT',
+      task_spec_id: 'TEXT',
+      task_spec_version: 'INTEGER',
+      input_revision: 'INTEGER',
+      input_sha256: 'TEXT',
+      output_sha256: 'TEXT',
+      result_locator_json: 'TEXT',
+      applied_at: 'TEXT',
+    },
+  },
 ];
 
 function quoteIdentifier(value) {
@@ -1376,6 +1412,11 @@ const migrations = [
     version: 21,
     description: '技术方案输入版本与解析项错误字段',
     up: addTechnicalPlanInputVersioning,
+  },
+  {
+    version: 22,
+    description: '新增 Agent 结果幂等应用账本',
+    up: createAgentResultApplicationsSchema,
   },
 ];
 

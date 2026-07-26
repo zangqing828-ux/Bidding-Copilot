@@ -1,7 +1,7 @@
 // Web 服务启动入口。
 const config = require('./config.cjs');
 
-const SHUTDOWN_TIMEOUT_MS = 10_000;
+const SHUTDOWN_TIMEOUT_MS = 30_000;
 
 function resolveFailedCount(closeResult) {
   if (!closeResult || typeof closeResult !== 'object') {
@@ -20,6 +20,14 @@ function createGracefulShutdownHandler({
   beginDrainingFn = () => {
     const sseRouter = require('./routes/sse.cjs');
     return sseRouter.beginDraining();
+  },
+  beginAgentClosingFn = () => {
+    const { getGlobalAgentCoordinator } = require('./agent/globalAgentCoordinator.cjs');
+    return getGlobalAgentCoordinator().beginClosing();
+  },
+  closeAgentCoordinatorFn = () => {
+    const { getGlobalAgentCoordinator } = require('./agent/globalAgentCoordinator.cjs');
+    return getGlobalAgentCoordinator().close();
   },
   logger = console,
   exit = (code) => process.exit(code),
@@ -87,6 +95,9 @@ function createGracefulShutdownHandler({
         await beginDrainingFn();
         logger.log('[web] SSE 连接已进入 draining 并主动关闭');
 
+        await beginAgentClosingFn();
+        logger.log('[web] Agent 调度器已拒绝新任务并开始收敛');
+
         await closeServer();
         logger.log('[web] HTTP 服务已关闭');
 
@@ -99,6 +110,9 @@ function createGracefulShutdownHandler({
         }
 
         logger.log('[web] workspace 连接已释放');
+
+        await closeAgentCoordinatorFn();
+        logger.log('[web] Agent 调度器已释放');
         requestExit(0);
       } catch (error) {
         logger.warn('[web] 关闭 workspace 失败', error?.message || String(error));
@@ -116,6 +130,7 @@ function startServer() {
   const { createApp } = require('./app.cjs');
   const app = createApp();
   const { closeAll } = require('./workspace/workspaceRegistry.cjs');
+  const { getGlobalAgentCoordinator } = require('./agent/globalAgentCoordinator.cjs');
   const sseRouter = require('./routes/sse.cjs');
   sseRouter.resetDraining();
   const server = app.listen(config.port, config.host, () => {
@@ -128,6 +143,8 @@ function startServer() {
     server,
     closeAllFn: closeAll,
     beginDrainingFn: sseRouter.beginDraining,
+    beginAgentClosingFn: () => getGlobalAgentCoordinator().beginClosing(),
+    closeAgentCoordinatorFn: () => getGlobalAgentCoordinator().close(),
     logger: console,
     exit: (code) => process.exit(code),
     timeoutMs: SHUTDOWN_TIMEOUT_MS,

@@ -34,6 +34,8 @@
     "test:web-export": "node scripts/test-web-export.cjs",
     "test:web-browser": "playwright test",
     "test:web-agent-runtime": "node scripts/test-web-agent-runtime.cjs",
+    "test:web-agent-coordinator": "node scripts/test-web-agent-coordinator.cjs",
+    "test:web-agent-executor": "node scripts/test-web-agent-executor.cjs",
     "test:opencode-checksum": "node scripts/test-opencode-checksum.cjs",
     "test:document-parser-limits": "node scripts/test-document-parser-limits.cjs",
     "test:web-graceful-shutdown": "node scripts/test-web-server-graceful-shutdown.cjs",

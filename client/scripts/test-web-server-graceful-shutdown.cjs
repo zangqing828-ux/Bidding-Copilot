@@ -74,13 +74,17 @@ async function runTests() {
     const logger = createLogger();
     const exit = createExitSpy();
     let closeCalls = 0;
+    const order = [];
     const gracefulShutdown = createGracefulShutdownHandler({
       server: createServer({ delayMs: 2 }),
       closeAllFn: async () => {
+        order.push('workspace-close');
         closeCalls += 1;
         await wait(2);
         return { closed: 2, failed: 0 };
       },
+      beginAgentClosingFn: () => { order.push('agent-begin-closing'); },
+      closeAgentCoordinatorFn: async () => { order.push('agent-close'); },
       logger,
       exit: exit.exit,
       timeoutMs: 100,
@@ -93,6 +97,7 @@ async function runTests() {
     assert.equal(closeCalls, 1);
     assert.deepEqual(exit.calls, [0]);
     assert.equal(logger.logs.some((entry) => entry[1].includes('workspace 连接已释放')), true);
+    assert.deepEqual(order, ['agent-begin-closing', 'workspace-close', 'agent-close']);
   });
 
   await run('closeAll failed>0 时 exit 1', async () => {
@@ -274,7 +279,7 @@ async function runTests() {
     await responseEnded;
   });
 
-  assert.equal(SHUTDOWN_TIMEOUT_MS, 10_000);
+  assert.equal(SHUTDOWN_TIMEOUT_MS, 30_000);
 }
 
 runTests().then(() => {

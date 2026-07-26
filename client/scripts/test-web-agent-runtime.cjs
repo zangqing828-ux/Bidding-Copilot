@@ -40,7 +40,19 @@ async function run() {
     workspaceId: 'account-a',
     workspaceRoot,
     env: { YIBIAO_WEB_OPENCODE_BIN: binaryPath, YIBIAO_WEB_AGENT_TOOLS: '' },
-    aiService: { withQueueScope: () => ({ chat: async () => 'unused' }) },
+    aiService: {
+      captureTextModelSnapshot: () => ({
+        provider: 'test',
+        baseUrl: 'http://127.0.0.1:1/v1',
+        modelName: 'test-model',
+        apiKey: 'test-key',
+        capturedAt: '2026-07-27T00:00:00.000Z',
+      }),
+      chatCompletionsRaw: async () => ({ choices: [{ message: { role: 'assistant', content: 'unused' } }] }),
+      withQueueScope: () => ({
+        chatCompletionsRaw: async () => ({ choices: [{ message: { role: 'assistant', content: 'unused' } }] }),
+      }),
+    },
   });
 
   const descriptors = service.listRuntimes();
