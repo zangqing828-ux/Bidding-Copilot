@@ -23,9 +23,9 @@
 
 ### 2.2 阻断真实交付的问题
 
-- `client/server/workspace/webServices.cjs` 仍注入 AI、Agent、知识库和查重 stub。
-- `client/server/routes/bridge.cjs` 的任务启动、文件导入和知识库匹配仍抛“尚未实现”，`ai/agent/export` 未注册并返回 `501`。
-- Web workspace 直接导入 `client/electron/services/*.cjs`。可复用业务逻辑与 Electron dialog、BrowserWindow、app path、native ABI 尚未形成稳定边界。
+- Web workspace 已接入真实加密配置、模型列表和 AI portable runtime；Chat/requestJson、Agent、任务启动、文件导入和知识库写操作仍在 contract 中标记为 `pending`，调用时返回 `501`。
+- `ai/agent/export` 已进入统一 contract manifest，但真实业务 binding 仍待后续工作包接通。
+- Web 可达依赖图已脱离 `client/electron/`，Portable core 与 Electron adapter 的基础边界已经形成；完整任务服务、Linux Agent Runtime、Headless 渲染和导出仍未迁完。
 - 上传端点只返回 file ID，没有把账号内 file ID 安全接入文档解析和业务 Store。
 - Docker 镜像没有完整的 Chromium/Playwright、LibreOffice、OpenCode Linux binary、`rg/fd/jq`。
 - `localImageRenderService.cjs` 仍依赖 Electron `BrowserWindow`；`exportService.cjs` 仍依赖 Electron保存对话框。
@@ -111,6 +111,7 @@ client/src
 - 从 `electron/services` 中识别纯 Store/业务服务，迁入或封装到运行环境无关目录。
 - 定义 config、file parser、AI、agent、renderer、exporter、task event ports。
 - `workspaceContext` 通过 factory 显式注入真实实现，不再创建 Web stub。
+- Web Bridge 的同步 SQLite/文件 Store 通过固定上限 Worker 池执行；同一 workspace 保序，避免大文件读取或旧数据迁移占用 HTTP 主事件循环。
 - 统一资源关闭：SQLite、agent runtime、队列、临时目录和 SSE 订阅。
 
 约束：
@@ -122,6 +123,7 @@ client/src
 
 - 静态检查证明 core 不含 Electron import。
 - 同一 contract test suite 可运行在 Web adapter 与 Electron adapter。
+- 大文件 Store 调用期间 HTTP 主事件循环仍可响应，活跃调用会阻止 workspace TTL 回收。
 - workspace context 创建/释放 100 次无句柄、数据库或临时目录泄漏。
 
 ### WP-C：真实配置、AI 与任务服务
