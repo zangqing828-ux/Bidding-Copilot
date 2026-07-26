@@ -1,4 +1,5 @@
 import { buildInvalidBidAndRejectionItemsPrompt } from '../../../shared/prompts';
+import bidAnalysisDefinitionsJson from '../../../../shared/bidAnalysisDefinitions.json';
 import type { BidAnalysisMode } from '../types';
 
 export interface BidAnalysisTaskDefinition {
@@ -26,7 +27,7 @@ ${outputJson}
 仅输出 JSON，不要输出其他内容。`;
 }
 
-export const bidAnalysisTasks: BidAnalysisTaskDefinition[] = [
+const legacyBidAnalysisTasks: BidAnalysisTaskDefinition[] = [
   {
     id: 'projectOverview',
     label: '项目概述',
@@ -297,6 +298,19 @@ export const bidAnalysisTasks: BidAnalysisTaskDefinition[] = [
 }`),
   },
 ];
+
+type SharedBidAnalysisDefinition = Omit<BidAnalysisTaskDefinition, 'buildTaskPrompt'>;
+const bidAnalysisDefinitions = bidAnalysisDefinitionsJson as SharedBidAnalysisDefinition[];
+const promptByTaskId = new Map(legacyBidAnalysisTasks.map((task) => [task.id, task.buildTaskPrompt]));
+
+// 业务展示字段只来自共享注册表；Renderer 不再维护独立的解析项集合。
+export const bidAnalysisTasks: BidAnalysisTaskDefinition[] = bidAnalysisDefinitions.map((definition) => {
+  const buildTaskPrompt = promptByTaskId.get(definition.id);
+  if (!buildTaskPrompt) {
+    throw new Error(`招标解析项 ${definition.id} 缺少开发调试 prompt`);
+  }
+  return { ...definition, buildTaskPrompt };
+});
 
 export function getBidAnalysisTasks(mode: BidAnalysisMode) {
   return mode === 'full' ? bidAnalysisTasks : bidAnalysisTasks.filter((task) => task.required);

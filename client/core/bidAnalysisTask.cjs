@@ -1,6 +1,10 @@
 const { buildBidSectionContextHint } = require('./bidSectionContext.cjs');
 const { mergeSegmentedAiResults } = require('./segmentedAiResultMerger.cjs');
 const { splitUserTextByContextLimit } = require('./userTextSplitter.cjs');
+const {
+  bidAnalysisDefinitions,
+  normalizeBidAnalysisSelection,
+} = require('../shared/bidAnalysisContract.cjs');
 
 const PROMPT_CACHE_WARMUP_DELAY_MS = 5000;
 
@@ -67,7 +71,7 @@ function buildInvalidBidAndRejectionItemsPrompt() {
 - ...`;
 }
 
-const tasks = [
+const taskPromptDefinitions = [
   {
     id: 'projectOverview', label: '项目概述', required: true, output: 'markdown', description: '提取项目基本信息、背景目的、规模预算、时间安排、实施内容和技术特点等。',
     prompt: () => `任务：提取并总结项目概述信息。
@@ -152,6 +156,15 @@ const tasks = [
   { id: 'terminationCondition', label: '合同解除和终止', required: false, output: 'json', description: '违约解除、不可抗力、合同终止和争议解决。', prompt: () => jsonTask('提取合同解除和终止条件', '提取违约解除、不可抗力、合同终止、争议解决等信息。', `{"breach_termination":"违约解除","force_majeure":"不可抗力","contract_termination":"合同终止","dispute_resolution":"争议解决"}`) },
 ];
 
+const promptByTaskId = new Map(taskPromptDefinitions.map((task) => [task.id, task.prompt]));
+const tasks = bidAnalysisDefinitions.map((definition) => {
+  const prompt = promptByTaskId.get(definition.id);
+  if (typeof prompt !== 'function') {
+    throw new Error(`招标解析项 ${definition.id} 缺少服务端 prompt`);
+  }
+  return Object.freeze({ ...definition, prompt });
+});
+
 function getBidAnalysisTasks(mode) {
   return mode === 'full' ? tasks : tasks.filter((task) => task.required);
 }
@@ -164,20 +177,7 @@ function normalizeBidAnalysisTaskIds(taskIds) {
 }
 
 function normalizeBidAnalysisConfig(mode, selectedTaskIds) {
-  const requiredTaskIds = getBidAnalysisTasks('key').map((task) => task.id);
-  const requiredSet = new Set(requiredTaskIds);
-  const selectedSet = new Set([...requiredTaskIds, ...normalizeBidAnalysisTaskIds(selectedTaskIds)]);
-  const selectedIds = tasks.filter((task) => selectedSet.has(task.id)).map((task) => task.id);
-  const hasOptional = selectedIds.some((taskId) => !requiredSet.has(taskId));
-  const hasAll = selectedIds.length === tasks.length;
-
-  if (mode === 'full' || hasAll) {
-    return { mode: 'full', taskIds: tasks.map((task) => task.id) };
-  }
-  if (mode === 'custom' || hasOptional) {
-    return { mode: 'custom', taskIds: selectedIds };
-  }
-  return { mode: 'key', taskIds: requiredTaskIds };
+  return normalizeBidAnalysisSelection(mode, selectedTaskIds);
 }
 
 function getBidAnalysisTaskById(taskId) {

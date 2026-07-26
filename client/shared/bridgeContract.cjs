@@ -762,7 +762,22 @@ const rawMethods = {
   },
   tasks: {
     startBidSectionExtraction: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startBidSectionExtraction' }),
-    startBidAnalysis: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-E', contractRef: 'tasks.startBidAnalysis', input: [contractArg('payload', 'unknown')], output: { type: 'unknown' }, errors: ['WEB_CAPABILITY_PENDING'] }),
+    startBidAnalysis: createContractEntry({
+      status: 'pending',
+      owner: 'workflow',
+      workPackage: 'WP-I',
+      contractRef: 'tasks.startBidAnalysis',
+      input: [contractArg('payload', 'StartBidAnalysisInput', {
+        properties: {
+          mode: { type: 'BidAnalysisMode', required: true, enum: contractEnums.BidAnalysisMode },
+          selected_task_ids: { type: 'string[]', required: true },
+          task_ids: { type: 'string[]', required: false },
+          force_rerun: { type: 'boolean', required: false },
+        },
+      })],
+      output: { type: 'BackgroundTaskState' },
+      errors: ['WEB_CAPABILITY_PENDING', 'TASK_INVALID_INPUT', 'TASK_ITEM_NOT_FOUND'],
+    }),
     startOutlineGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startOutlineGeneration' }),
     startGlobalFactsGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startGlobalFactsGeneration' }),
     startContentGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startContentGeneration' }),
