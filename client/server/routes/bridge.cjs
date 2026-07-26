@@ -175,13 +175,6 @@ const bridgeBindingMetadata = Object.freeze({
     listModels: createDirectBinding((ctx, args, options) => ctx.aiService.listModels(args[0], options), 'config.listModels'),
   }),
 
-  agent: Object.freeze({
-    listRuntimes: createDirectBinding((ctx) => ctx.agentService.listRuntimes(), 'agent.listRuntimes'),
-    selfCheck: createDirectBinding((ctx) => ctx.agentService.selfCheck(), 'agent.selfCheck'),
-    getStatus: createDirectBinding((ctx) => ctx.agentService.getStatus(), 'agent.getStatus'),
-    restart: createDirectBinding((ctx) => ctx.agentService.restart(), 'agent.restart'),
-  }),
-
   tasks: Object.freeze({
     getActiveTasks: createDirectBinding((ctx) => ctx.taskService.getActiveTasks(), 'tasks.getActiveTasks'),
     startBidAnalysis: createDirectBinding((ctx, args) => ctx.taskService.startBidAnalysis(args[0]), 'tasks.startBidAnalysis'),

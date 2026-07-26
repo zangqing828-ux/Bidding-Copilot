@@ -72,7 +72,7 @@ const REQUIRED_WEB_BRIDGE_META_KEYS = [
 ];
 
 const requiredMetaFields = ['status', 'owner', 'workPackage', 'transport', 'contractRef', 'input', 'output', 'errors'];
-const IMPLEMENTED_BRIDGE_RPC_COUNT = 53;
+const IMPLEMENTED_BRIDGE_RPC_COUNT = 49;
 const COMMON_IMPLEMENTED_BRIDGE_ERRORS = [
   'UNAUTHORIZED',
   'INVALID_BRIDGE_ARGUMENTS',
@@ -1391,6 +1391,18 @@ async function runBridgeBehavior(inject, context) {
   const missingFileIdsRes = await statusPayload({ namespace: 'technicalPlan', method: 'importTenderDocument', args: [] });
   assert(missingFileIdsRes.response.statusCode === 400, '导入缺少 file ID 返回 400');
   assert(missingFileIdsRes.payload.code === 'UPLOAD_FILE_ID_INVALID', '导入缺少 file ID 保留安全错误码');
+
+  for (const method of ['listRuntimes', 'run', 'selfCheck', 'exportSelfCheckReport', 'getStatus', 'restart']) {
+    const contractKey = `agent.${method}`;
+    const pendingAgentRes = await statusPayload({ namespace: 'agent', method, args: [] });
+    assert(pendingAgentRes.response.statusCode === 501, `${contractKey} 返回 501`);
+    assert(pendingAgentRes.payload.code === 'WEB_CAPABILITY_PENDING', `${contractKey} code 为 WEB_CAPABILITY_PENDING`);
+    assert(!bindingMetadata.get(contractKey), `${contractKey} 无 binding spec`);
+    assert(
+      !routeDispatchers?.agent || typeof routeDispatchers.agent[method] !== 'function',
+      `${contractKey} 无 route dispatcher`
+    );
+  }
 
   for (const method of ['updateState']) {
     const contractKey = `duplicateCheck.${method}`;

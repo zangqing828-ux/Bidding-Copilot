@@ -165,12 +165,6 @@ jobs:
             http://127.0.0.1:3000/api/bridge | grep -q '"code":"OK"'
           curl -fsS -b /tmp/yibiao-mock-cookies \
             -H 'content-type: application/json' \
-            -d '{"namespace":"agent","method":"selfCheck","args":[]}' \
-            -o /tmp/yibiao-agent-self-check.json \
-            http://127.0.0.1:3000/api/bridge
-          node -e "const fs = require('node:fs'); const result = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); if (result.code !== 'OK' || result.data?.success !== true) process.exit(1);" /tmp/yibiao-agent-self-check.json
-          curl -fsS -b /tmp/yibiao-mock-cookies \
-            -H 'content-type: application/json' \
             -d '{"namespace":"export","method":"exportWord","args":[{"project_name":"CI 投标技术文件","outline":[{"id":"ci-outline-1","title":"第一章","content":"容器端到端导出验证内容","children":[]}]}]}' \
             -o /tmp/yibiao-export.json \
             http://127.0.0.1:3000/api/bridge

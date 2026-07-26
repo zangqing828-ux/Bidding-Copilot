@@ -57,6 +57,7 @@
 - 结构化业务状态进入账号独立 SQLite；大文本、上传文件、图片和导出物进入该账号目录。
 - 技术方案正文展示和导出以 `outlineData.outline[*].content` 为权威来源。
 - 长任务必须服务端执行并持续落盘；页面刷新后从 Store 恢复，再通过当前账号 SSE 回放 active task。
+- WP-I PR I-1 已接通 Web `tasks.startBidAnalysis`；其余 Web 业务任务继续按 contract 标记 pending。该任务使用严格 DTO、input revision CAS 与每 Workspace 单一 mutation executor，调用方不得绕过这些边界直接写 Store。
 - 目录重新生成、编辑、添加或删除后，必须清空旧正文内容、生成缓存和失效的图片计划。
 - Mermaid 以 Markdown `mermaid` 代码块保存；Web 导出使用 Linux headless 渲染 adapter，不依赖 Electron `BrowserWindow`。
 
@@ -71,6 +72,7 @@
 - 改 Web native 依赖后，验证 Node ABI；保留 Electron 兼容时还要恢复 Electron ABI 并运行 `npm run smoke:electron-native`。该脚本在 Linux CI 使用 Electron `--no-sandbox`。
 - 改依赖后运行 `npm audit --omit=dev --audit-level=critical`；不能把已知关键漏洞当作普通警告。
 - 完成标准必须包含真实成功链路、边界/失败链路、账号隔离和持久化验证。测试如果只证明 `500/501` 可解释，只能说明占位受控。
+- 浏览器 Agent 入口在 WP-I 继续保持 pending；首个正式 Agent 业务任务开放前，另行完成非 root、只读输入、egress deny、`no_new_privs`、seccomp 与资源配额的 OS 级隔离 Release Gate。应用级 permission 测试不构成该 Gate 证据。
 
 ## SDD 与变更纪律
 

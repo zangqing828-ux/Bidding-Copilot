@@ -1,6 +1,6 @@
 # Bidding-Copilot（Web 架构收敛中）
 
-> 当前 `main` 的 PR #3 仅提供 Web 运行基线。真实 AI/任务、文件解析、Linux Agent Runtime、Headless 渲染、Word 导出和真实 MainQuest OAuth 联调仍需按架构 Spec 完成。
+> 当前 `main` 的 PR #3 仅提供 Web 运行基线。WP-I PR I-1 分支已完成并自动验证“招标文件解析”这一条 Web 任务链；其他业务任务、浏览器 Agent、Headless 渲染、真实 MainQuest OAuth 联调仍需按架构 Spec 完成。
 
 ## 已锁定的项目方向
 
@@ -12,6 +12,7 @@
 - 用户可见品牌与仓库外链的实施以品牌 Spec 为准；架构验收通过前不批量改写活跃产品文案。
 - 品牌清理不得对数据库、协议、环境变量、OAuth/CI 或云资源做无迁移方案的全局替换。
 - stub、mock、`500/501` 占位或只验证容器启动，不得被描述为功能完成。
+- 浏览器 Agent 能力继续保持 pending；首个正式 Agent 业务任务开放前必须通过独立的 OS 级隔离 Release Gate。
 
 权威文档：
 
