@@ -6,10 +6,12 @@ const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const STDOUT_RING_BYTES = 2 * 1024 * 1024;
 const STDERR_RING_BYTES = 64 * 1024;
 const DEFAULT_LIMITS = Object.freeze({
-  addressSpaceBytes: 768 * 1024 * 1024,
+  // Bun/OpenCode 与 RLIMIT_AS 不兼容，会在启动时触发内存断言；内存上限由后续容器 cgroup Gate 承担。
+  addressSpaceBytes: null,
   fileSizeBytes: 16 * 1024 * 1024,
   openFiles: 64,
-  processes: 16,
+  // Bun/OpenCode 在较低 RLIMIT_NPROC 下启动即会触发 SIGTRAP；512 仍为明确上限，且经 Linux 容器验证可运行。
+  processes: 512,
   cpuSeconds: 120,
 });
 
@@ -103,7 +105,9 @@ function createWebOpenCodeRunner({ env = process.env } = {}) {
     if (signal?.aborted) return Promise.reject(signal.reason || createRunnerError('Agent 请求已取消', 'AGENT_ABORTED'));
     const effectiveTimeoutMs = normalizeTimeoutMs(timeoutMs);
     const args = [
-      `--as=${limits.addressSpaceBytes}:${limits.addressSpaceBytes}`,
+      ...(Number.isFinite(limits.addressSpaceBytes) && limits.addressSpaceBytes > 0
+        ? [`--as=${limits.addressSpaceBytes}:${limits.addressSpaceBytes}`]
+        : []),
       `--fsize=${limits.fileSizeBytes}:${limits.fileSizeBytes}`,
       `--nofile=${limits.openFiles}:${limits.openFiles}`,
       `--nproc=${limits.processes}:${limits.processes}`,
