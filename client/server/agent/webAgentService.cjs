@@ -201,7 +201,7 @@ function runOpenCode({ binary, taskDir, configPath, proxyToken, prompt, timeoutM
   });
 }
 
-function createWebAgentService({ workspaceId, workspaceRoot, aiService, agentCoordinator = null, env = process.env }) {
+function createWebAgentService({ workspaceId, workspaceRoot, aiService, agentCoordinator = null, agentWorkspaceLease = null, env = process.env }) {
   const activeChildren = new Set();
   let closing = false;
   let activeTask = null;
@@ -224,7 +224,7 @@ function createWebAgentService({ workspaceId, workspaceRoot, aiService, agentCoo
     if (!agentCoordinator || typeof agentCoordinator.getWorkspaceSnapshot !== 'function') {
       return { reserved: 0, admitting: 0, active: 0, queued: 0, cleanup: 0 };
     }
-    return agentCoordinator.getWorkspaceSnapshot(workspaceId);
+    return agentWorkspaceLease?.getSnapshot?.() || agentCoordinator.getWorkspaceSnapshot(workspaceId);
   }
 
   function listRuntimes() {
@@ -328,13 +328,15 @@ function createWebAgentService({ workspaceId, workspaceRoot, aiService, agentCoo
     getActivitySnapshot,
     cancelWorkspace(reason) {
       return typeof agentCoordinator?.cancelWorkspace === 'function'
-        ? agentCoordinator.cancelWorkspace(workspaceId, reason)
+        ? agentCoordinator.cancelWorkspace(workspaceId, reason, agentWorkspaceLease ? { generation: agentWorkspaceLease.generation } : undefined)
         : 0;
     },
     restart: async () => getStatus(),
     close: async () => {
       closing = true;
-      if (typeof agentCoordinator?.closeWorkspace === 'function') {
+      if (typeof agentWorkspaceLease?.close === 'function') {
+        await agentWorkspaceLease.close();
+      } else if (typeof agentCoordinator?.closeWorkspace === 'function') {
         await agentCoordinator.closeWorkspace(workspaceId);
       } else if (typeof agentCoordinator?.cancelWorkspace === 'function') {
         agentCoordinator.cancelWorkspace(workspaceId);

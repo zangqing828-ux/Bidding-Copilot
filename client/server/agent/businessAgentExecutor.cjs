@@ -23,6 +23,7 @@ function createHandle({ executionId, runId, reservation, events, ownerCancellati
 
 function createBusinessAgentExecutor({
   workspaceId,
+  workspaceLease = null,
   registry,
   coordinator,
   committer,
@@ -38,6 +39,7 @@ function createBusinessAgentExecutor({
     throw new Error('BusinessAgentExecutor 依赖能力不完整');
   }
   const inFlightExecutions = new Map();
+  const workspaceGeneration = workspaceLease?.generation;
 
   function sameEnvelope(left, right) {
     return left.taskSpecId === right.taskSpecId
@@ -101,6 +103,7 @@ function createBusinessAgentExecutor({
     try {
       reservation = coordinator.reserve({
         workspaceId,
+        workspaceGeneration,
         executionId,
         envelope: provisionalEnvelope,
         deadlineAt,
@@ -121,22 +124,34 @@ function createBusinessAgentExecutor({
           return snapshotReader.readBinding(bindingId);
         },
       });
-      const captured = await spec.captureSnapshot(constrainedReader);
-      const snapshot = captured?.readonlySnapshot;
-      const inputRevision = Number(captured?.inputRevision);
-      const inputHash = String(captured?.inputHash || '');
-      if (!snapshot || !Number.isInteger(inputRevision) || inputRevision < 0 || !/^[a-f0-9]{64}$/i.test(inputHash)) {
-        throw createAgentError('Task Spec 快照无效', 'AGENT_INPUT_INVALID');
-      }
-      if (inputRevision !== provisionalEnvelope.inputRevision || inputHash !== provisionalEnvelope.inputHash) {
-        throw createAgentError('Agent execution envelope 与冻结输入不一致', 'AGENT_EXECUTION_CONFLICT');
-      }
-      runId = crypto.randomUUID();
-      const envelope = Object.freeze({ ...provisionalEnvelope, executionId, runId });
-      await outer.persistExecutionEnvelope(envelope);
-      const input = await spec.buildInput(snapshot);
-      const prompt = await spec.buildPrompt(snapshot);
-      const modelSnapshot = aiService.captureTextModelSnapshot();
+      const prepared = await reservation.prepare(async ({ assertActive }) => {
+        assertActive();
+        const captured = await spec.captureSnapshot(constrainedReader);
+        assertActive();
+        const snapshot = captured?.readonlySnapshot;
+        const inputRevision = Number(captured?.inputRevision);
+        const inputHash = String(captured?.inputHash || '');
+        if (!snapshot || !Number.isInteger(inputRevision) || inputRevision < 0 || !/^[a-f0-9]{64}$/i.test(inputHash)) {
+          throw createAgentError('Task Spec 快照无效', 'AGENT_INPUT_INVALID');
+        }
+        if (inputRevision !== provisionalEnvelope.inputRevision || inputHash !== provisionalEnvelope.inputHash) {
+          throw createAgentError('Agent execution envelope 与冻结输入不一致', 'AGENT_EXECUTION_CONFLICT');
+        }
+        runId = crypto.randomUUID();
+        const envelope = Object.freeze({ ...provisionalEnvelope, executionId, runId });
+        assertActive();
+        await outer.persistExecutionEnvelope(envelope);
+        assertActive();
+        const input = await spec.buildInput(snapshot);
+        assertActive();
+        const prompt = await spec.buildPrompt(snapshot);
+        assertActive();
+        const modelSnapshot = aiService.captureTextModelSnapshot();
+        assertActive();
+        return Object.freeze({ envelope, input, prompt, modelSnapshot });
+      });
+      const { envelope, input, prompt, modelSnapshot } = prepared;
+      reservation.assertActive();
       publish({ phase: 'accepted', executionId, runId: envelope.runId });
       reservation.admit(async ({ signal, setPhase }) => {
         publish({ phase: 'running', executionId, runId: envelope.runId });
@@ -152,14 +167,16 @@ function createBusinessAgentExecutor({
         setPhase('validating');
         publish({ phase: 'validating', executionId, runId: envelope.runId });
         const validated = await spec.validateOutput(runResult.output, { executionId, runId: envelope.runId });
-        setPhase('applying');
-        publish({ phase: 'applying', executionId, runId: envelope.runId });
         const receipt = await committer.commit({
           envelope,
           taskSpec: spec,
           validatedOutput: validated,
           outputSha256: runResult.outputSha256,
           signal,
+          onLinearized() {
+            setPhase('applying');
+            publish({ phase: 'applying', executionId, runId: envelope.runId });
+          },
         });
         await outer.reconcileAppliedExecution(receipt);
         publish({ phase: 'succeeded', executionId, runId: envelope.runId });

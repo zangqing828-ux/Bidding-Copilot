@@ -14,6 +14,16 @@ const passed = [];
 const failed = [];
 const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
+
 async function run(name, callback) {
   try {
     await callback();
@@ -185,6 +195,122 @@ async function main() {
       }), (error) => error?.code === 'AGENT_APPLY_FAILED');
     });
 
+    await run('Task Spec 吞掉 operation 异常或 thenable 时，业务结果与账本仍完整回滚', async () => {
+      inputRevision = 4;
+      const ledgerCountBefore = db.prepare('SELECT COUNT(*) AS count FROM agent_result_applications').get().count;
+      const swallowingSpec = {
+        ...spec,
+        applyResult(validated, tx) {
+          try { tx.applyDeclaredOperation('fixture-apply', validated); } catch {}
+        },
+      };
+      const throwingCommitter = createAgentResultCommitter({
+        db,
+        mutationExecutor,
+        readInputRevision: () => inputRevision,
+        operations: { 'fixture-apply': () => { throw new Error('operation failed'); } },
+      });
+      await assert.rejects(
+        throwingCommitter.commit({
+          envelope: { ...envelope, executionId: 'swallowed-throw', runId: 'swallowed-throw', inputRevision: 4 },
+          taskSpec: swallowingSpec,
+          validatedOutput: { expectedRevision: 4, value: 'ignored' },
+          outputSha256: hash('swallowed-throw'),
+        }),
+        (error) => error?.code === 'AGENT_APPLY_FAILED',
+      );
+      const thenableCommitter = createAgentResultCommitter({
+        db,
+        mutationExecutor,
+        readInputRevision: () => inputRevision,
+        operations: { 'fixture-apply': () => Promise.reject(new Error('thenable rejected')) },
+      });
+      await assert.rejects(
+        thenableCommitter.commit({
+          envelope: { ...envelope, executionId: 'swallowed-thenable', runId: 'swallowed-thenable', inputRevision: 4 },
+          taskSpec: swallowingSpec,
+          validatedOutput: { expectedRevision: 4, value: 'ignored' },
+          outputSha256: hash('swallowed-thenable'),
+        }),
+        (error) => error?.code === 'AGENT_APPLY_FAILED',
+      );
+      const partialCommitter = createAgentResultCommitter({
+        db,
+        mutationExecutor,
+        readInputRevision: () => inputRevision,
+        operations: {
+          'fixture-apply': () => {
+            db.prepare('INSERT INTO fixture_results (id, value) VALUES (?, ?)').run('partial-write', 'must rollback');
+            throw new Error('after partial write');
+          },
+        },
+      });
+      await assert.rejects(
+        partialCommitter.commit({
+          envelope: { ...envelope, executionId: 'swallowed-partial', runId: 'swallowed-partial', inputRevision: 4 },
+          taskSpec: swallowingSpec,
+          validatedOutput: { expectedRevision: 4, value: 'ignored' },
+          outputSha256: hash('swallowed-partial'),
+        }),
+        (error) => error?.code === 'AGENT_APPLY_FAILED',
+      );
+      assert.equal(db.prepare("SELECT COUNT(*) AS count FROM fixture_results WHERE id = 'partial-write'").get().count, 0);
+      assert.equal(db.prepare('SELECT COUNT(*) AS count FROM agent_result_applications').get().count, ledgerCountBefore);
+    });
+
+    await run('取消在 mutation queue 等待时零写入；BEGIN IMMEDIATE 后允许原子提交', async () => {
+      inputRevision = 4;
+      const blockedMutationExecutor = createWorkspaceMutationExecutor();
+      const hold = new Promise((resolve) => setTimeout(resolve, 15));
+      const blocker = blockedMutationExecutor.execute(() => hold);
+      const linearizedIds = [];
+      const linearizedSpec = {
+        ...spec,
+        applyResult(validated, tx) { tx.applyDeclaredOperation('fixture-linearized', validated); },
+        commitOperationId: 'fixture-linearized',
+      };
+      const linearizedCommitter = createAgentResultCommitter({
+        db,
+        mutationExecutor: blockedMutationExecutor,
+        readInputRevision: () => inputRevision,
+        operations: {
+          'fixture-linearized': (payload) => {
+            db.prepare('INSERT INTO fixture_results (id, value) VALUES (?, ?)').run(payload.id, payload.value);
+            return { entityId: payload.id };
+          },
+        },
+      });
+      const beforeController = new AbortController();
+      const beforeCommit = linearizedCommitter.commit({
+        envelope: { ...envelope, executionId: 'before-linearized', runId: 'before-linearized', inputRevision: 4 },
+        taskSpec: linearizedSpec,
+        validatedOutput: { expectedRevision: 4, id: 'before-linearized', value: 'never' },
+        outputSha256: hash('before-linearized'),
+        signal: beforeController.signal,
+      });
+      beforeController.abort(Object.assign(new Error('cancel before transaction'), { code: 'AGENT_CANCELLED' }));
+      await blocker;
+      await assert.rejects(beforeCommit, (error) => error?.code === 'AGENT_CANCELLED');
+      assert.equal(db.prepare("SELECT COUNT(*) AS count FROM fixture_results WHERE id = 'before-linearized'").get().count, 0);
+
+      const afterController = new AbortController();
+      const receipt = await linearizedCommitter.commit({
+        envelope: { ...envelope, executionId: 'after-linearized', runId: 'after-linearized', inputRevision: 4 },
+        taskSpec: linearizedSpec,
+        validatedOutput: { expectedRevision: 4, id: 'after-linearized', value: 'committed' },
+        outputSha256: hash('after-linearized'),
+        signal: afterController.signal,
+        onLinearized() {
+          linearizedIds.push('after-linearized');
+          afterController.abort(Object.assign(new Error('cancel after begin'), { code: 'AGENT_CANCELLED' }));
+        },
+      });
+      assert.equal(receipt.executionId, 'after-linearized');
+      assert.deepEqual(linearizedIds, ['after-linearized']);
+      assert.equal(db.prepare("SELECT value FROM fixture_results WHERE id = 'after-linearized'").get().value, 'committed');
+      await blockedMutationExecutor.close();
+    });
+
     await run('Executor 只经受限端口冻结输入、持久化 envelope 后再调用 runner', async () => {
       const executionHash = hash('executor-input');
       const executorSpec = {
@@ -285,6 +411,53 @@ async function main() {
       assert.deepEqual({ captureCount, persistCount, buildInputCount, buildPromptCount, runnerCount }, {
         captureCount: 1, persistCount: 1, buildInputCount: 1, buildPromptCount: 1, runnerCount: 1,
       });
+    });
+
+    await run('Workspace close 会等待 buildPrompt preparation 收口，且不得发布 accepted 或启动 runner', async () => {
+      const executionHash = hash('close-during-preparation');
+      const coordinator = createAgentCoordinator();
+      const workspaceLease = coordinator.registerWorkspace('workspace-preparation-close');
+      const promptStarted = deferred();
+      const releasePrompt = deferred();
+      const events = [];
+      let runnerCount = 0;
+      const closingSpec = {
+        ...createFixtureSpec(),
+        captureSnapshot: async (reader) => ({ inputRevision: reader.getInputRevision(), inputHash: executionHash, readonlySnapshot: { input: 'close' } }),
+        buildInput: async () => ({ 'input/fixed.txt': 'close' }),
+        buildPrompt: async () => {
+          promptStarted.resolve();
+          await releasePrompt.promise;
+          return 'late prompt';
+        },
+        validateOutput: async (value) => value,
+      };
+      const executor = createBusinessAgentExecutor({
+        workspaceId: 'workspace-preparation-close',
+        workspaceLease,
+        registry: createBusinessAgentTaskRegistry({ specs: [closingSpec], env: { NODE_ENV: 'test' } }),
+        coordinator,
+        committer: { findApplied: () => null, commit: async () => { throw new Error('must not commit'); } },
+        snapshotReader: { getInputRevision: () => 7, readBinding: () => 'close' },
+        aiService: { captureTextModelSnapshot: () => ({ provider: 'test', baseUrl: 'http://127.0.0.1', modelName: 'fixture', apiKey: 'test' }) },
+        runner: { run: async () => { runnerCount += 1; return { output: {}, outputSha256: hash('never') }; } },
+      });
+      const executePromise = executor.execute('contract-fixture', {
+        executionId: 'close-during-build-prompt', workspaceId: 'workspace-preparation-close', taskSpecVersion: 1,
+        executionEnvelope: { inputRevision: 7, inputHash: executionHash }, ownerCancellationToken: {},
+        taskController: { persistExecutionEnvelope: async () => {}, reconcileAppliedExecution: async () => {}, projectAgentStage: (event) => events.push(event.phase) },
+      });
+      await promptStarted.promise;
+      const closing = workspaceLease.close();
+      let closeCompleted = false;
+      void closing.then(() => { closeCompleted = true; });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(closeCompleted, false);
+      releasePrompt.resolve();
+      await assert.rejects(executePromise, (error) => error?.code === 'AGENT_CLOSING');
+      await closing;
+      assert.equal(runnerCount, 0);
+      assert.equal(events.includes('accepted'), false);
     });
   } finally {
     await mutationExecutor.close();

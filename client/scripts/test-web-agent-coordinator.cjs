@@ -121,13 +121,61 @@ async function main() {
     const bDone = workspaceB.admit(async () => 'workspace-b-ok');
     await started.promise;
     const closing = coordinator.closeWorkspace('a');
+    assert.throws(
+      () => coordinator.reserve({ workspaceId: 'a', executionId: 'during-close', envelope: envelope('during-close') }),
+      (error) => error?.code === 'AGENT_CLOSING',
+    );
     await assert.rejects(aDone, (error) => error?.code === 'AGENT_CLOSING');
     await closing;
     assert.equal(await bDone, 'workspace-b-ok');
-    assert.throws(
-      () => coordinator.reserve({ workspaceId: 'a', executionId: 'closed', envelope: envelope('closed') }),
-      (error) => error?.code === 'AGENT_CLOSING',
-    );
+    const recreated = coordinator.reserve({ workspaceId: 'a', executionId: 'recreated', envelope: envelope('recreated') });
+    recreated.cancel();
+    await assert.rejects(recreated.completion, (error) => error?.code === 'AGENT_CANCELLED');
+  });
+
+  await run('preparation 纳入 Workspace close 与 deadline；新 Runtime 可复用同一 workspaceId', async () => {
+    const coordinator = createAgentCoordinator();
+    const oldLease = coordinator.registerWorkspace('reused');
+    const captureStarted = deferred();
+    const releaseCapture = deferred();
+    const reservation = coordinator.reserve({
+      workspaceId: 'reused', workspaceGeneration: oldLease.generation, executionId: 'old-preparation', envelope: envelope('old-preparation'),
+    });
+    const preparation = reservation.prepare(async ({ assertActive }) => {
+      captureStarted.resolve();
+      await releaseCapture.promise;
+      assertActive();
+      return 'old';
+    });
+    await captureStarted.promise;
+    const closing = oldLease.close();
+    let settled = false;
+    void closing.then(() => { settled = true; });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(settled, false);
+    releaseCapture.resolve();
+    await assert.rejects(preparation, (error) => error?.code === 'AGENT_CLOSING');
+    await closing;
+
+    const nextLease = coordinator.registerWorkspace('reused');
+    const next = coordinator.reserve({
+      workspaceId: 'reused', workspaceGeneration: nextLease.generation, executionId: 'new-runtime', envelope: envelope('new-runtime'),
+    });
+    next.cancel();
+    await assert.rejects(next.completion, (error) => error?.code === 'AGENT_CANCELLED');
+
+    const deadlineLease = coordinator.registerWorkspace('deadline-preparation');
+    const releaseDeadline = deferred();
+    const deadlineReservation = coordinator.reserve({
+      workspaceId: 'deadline-preparation', workspaceGeneration: deadlineLease.generation, executionId: 'deadline-preparation', envelope: envelope('deadline-preparation'), deadlineAt: Date.now() + 15,
+    });
+    const deadlinePreparation = deadlineReservation.prepare(async ({ assertActive }) => {
+      await releaseDeadline.promise;
+      assertActive();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    releaseDeadline.resolve();
+    await assert.rejects(deadlinePreparation, (error) => error?.code === 'AGENT_TIMEOUT');
   });
 
   await run('applying 进入线性化点后，closeWorkspace 等待原子提交完成', async () => {

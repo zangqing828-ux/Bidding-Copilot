@@ -114,7 +114,7 @@ function createAgentResultCommitter({ db, mutationExecutor, readInputRevision, o
     return row ? receiptFromRow(row) : null;
   }
 
-  function commit({ envelope, taskSpec, validatedOutput, outputSha256, signal }) {
+  function commit({ envelope, taskSpec, validatedOutput, outputSha256, signal, onLinearized }) {
     const normalizedEnvelope = normalizeEnvelope(envelope);
     if (!taskSpec || typeof taskSpec.applyResult !== 'function') {
       return Promise.reject(createAgentError('Agent Task Spec 无效', 'AGENT_TASK_SPEC_INVALID'));
@@ -122,8 +122,15 @@ function createAgentResultCommitter({ db, mutationExecutor, readInputRevision, o
     if (!/^[a-f0-9]{64}$/i.test(String(outputSha256 || ''))) {
       return Promise.reject(createAgentError('Agent 输出摘要无效', 'AGENT_OUTPUT_INVALID', { retryable: true }));
     }
+    if (onLinearized !== undefined && typeof onLinearized !== 'function') {
+      return Promise.reject(createAgentError('Agent 事务线性化回调无效', 'AGENT_TASK_SPEC_INVALID'));
+    }
     return mutationExecutor.execute(() => {
+      if (signal?.aborted) throw signal.reason || createAgentError('Agent 执行已取消', 'AGENT_CANCELLED', { retryable: true });
       const transaction = db.transaction(() => {
+        // The transaction body runs only after BEGIN IMMEDIATE has acquired the SQLite write lock.
+        // From this point a cancellation is deliberately linearized behind this atomic commit.
+        onLinearized?.();
         const existing = selectApplied.get(normalizedEnvelope.executionId);
         if (existing) {
           assertSameEnvelope(existing, normalizedEnvelope);
@@ -133,7 +140,9 @@ function createAgentResultCommitter({ db, mutationExecutor, readInputRevision, o
           throw createAgentError('Agent 输入已更新，请重新执行', 'AGENT_INPUT_CHANGED', { retryable: true });
         }
         assertSynchronousFunction(taskSpec.applyResult, 'Task Spec applyResult');
-        let declaredOperationApplied = false;
+        let operationAttempted = false;
+        let operationSucceeded = false;
+        let operationFailure = null;
         let locator = null;
         let transactionCapabilityActive = true;
         const assertActiveCapability = () => {
@@ -155,16 +164,24 @@ function createAgentResultCommitter({ db, mutationExecutor, readInputRevision, o
           },
           applyDeclaredOperation(operationId, payload) {
             assertActiveCapability();
-            if (declaredOperationApplied || operationId !== taskSpec.commitOperationId || typeof operations[operationId] !== 'function') {
+            if (operationAttempted || operationId !== taskSpec.commitOperationId || typeof operations[operationId] !== 'function') {
               throw createAgentError('Agent 不允许执行该写入操作', 'AGENT_APPLY_FAILED', { retryable: true });
             }
-            declaredOperationApplied = true;
-            const operationResult = operations[operationId](payload);
-            if (isThenable(operationResult)) {
-              void Promise.resolve(operationResult).catch(() => undefined);
-              throw createAgentError('Agent operation 不允许异步返回', 'AGENT_APPLY_FAILED', { retryable: true });
+            operationAttempted = true;
+            try {
+              const operationResult = operations[operationId](payload);
+              if (isThenable(operationResult)) {
+                void Promise.resolve(operationResult).catch(() => undefined);
+                throw createAgentError('Agent operation 不允许异步返回', 'AGENT_APPLY_FAILED', { retryable: true });
+              }
+              locator = operationResult;
+              operationSucceeded = true;
+            } catch (error) {
+              operationFailure = error?.code
+                ? error
+                : createAgentError(`Agent operation 执行失败：${error?.message || '未知错误'}`, 'AGENT_APPLY_FAILED', { retryable: true });
+              throw operationFailure;
             }
-            locator = operationResult;
           },
           recordAppliedExecution() {
             assertActiveCapability();
@@ -181,7 +198,8 @@ function createAgentResultCommitter({ db, mutationExecutor, readInputRevision, o
         } finally {
           transactionCapabilityActive = false;
         }
-        if (!declaredOperationApplied) {
+        if (operationFailure) throw operationFailure;
+        if (!operationSucceeded) {
           throw createAgentError('Task Spec 未执行声明的写入操作', 'AGENT_APPLY_FAILED', { retryable: true });
         }
         const resultLocatorJson = normalizeResultLocator(locator || {});

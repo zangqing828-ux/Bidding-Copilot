@@ -244,11 +244,17 @@ function createWebWorkspaceRuntime({
     }
     const aiService = aiServiceOverride || (useBidAnalysisTestAi ? createBidAnalysisTestAiService() : createAiRuntime(runtimeAiOptions));
     pushCloseHandler(closeHandlers, createCloseHandler(aiService), 'aiService');
+    const agentCoordinator = sharedAgentCoordinator || getGlobalAgentCoordinator();
+    const agentWorkspaceLease = typeof agentCoordinator.registerWorkspace === 'function'
+      ? agentCoordinator.registerWorkspace(workspaceId)
+      : null;
+    pushCloseHandler(closeHandlers, createCloseHandler(agentWorkspaceLease), 'agentWorkspaceLease');
     const agentService = createWebAgentService({
       workspaceId,
       workspaceRoot,
       aiService,
-      agentCoordinator: sharedAgentCoordinator || getGlobalAgentCoordinator(),
+      agentCoordinator,
+      agentWorkspaceLease,
     });
     if (!agentService || typeof agentService.close !== 'function') {
       throw new Error('agentService 缺少 close 方法');
@@ -361,6 +367,7 @@ function createWorkspaceRuntimeFactory(runtimeOptions = {}) {
     databasePath,
     configPath,
     sharedCoordinator,
+    sharedAgentCoordinator,
     aiRuntimeOptions,
     aiServiceOverride: runtimeOptions.aiServiceOverride,
   });
