@@ -193,9 +193,8 @@ async function run() {
   const replacementWorkspace = createOpenCodeTaskWorkspace({ workspaceRoot, runId: 'unsafe-replacement', inputs: { 'input/source.json': '{}' } });
   try {
     fs.writeFileSync(replacementWorkspace.outputPath, '{"version":1}', 'utf8');
-    const replacementFileSystem = Object.create(fs);
     let replaced = false;
-    replacementFileSystem.openSync = function guardedOpen(target, ...args) {
+    const guardedOpen = function guardedOpen(target, ...args) {
       if (!replaced && target === replacementWorkspace.outputPath) {
         replaced = true;
         fs.unlinkSync(replacementWorkspace.outputPath);
@@ -203,6 +202,12 @@ async function run() {
       }
       return fs.openSync(target, ...args);
     };
+    const replacementFileSystem = new Proxy(fs, {
+      get(target, property) {
+        return property === 'openSync' ? guardedOpen : Reflect.get(target, property);
+      },
+    });
+    assert.notStrictEqual(replacementFileSystem.openSync, fs.openSync);
     assert.throws(
       () => readSafeOutput(replacementWorkspace.outputPath, { fileSystem: replacementFileSystem }),
       (error) => error?.code === 'AGENT_OUTPUT_UNSAFE',
