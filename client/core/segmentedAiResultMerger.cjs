@@ -55,13 +55,14 @@ async function mergeSegmentedAiResults({
   sectionHint,
   taskLabel,
   logTitle,
+  signal,
 }) {
   return aiService.chat({
     messages: buildMergeMessages({ segmentResults, taskPrompt, output, systemPrompt, sectionHint, taskLabel }),
     temperature: 0.1,
     response_format: output === 'json' ? { type: 'json_object' } : undefined,
     logTitle: logTitle || `分段结果合并-${taskLabel || 'AI任务'}`,
-  });
+  }, { signal });
 }
 
 module.exports = {

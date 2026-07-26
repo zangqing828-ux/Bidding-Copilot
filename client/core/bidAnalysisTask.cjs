@@ -8,8 +8,25 @@ const {
 
 const PROMPT_CACHE_WARMUP_DELAY_MS = 5000;
 
-function waitForPromptCacheWarmup() {
-  return new Promise((resolve) => setTimeout(resolve, PROMPT_CACHE_WARMUP_DELAY_MS));
+function waitForPromptCacheWarmup(signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason || new Error('任务已取消'));
+      return;
+    }
+    const timer = setTimeout(resolve, PROMPT_CACHE_WARMUP_DELAY_MS);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason || new Error('任务已取消'));
+    };
+    signal?.addEventListener?.('abort', onAbort, { once: true });
+  });
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) {
+    throw signal.reason || new Error('任务已取消');
+  }
 }
 
 const stableSystemPrompt = `你是专业的投标资料分析助手。请严格基于用户提供的上下文完成提取和总结。
@@ -203,21 +220,21 @@ function buildMessages(fileContent, task, sectionHint) {
   return messages;
 }
 
-async function runSingleBidAnalysisPromptTask({ aiService, fileContent, task, sectionHint, logTitle }) {
+async function runSingleBidAnalysisPromptTask({ aiService, fileContent, task, sectionHint, logTitle, signal }) {
   return aiService.chat({
     messages: buildMessages(fileContent, task, sectionHint),
     temperature: 0.1,
     response_format: task.output === 'json' ? { type: 'json_object' } : undefined,
     logTitle: logTitle || `招标解析-${task.label}`,
-  });
+  }, { signal });
 }
 
-async function runBidAnalysisPromptTask({ aiService, fileContent, fileSegments, task, sectionHint }) {
+async function runBidAnalysisPromptTask({ aiService, fileContent, fileSegments, task, sectionHint, signal }) {
   const segments = Array.isArray(fileSegments) && fileSegments.length
     ? fileSegments
     : splitUserTextByContextLimit(fileContent, typeof aiService.getConfig === 'function' ? aiService.getConfig() : {});
   if (segments.length <= 1) {
-    return runSingleBidAnalysisPromptTask({ aiService, fileContent: segments[0] || fileContent, task, sectionHint });
+    return runSingleBidAnalysisPromptTask({ aiService, fileContent: segments[0] || fileContent, task, sectionHint, signal });
   }
 
   const segmentResults = await Promise.all(segments.map(async (segmentContent, index) => ({
@@ -228,6 +245,7 @@ async function runBidAnalysisPromptTask({ aiService, fileContent, fileSegments, 
       fileContent: segmentContent,
       task,
       sectionHint,
+      signal,
       logTitle: `招标解析-${task.label}-第${index + 1}段`,
     }),
   })));
@@ -241,6 +259,7 @@ async function runBidAnalysisPromptTask({ aiService, fileContent, fileSegments, 
     sectionHint,
     taskLabel: task.label,
     logTitle: `招标解析合并-${task.label}`,
+    signal,
   });
 }
 
@@ -253,7 +272,7 @@ function runInvalidBidAndRejectionItemsExtraction({ aiService, fileContent, sect
   return runBidAnalysisPromptTask({ aiService, fileContent, task, sectionHint });
 }
 
-async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, emitTask, payload }) {
+async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, emitTask, payload, signal }) {
   const config = normalizeBidAnalysisConfig(payload.mode, payload.selected_task_ids || payload.selectedTaskIds);
   const mode = config.mode;
   const selectedTaskIdSet = new Set(config.taskIds);
@@ -302,6 +321,14 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, emitT
     return workspaceStore.updateTechnicalPlan(partial);
   };
   const load = () => workspaceStore.loadTechnicalPlan();
+  const commit = async (build) => {
+    if (typeof workspaceStore.commitBidAnalysisMutation === 'function') {
+      return workspaceStore.commitBidAnalysisMutation(inputRevision, build);
+    }
+    const previous = await load() || {};
+    const result = build(previous) || {};
+    return { ...result, state: await persist(result.partial || {}) };
+  };
   function publish(task, state, eventPatch) {
     if (typeof emitTask === 'function') emitTask(task, state, eventPatch);
   }
@@ -350,11 +377,18 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, emitT
   const tasksToRun = requestedTaskIds || forceRerun ? scopedTasks : scopedTasks.filter((task) => currentTasks[task.id]?.status !== 'success');
 
   async function runOne(task) {
-    const runningPrev = await load() || {};
-    const runningTasks = { ...(runningPrev.bidAnalysisTasks || {}), [task.id]: { id: task.id, label: task.label, status: 'running', content: '', error: undefined, error_code: undefined, retryable: false } };
-    const taskState = updateTask({ status: 'running', progress: doneProgress(runningTasks) });
-    technicalPlan = await persist({ bidAnalysisTasks: runningTasks, bidAnalysisProgress: doneProgress(runningTasks), bidAnalysisTask: taskState });
-    publish(taskState, technicalPlan, { bidItem: runningTasks[task.id] });
+    throwIfAborted(signal);
+    const runningCommit = await commit((runningPrev) => {
+      const runningTasks = { ...(runningPrev.bidAnalysisTasks || {}), [task.id]: { id: task.id, label: task.label, status: 'running', content: '', error: undefined, error_code: undefined, retryable: false } };
+      const taskState = updateTask({ status: 'running', progress: doneProgress(runningTasks) });
+      return {
+        partial: { bidAnalysisTasks: runningTasks, bidAnalysisProgress: doneProgress(runningTasks), bidAnalysisTask: taskState },
+        bidItem: runningTasks[task.id],
+        taskState,
+      };
+    });
+    technicalPlan = runningCommit.state;
+    publish(runningCommit.taskState, technicalPlan, { bidItem: runningCommit.bidItem });
 
     const content = await runBidAnalysisPromptTask({
       aiService,
@@ -362,38 +396,45 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, emitT
       fileSegments,
       task,
       sectionHint,
+      signal,
     });
+    throwIfAborted(signal);
     const trimmedContent = String(content || '').trim();
     if (!trimmedContent) {
       throw new Error(`${task.label}解析结果为空，请重新解析`);
     }
 
-    const prev = await load() || {};
-    const nextTasks = { ...(prev.bidAnalysisTasks || {}), [task.id]: { id: task.id, label: task.label, status: 'success', content: trimmedContent, error: undefined, error_code: undefined, retryable: false } };
-    const nextTaskState = updateTask({ status: 'running', progress: doneProgress(nextTasks) });
-    const partial = { bidAnalysisTasks: nextTasks, bidAnalysisProgress: doneProgress(nextTasks), bidAnalysisTask: nextTaskState };
-    if (task.id === 'projectOverview') partial.projectOverview = trimmedContent;
-    if (task.id === 'techRequirements') partial.techRequirements = trimmedContent;
-    technicalPlan = await persist(partial);
-    publish(nextTaskState, technicalPlan, { bidItem: nextTasks[task.id] });
+    const successCommit = await commit((prev) => {
+      const nextTasks = { ...(prev.bidAnalysisTasks || {}), [task.id]: { id: task.id, label: task.label, status: 'success', content: trimmedContent, error: undefined, error_code: undefined, retryable: false } };
+      const nextTaskState = updateTask({ status: 'running', progress: doneProgress(nextTasks) });
+      const partial = { bidAnalysisTasks: nextTasks, bidAnalysisProgress: doneProgress(nextTasks), bidAnalysisTask: nextTaskState };
+      if (task.id === 'projectOverview') partial.projectOverview = trimmedContent;
+      if (task.id === 'techRequirements') partial.techRequirements = trimmedContent;
+      return { partial, bidItem: nextTasks[task.id], taskState: nextTaskState };
+    });
+    technicalPlan = successCommit.state;
+    publish(successCommit.taskState, technicalPlan, { bidItem: successCommit.bidItem });
   }
 
   async function handleTaskError(task, error) {
-    const prev = await load() || {};
+    throwIfAborted(signal);
     const errorCode = typeof error?.code === 'string' ? error.code : 'TASK_ITEM_FAILED';
     const retryable = error?.retryable !== false;
-    const nextTasks = { ...(prev.bidAnalysisTasks || {}), [task.id]: {
-      id: task.id,
-      label: task.label,
-      status: 'error',
-      content: prev.bidAnalysisTasks?.[task.id]?.content || '',
-      error: error.message || '解析失败',
-      error_code: errorCode,
-      retryable,
-    } };
-    const taskState = updateTask({ status: 'running', progress: doneProgress(nextTasks), logs: [`${task.label}解析失败：${error.message || '未知错误'}`] });
-    technicalPlan = await persist({ bidAnalysisTasks: nextTasks, bidAnalysisProgress: doneProgress(nextTasks), bidAnalysisTask: taskState });
-    publish(taskState, technicalPlan, { bidItem: nextTasks[task.id] });
+    const errorCommit = await commit((prev) => {
+      const nextTasks = { ...(prev.bidAnalysisTasks || {}), [task.id]: {
+        id: task.id,
+        label: task.label,
+        status: 'error',
+        content: prev.bidAnalysisTasks?.[task.id]?.content || '',
+        error: error.message || '解析失败',
+        error_code: errorCode,
+        retryable,
+      } };
+      const taskState = updateTask({ status: 'running', progress: doneProgress(nextTasks), logs: [`${task.label}解析失败：${error.message || '未知错误'}`] });
+      return { partial: { bidAnalysisTasks: nextTasks, bidAnalysisProgress: doneProgress(nextTasks), bidAnalysisTask: taskState }, bidItem: nextTasks[task.id], taskState };
+    });
+    technicalPlan = errorCommit.state;
+    publish(errorCommit.taskState, technicalPlan, { bidItem: errorCommit.bidItem });
   }
 
   async function runOneSafely(task) {
@@ -401,6 +442,7 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, emitT
       await runOne(task);
       return true;
     } catch (error) {
+      throwIfAborted(signal);
       await handleTaskError(task, error);
       return false;
     }
@@ -414,18 +456,17 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, emitT
       const taskState = updateTask({ status: 'running', progress: technicalPlan.bidAnalysisProgress || 0, logs: ['提示词缓存预热完成，等待 5 秒后开始并发解析剩余项。'] });
       technicalPlan = await persist({ bidAnalysisTask: taskState });
       publish(taskState, technicalPlan);
-      await waitForPromptCacheWarmup();
+      await waitForPromptCacheWarmup(signal);
     }
   }
-  // 解析结果与任务状态必须按同一输入版本顺序提交，避免并发读取旧快照后互相覆盖。
-  for (const task of remainingTasks) {
-    await runOneSafely(task);
-  }
+  await Promise.all(remainingTasks.map((task) => runOneSafely(task)));
+  throwIfAborted(signal);
 
   const latestPlan = await load() || {};
   const failedSelectedTasks = selectedTasks.filter((task) => latestPlan.bidAnalysisTasks?.[task.id]?.status === 'error');
-  if (failedSelectedTasks.length) {
-    const failedLabels = failedSelectedTasks.map((task) => task.label).join('、');
+  const failedRequiredTasks = failedSelectedTasks.filter((task) => task.required);
+  if (failedRequiredTasks.length) {
+    const failedLabels = failedRequiredTasks.map((task) => task.label).join('、');
     const message = `解析项失败：${failedLabels}，请重新解析失败项。`;
     const taskState = updateTask({ status: 'error', progress: 100, error: message, error_code: 'TASK_ITEM_FAILED', retryable: true, logs: [message] });
     technicalPlan = await persist({ bidAnalysisTask: taskState });

@@ -52,14 +52,13 @@
 
 因此，PR #3 不得在后续文档中描述为“7 个 Sprint 完整交付”或“Web v1 完成”。
 
-## WP-I PR I-1 当前分支事实（2026-07-26）
+## WP-I PR I-1 当前修复状态（2026-07-26）
 
-以下事实仅适用于 `codex/wp-i-business-task-agent-spec` 的 PR I-1 实施分支，尚不构成 `main` 已合入或 Web v1 完成的声明。
+以下状态仅适用于 `codex/wp-i-business-task-agent-spec` 的 Draft PR #7，尚不构成 `main` 已合入、完整 CI 通过或 Web v1 完成的声明。
 
-- 已建立运行环境无关的 Task Orchestrator；Electron 的八类既有任务以 characterization 测试守住生命周期行为。
-- Web 已接通“招标文件解析”任务：严格 DTO、输入版本 CAS、每 Workspace 单一 mutation executor、持久化任务状态与 SSE 回放共同覆盖该主链。
-- 浏览器 E2E 已验证上传后的招标文件可进入解析流程、启动任务、刷新后读取结果。该 E2E 使用 test-only AI 响应，不能替代接入用户模型配置后的线上调用验收。
-- Docker 镜像已通过 mock OAuth 的 health/readiness、登录后 `technicalPlan.loadState`，以及生产配置下的 MainQuest authorize 跳转与 Secure state Cookie 冒烟；readiness 同时确认内置 Agent runtime 所需二进制与工具可用。
+- 已建立运行环境无关的 Task Orchestrator、输入版本 CAS、每 Workspace 单一 mutation executor 与持久化任务状态/SSE 回放；其修复版仍待当前门禁复核。
+- 浏览器招标解析仅开放单标段链路；多标段识别和选标段在 Web 继续保持不可达，Electron 兼容能力与历史数据保留。
+- 浏览器 E2E、Docker 业务 smoke、Electron native smoke、production OAuth smoke 与 production audit 必须在修复提交上全绿后，才可描述为已验证。
 - 知识库、查重、废标、技术方案后续阶段和其他 Web 业务任务继续保持 pending；浏览器 Agent 能力也继续保持 pending。
 - 首个正式 Agent 业务任务开放前，必须单独通过 OS 级隔离 Release Gate：非 root、只读输入、独立可写目录、egress deny、`no_new_privs`、seccomp 与资源配额。当前应用级权限测试不代表该 Gate 已完成。
 - 品牌清理仍冻结，等待 I-1、I-2 两轮架构实施和相应验收完成。

@@ -212,6 +212,7 @@ function BidAnalysisPage({
   onProgressChange,
   onConfigSaved,
 }: BidAnalysisPageProps) {
+  const isWeb = window.yibiao?.platform === 'web';
   const [running, setRunning] = useState(false);
   const [fullRerunLocked, setFullRerunLocked] = useState(false);
   const [fullRerunSeenRunning, setFullRerunSeenRunning] = useState(false);
@@ -292,14 +293,14 @@ function BidAnalysisPage({
   }, [fullRerunLocked, fullRerunSeenRunning, task?.status]);
 
   useEffect(() => {
-    setDraftBidSectionMode(bidSectionMode);
-  }, [bidSectionMode]);
+    setDraftBidSectionMode(isWeb ? 'single' : bidSectionMode);
+  }, [bidSectionMode, isWeb]);
 
   useEffect(() => {
-    if (bidSectionMode === 'multiple' && bidSectionExtractionStatus === 'success' && bidSections.length >= 2 && !selectedSectionTitle && !sectionTaskRunning) {
+    if (!isWeb && bidSectionMode === 'multiple' && bidSectionExtractionStatus === 'success' && bidSections.length >= 2 && !selectedSectionTitle && !sectionTaskRunning) {
       setSectionSelectorOpen(true);
     }
-  }, [bidSectionMode, bidSectionExtractionStatus, bidSections.length, selectedSectionTitle, sectionTaskRunning]);
+  }, [isWeb, bidSectionMode, bidSectionExtractionStatus, bidSections.length, selectedSectionTitle, sectionTaskRunning]);
 
   useEffect(() => {
     if (pendingAnalysisAfterSection && bidSectionExtractionStatus === 'error') {
@@ -314,8 +315,8 @@ function BidAnalysisPage({
     }
 
     setDraftSelectedTaskIds(effectiveSelectedTaskIds);
-    setDraftBidSectionMode(bidSectionMode);
-  }, [bidSectionMode, effectiveSelectedTaskIds, settingsOpen]);
+    setDraftBidSectionMode(isWeb ? 'single' : bidSectionMode);
+  }, [bidSectionMode, effectiveSelectedTaskIds, isWeb, settingsOpen]);
 
   const openSettingsDialog = () => {
     if (taskRunning) {
@@ -323,7 +324,7 @@ function BidAnalysisPage({
       return;
     }
     setDraftSelectedTaskIds(effectiveSelectedTaskIds);
-    setDraftBidSectionMode(bidSectionMode);
+    setDraftBidSectionMode(isWeb ? 'single' : bidSectionMode);
     setSettingsOpen(true);
   };
 
@@ -388,10 +389,13 @@ function BidAnalysisPage({
       return;
     }
 
-    const nextBidSectionMode = options.overrideMode || draftBidSectionMode;
+    const nextBidSectionMode = isWeb ? 'single' : options.overrideMode || draftBidSectionMode;
     const normalizedTaskIds = normalizeSelectedTaskIds(nextTaskIds);
+    if (isWeb && bidSectionMode === 'multiple') {
+      showToast('浏览器暂仅支持单标段解析，已切换为单标段继续。', 'info');
+    }
 
-    if (!options.skipCheck) {
+    if (!options.skipCheck && !isWeb) {
       try {
         const detection = await window.yibiao?.technicalPlan.checkBidSections();
         if (nextBidSectionMode === 'single' && detection?.hasMultiple) {
@@ -564,6 +568,7 @@ function BidAnalysisPage({
       ? selectedSectionTitle ? '更换' : '选择标段'
       : bidSectionExtractionStatus === 'error' ? '重新识别标段' : '识别标段';
   const webBidAnalysisPending = false;
+  const webMultiSectionPending = isWeb;
 
   return (
     <div className="plan-step-body bid-analysis-page">
@@ -720,7 +725,7 @@ function BidAnalysisPage({
                     <span>单标段</span>
                     <small>默认</small>
                   </button>
-                  <button
+                  {!webMultiSectionPending && <button
                     type="button"
                     className={`bid-analysis-config-preset${draftBidSectionMode === 'multiple' ? ' is-active' : ''}`}
                     onClick={() => setDraftBidSectionMode('multiple')}
@@ -728,9 +733,9 @@ function BidAnalysisPage({
                   >
                     <span>多标段</span>
                     <small>AI 识别</small>
-                  </button>
+                  </button>}
                 </div>
-                {draftBidSectionMode === 'multiple' && (
+                {!webMultiSectionPending && draftBidSectionMode === 'multiple' && (
                   <div className="bid-analysis-section-action">
                     {selectedSectionTitle && (
                       <>
@@ -824,7 +829,7 @@ function BidAnalysisPage({
         </Dialog.Portal>
       </Dialog.Root>
 
-      <Dialog.Root open={Boolean(sectionModeWarning)} onOpenChange={(open) => { if (!open) setSectionModeWarning(null); }}>
+      {!webMultiSectionPending && <Dialog.Root open={Boolean(sectionModeWarning)} onOpenChange={(open) => { if (!open) setSectionModeWarning(null); }}>
         <Dialog.Portal>
           <Dialog.Overlay className="content-regenerate-modal" />
           <Dialog.Content className="content-regenerate-card">
@@ -849,15 +854,15 @@ function BidAnalysisPage({
             </div>
           </Dialog.Content>
         </Dialog.Portal>
-      </Dialog.Root>
+      </Dialog.Root>}
 
-      <BidSectionSelectorDialog
+      {!webMultiSectionPending && <BidSectionSelectorDialog
         open={sectionSelectorOpen}
         sections={bidSections}
         onSelect={handleSectionSelect}
         onCancel={handleSectionCancel}
         busy={selectingSection}
-      />
+      />}
     </div>
   );
 }

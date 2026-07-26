@@ -22,6 +22,13 @@ function createTaskOrchestrator({
   const activeTaskControls = new Map();
   const subscribers = new Set();
 
+  function createTaskConflictError(definition) {
+    const error = new Error(`当前${definition.groupLabel || '任务组'}正在执行“${definition.label || '任务'}”，请等待当前任务完成后再重新分析新的文件集合。`);
+    error.code = 'TASK_CONFLICT';
+    error.retryable = true;
+    return error;
+  }
+
   function definitionFor(type) {
     return definitions[type] || { label: type, stateKey: 'technicalPlan', field: undefined, lockPolicy: 'none' };
   }
@@ -85,7 +92,7 @@ function createTaskOrchestrator({
       const nextPayloadSignature = getPayloadSignature(type, payload);
       if (existingTask.payload_signature && nextPayloadSignature && existingTask.payload_signature !== nextPayloadSignature) {
         const definition = definitionFor(type);
-        throw new Error(`当前${definition.groupLabel || '任务组'}正在执行“${definition.label || type}”，请等待当前任务完成后再重新分析新的文件集合。`);
+        throw createTaskConflictError(definition);
       }
       emit(existingTask, snapshotFor(existingTask));
       return existingTask;
@@ -100,7 +107,13 @@ function createTaskOrchestrator({
     const taskControl = {
       queueScopeId,
       pauseRequested: false,
+      abortController: new AbortController(),
       isPauseRequested() { return this.pauseRequested; },
+      cancel(reason) {
+        if (!this.abortController.signal.aborted) {
+          this.abortController.abort(reason);
+        }
+      },
       requestPause() {
         this.pauseRequested = true;
         const logs = currentTask.logs?.length ? currentTask.logs : ['已请求暂停，正在等待当前 AI 请求完成。'];
@@ -141,6 +154,7 @@ function createTaskOrchestrator({
         queueScopeId,
         updateTask,
         taskControl,
+        signal: taskControl.abortController.signal,
         previousState,
         emitTask(task, workspaceState, eventPatch) {
           emit(task, stateAdapter.snapshot(definition, workspaceState, task, eventPatch));
@@ -153,7 +167,7 @@ function createTaskOrchestrator({
       } catch (error) {
         runnerPromise = Promise.reject(error);
       }
-      runnerPromise.catch((error) => {
+      const settledPromise = runnerPromise.catch((error) => {
         const failedTask = updateTask({
           status: 'error',
           error: error?.message || '任务执行失败',
@@ -171,6 +185,8 @@ function createTaskOrchestrator({
         activeTasks.delete(type);
         activeTaskControls.delete(type);
       });
+      taskControl.runnerPromise = settledPromise;
+      void settledPromise.catch(() => undefined);
       return currentTask;
     };
 
@@ -192,10 +208,17 @@ function createTaskOrchestrator({
     return attachRunner(acceptedState);
   }
 
+  async function close({ reason } = {}) {
+    const controls = Array.from(activeTaskControls.values());
+    controls.forEach((control) => control.cancel(reason));
+    await Promise.allSettled(controls.map((control) => control.runnerPromise).filter(Boolean));
+  }
+
   return Object.freeze({
     activeTaskControls,
     activeTasks,
     emit,
+    close,
     getActiveTasks: () => Array.from(activeTasks.values()),
     start,
     subscribe,

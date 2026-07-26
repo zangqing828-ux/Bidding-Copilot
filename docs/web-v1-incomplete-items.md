@@ -9,7 +9,7 @@
 - Docker 镜像已提供 OpenCode Linux binary 与 `rg`/`fd`/`jq`，并由 readiness 检查；浏览器 Agent 业务能力仍未开放。
 - Dockerfile 未安装 Chromium、LibreOffice。
 - `localImageRenderService.cjs` 的渲染 adapter 仍依赖 Electron BrowserWindow（已延迟加载，Web 端调用会抛错）
-- Web Word 导出与一次性浏览器下载已由浏览器 E2E 和 Docker smoke 覆盖。
+- Web Word 导出与一次性浏览器下载仍需在当前修复提交的完整浏览器和 Docker 门禁中复核。
 - Mermaid/HTML 图片渲染在 Web 端不可用
 
 **建议**：新增 Sprint 08 或纳入 v1.1，在 Docker 环境内完成 Playwright/Chromium + LibreOffice 安装和适配器实现。
@@ -18,7 +18,7 @@
 
 **来源**：Sprint 05（aiService 为占位 stub）
 
-- WP-I PR I-1 已将 `tasks.startBidAnalysis` 接到真实 Web AI Runtime，并以 strict DTO、input revision CAS、单一 mutation executor、SSE 与持久化任务状态保护执行链。
+- WP-I PR I-1 已实现 `tasks.startBidAnalysis` 的 Web 执行链，当前 Draft PR #7 正在修复 strict DTO、input revision CAS、单一 mutation executor、SSE 与持久化任务状态的边界问题，完整门禁尚未通过。
 - `ai.chat`/`ai.requestJson` 的浏览器入口仍保持 pending。
 - 技术方案生成、目录生成、正文生成、知识库、查重和废标检查等业务任务仍未接通。
 
@@ -28,7 +28,7 @@
 
 **来源**：Sprint 04（上传端点已实现，业务适配未接入）
 
-- `server/routes/uploads.cjs` 可接收 multipart 上传，返回 fileId；`technicalPlan.importTenderDocument` 已接通招标文件导入并由浏览器 E2E 覆盖。
+- `server/routes/uploads.cjs` 可接收 multipart 上传，返回 fileId；`technicalPlan.importTenderDocument` 已接通招标文件导入，浏览器 E2E 证据需随当前修复提交复核。
 - `knowledgeBase.uploadDocuments`、`rejectionCheck.importDocument`、`duplicateCheck` 文件选择仍返回 501。
 - 需要把上传后的 fileId 转为服务端文件路径，调用 `fileService.parseDocumentWithConfig` 解析
 - 知识库上传需要 SSE 进度推送（Sprint 05 SSE 已有骨架）
@@ -50,7 +50,7 @@
 
 **来源**：外部审查指出"把失败状态计为成功"
 
-- `tasks.startBidAnalysis` 已由真实 Web runtime 测试与浏览器 E2E 覆盖；浏览器 E2E 使用 test-only AI 响应，仍需保留用户模型配置下的集成验收。
+- `tasks.startBidAnalysis` 的真实 Web runtime 测试与浏览器 E2E正在随 Draft PR #7 修复复核；浏览器 E2E 使用 test-only AI 响应，仍需保留用户模型配置下的集成验收。
 - 其余业务任务仍缺真实成功 E2E；不得以其占位错误测试标记完成。
 
 **建议**：在 P1 项完成后，把占位测试改为真实业务测试，新增端到端验收脚本。

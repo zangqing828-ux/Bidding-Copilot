@@ -1,6 +1,6 @@
 # Bidding-Copilot（Web 架构收敛中）
 
-> 当前 `main` 的 PR #3 仅提供 Web 运行基线。WP-I PR I-1 分支已完成并自动验证“招标文件解析”这一条 Web 任务链；其他业务任务、浏览器 Agent、Headless 渲染、真实 MainQuest OAuth 联调仍需按架构 Spec 完成。
+> 当前 `main` 的 PR #3 仅提供 Web 运行基线。WP-I PR I-1 的 Draft PR #7 正在修复与复审“招标文件解析”Web 任务链，尚未取得完整 CI 门禁证据；其他业务任务、浏览器 Agent、Headless 渲染、真实 MainQuest OAuth 联调仍需按架构 Spec 完成。
 
 ## 已锁定的项目方向
 

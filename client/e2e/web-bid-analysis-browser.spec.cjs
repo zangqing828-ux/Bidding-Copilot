@@ -1,5 +1,11 @@
 const { test, expect } = require('@playwright/test');
 
+test.beforeEach(async ({ page }) => {
+  await page.route('https://analytics.agnet.top/notice**', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ code: 0, notice: null }) });
+  });
+});
+
 async function login(page) {
   await page.goto('/');
   await page.getByRole('button', { name: '使用 MainQuest 账号登录' }).click();
@@ -10,10 +16,6 @@ async function login(page) {
     page.getByRole('button', { name: '登录' }).click(),
   ]);
   await page.waitForFunction(() => window.yibiao?.platform === 'web');
-  const notice = page.getByRole('dialog', { name: /插件系统/ });
-  if (await notice.isVisible().catch(() => false)) {
-    await notice.getByRole('button', { name: '知道了' }).click();
-  }
   await enterTechnicalPlan(page);
 }
 
@@ -43,9 +45,12 @@ test('真实浏览器完成招标文件解析并展示持久化结果', async ({
   await expect(page.getByText('招标文件解析', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: '开始解析' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByRole('dialog').getByRole('button', { name: '多标段' })).toHaveCount(0);
   await page.getByRole('dialog').getByRole('button', { name: '开始解析' }).click();
 
   await expect(page.getByText('招标文件解析任务已在后台启动', { exact: true })).toBeVisible();
+  await page.reload();
+  await enterTechnicalPlan(page);
   await expect.poll(async () => page.evaluate(async () => {
     const state = await window.yibiao.technicalPlan.loadState();
     return state.bidAnalysisTask?.status;

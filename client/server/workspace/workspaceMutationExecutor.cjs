@@ -13,17 +13,23 @@ function createWorkspaceMutationExecutor() {
   let tail = Promise.resolve();
   let closePromise = null;
 
-  function execute(operation) {
+  function execute(operation, { signal } = {}) {
     if (!accepting) {
       return Promise.reject(createUnavailableError());
     }
     if (typeof operation !== 'function') {
       return Promise.reject(new Error('Workspace mutation 必须提供执行函数'));
     }
+    if (signal?.aborted) {
+      return Promise.reject(signal.reason || createUnavailableError());
+    }
 
     queued += 1;
     const mutation = tail.then(async () => {
       queued -= 1;
+      if (signal?.aborted) {
+        throw signal.reason || createUnavailableError();
+      }
       active += 1;
       try {
         return await operation();

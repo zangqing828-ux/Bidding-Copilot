@@ -42,7 +42,12 @@ const USER_GUIDE_URL = 'https://wiki.agnet.top/';
 function Sidebar({ activeSection, developerMode, onSectionChange }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const { showToast } = useToast();
-  const menuItems = getAppMenuItems(developerMode);
+  const isWeb = window.yibiao?.platform === 'web';
+  const menuItems = getAppMenuItems(developerMode)
+    .map((item) => ({
+      ...item,
+      children: isWeb ? item.children?.filter((child) => child.id !== 'developer-agent-test') : item.children,
+    }));
   const activeParent = getParentMenuItemBySection(activeSection, developerMode);
 
   const handleMenuItemClick = (item: AppMenuItem) => {

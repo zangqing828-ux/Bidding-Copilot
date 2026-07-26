@@ -2,6 +2,7 @@ const definitions = require('./bidAnalysisDefinitions.json');
 
 const BID_ANALYSIS_MODES = Object.freeze(['key', 'full', 'custom']);
 const BID_ANALYSIS_ERROR_CODES = Object.freeze({
+  CONFLICT: 'TASK_CONFLICT',
   INVALID_INPUT: 'TASK_INVALID_INPUT',
   ITEM_NOT_FOUND: 'TASK_ITEM_NOT_FOUND',
 });

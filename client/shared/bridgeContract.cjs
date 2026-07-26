@@ -775,7 +775,7 @@ const rawMethods = {
         },
       })],
       output: 'BackgroundTaskState',
-      errors: ['TASK_INVALID_INPUT', 'TASK_ITEM_NOT_FOUND', 'TASK_INPUT_CHANGED'],
+      errors: ['TASK_INVALID_INPUT', 'TASK_ITEM_NOT_FOUND', 'TASK_INPUT_CHANGED', 'TASK_CONFLICT'],
     }),
     startOutlineGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startOutlineGeneration' }),
     startGlobalFactsGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startGlobalFactsGeneration' }),

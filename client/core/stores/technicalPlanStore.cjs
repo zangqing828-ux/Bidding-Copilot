@@ -1773,33 +1773,55 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
         clearDownstreamFromBidAnalysisChange();
       }
       bumpInputRevision();
-      updateMeta({
+      const nextMeta = {
         bid_analysis_mode: config.mode,
         bid_analysis_selected_task_ids_json: jsonOrNull(config.selectedTaskIds),
         bid_section_mode: nextSectionMode || normalizeBidSectionMode(meta.bid_section_mode),
-        bid_sections_json: null,
-        bid_section_extraction_status: 'idle',
-        bid_section_extraction_error: null,
-        selected_section_id: null,
-        selected_section_title: null,
-      });
+      };
+      if (shouldChangeSectionMode) {
+        Object.assign(nextMeta, {
+          bid_sections_json: null,
+          bid_section_extraction_status: 'idle',
+          bid_section_extraction_error: null,
+          selected_section_id: null,
+          selected_section_title: null,
+        });
+      }
+      updateMeta(nextMeta);
     });
     transaction();
     return loadTechnicalPlan();
   }
 
-  function prepareBidAnalysisRun({ selectedTaskIds, taskIds, forceRerun } = {}) {
+  function prepareBidAnalysisRun({ mode, selectedTaskIds, taskIds, forceRerun } = {}) {
+    const config = normalizeBidAnalysisConfig(mode, selectedTaskIds);
     const retryIds = forceRerun === true
-      ? normalizeBidAnalysisTaskIds(selectedTaskIds)
+      ? normalizeBidAnalysisTaskIds(config.selectedTaskIds)
       : normalizeBidAnalysisTaskIds(taskIds);
-    if (!retryIds.length) {
-      return { state: loadTechnicalPlan(), inputVersion: getBidAnalysisInputVersion() };
-    }
     const transaction = db.transaction(() => {
-      clearDownstreamFromBidAnalysisChange();
-      const removeItem = db.prepare('DELETE FROM technical_plan_bid_items WHERE item_id = ?');
-      retryIds.forEach((itemId) => removeItem.run(itemId));
-      bumpInputRevision();
+      const meta = ensureMetaRow();
+      const currentConfig = normalizeBidAnalysisConfig(
+        meta.bid_analysis_mode,
+        safeJsonParse(meta.bid_analysis_selected_task_ids_json, []),
+      );
+      const shouldChangeAnalysisConfig = currentConfig.mode !== config.mode
+        || JSON.stringify(currentConfig.selectedTaskIds) !== JSON.stringify(config.selectedTaskIds);
+      if (shouldChangeAnalysisConfig || retryIds.length) {
+        clearDownstreamFromBidAnalysisChange();
+      }
+      if (shouldChangeAnalysisConfig) {
+        updateMeta({
+          bid_analysis_mode: config.mode,
+          bid_analysis_selected_task_ids_json: jsonOrNull(config.selectedTaskIds),
+        });
+      }
+      if (retryIds.length) {
+        const removeItem = db.prepare('DELETE FROM technical_plan_bid_items WHERE item_id = ?');
+        retryIds.forEach((itemId) => removeItem.run(itemId));
+      }
+      if (shouldChangeAnalysisConfig || retryIds.length) {
+        bumpInputRevision();
+      }
     });
     transaction();
     return { state: loadTechnicalPlan(), inputVersion: getBidAnalysisInputVersion() };

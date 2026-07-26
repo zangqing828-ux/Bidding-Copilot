@@ -13,6 +13,7 @@ interface AppShellProps {
 
 function AppShell({ activeSection, children, developerMode, onSectionChange }: AppShellProps) {
   const isMac = navigator.platform.toLowerCase().includes('mac');
+  const isWeb = window.yibiao?.platform === 'web';
 
   return (
     <Tooltip.Provider delayDuration={120} skipDelayDuration={80}>
@@ -20,7 +21,7 @@ function AppShell({ activeSection, children, developerMode, onSectionChange }: A
         <Sidebar activeSection={activeSection} developerMode={developerMode} onSectionChange={onSectionChange} />
 
         <main className="main-area">
-          <AgentRuntimeStatusBar />
+          {!isWeb && <AgentRuntimeStatusBar />}
           <section className="content-shell" aria-label="主内容">
             {children}
           </section>

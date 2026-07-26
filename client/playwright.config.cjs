@@ -21,6 +21,7 @@ module.exports = defineConfig({
     env: {
       ...process.env,
       OAUTH_MODE: 'mock',
+      NODE_ENV: 'test',
       SESSION_SECRET: 'playwright-session-secret',
       CONFIG_ENCRYPTION_KEY: 'playwright-config-key',
       WEB_BID_ANALYSIS_TEST_MODE: '1',

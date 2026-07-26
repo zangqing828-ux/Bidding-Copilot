@@ -1080,6 +1080,30 @@ async function main() {
       }
     });
 
+    await run('生产环境拒绝测试 AI 装配', async () => {
+      const oldNodeEnv = process.env.NODE_ENV;
+      const oldTestMode = process.env.WEB_BID_ANALYSIS_TEST_MODE;
+      process.env.NODE_ENV = 'production';
+      process.env.WEB_BID_ANALYSIS_TEST_MODE = '1';
+      const productionTestAiDir = fs.mkdtempSync(path.join(os.tmpdir(), 'web-ai-runtime-production-test-ai-'));
+      try {
+        assert.throws(
+          () => createWorkspaceContext({
+            workspaceId: 'production-test-ai',
+            dataDir: productionTestAiDir,
+            runtimeFactory: (runtimeOptions) => createWorkspaceRuntimeFactory(runtimeOptions),
+          }),
+          /生产环境禁止使用测试 AI 装配/,
+          '生产运行时不得接受 WEB_BID_ANALYSIS_TEST_MODE',
+        );
+      } finally {
+        process.env.NODE_ENV = oldNodeEnv;
+        if (oldTestMode === undefined) delete process.env.WEB_BID_ANALYSIS_TEST_MODE;
+        else process.env.WEB_BID_ANALYSIS_TEST_MODE = oldTestMode;
+        fs.rmSync(productionTestAiDir, { recursive: true, force: true });
+      }
+    });
+
     await run('Web/core 可达 require 图不进入 Electron', async () => {
       const entries = [
         path.join(__dirname, '../core/aiRuntime.cjs'),

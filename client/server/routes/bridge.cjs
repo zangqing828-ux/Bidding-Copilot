@@ -177,7 +177,7 @@ const bridgeBindingMetadata = Object.freeze({
 
   tasks: Object.freeze({
     getActiveTasks: createDirectBinding((ctx) => ctx.taskService.getActiveTasks(), 'tasks.getActiveTasks'),
-    startBidAnalysis: createDirectBinding((ctx, args) => ctx.taskService.startBidAnalysis(args[0]), 'tasks.startBidAnalysis'),
+    startBidAnalysis: createDirectBinding((ctx, args, options) => ctx.taskService.startBidAnalysis(args[0], options), 'tasks.startBidAnalysis'),
   }),
 
   export: Object.freeze({
@@ -481,6 +481,13 @@ router.post('/bridge', (req, res) => {
       return res.status(409).json({
         code: err.code,
         message: err.message || '任务输入已更新，请重新开始',
+        retryable: true,
+      });
+    }
+    if (err?.code === 'TASK_CONFLICT') {
+      return res.status(409).json({
+        code: err.code,
+        message: err.message || '当前技术方案任务仍在执行',
         retryable: true,
       });
     }

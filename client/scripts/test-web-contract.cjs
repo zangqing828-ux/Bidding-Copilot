@@ -1161,6 +1161,32 @@ async function runBridgeBehavior(inject, context) {
     setWorkspaceContextResolver(previousConfigResolver);
   }
 
+  const previousTaskConflictResolver = setWorkspaceContextResolver(() => ({
+    taskService: {
+      startBidAnalysis: () => {
+        const error = new Error('当前解析任务正在执行');
+        error.code = 'TASK_CONFLICT';
+        error.retryable = true;
+        return Promise.reject(error);
+      },
+    },
+  }));
+  try {
+    const taskConflictRes = await statusPayload({
+      namespace: 'tasks',
+      method: 'startBidAnalysis',
+      args: [{
+        mode: 'key',
+        selected_task_ids: ['projectOverview', 'techRequirements', 'projectInfo', 'partAInfo', 'deliveryAndServiceRequirements'],
+      }],
+    });
+    assert(taskConflictRes.response.statusCode === 409, '不同任务 payload 冲突通过 Bridge 返回 409');
+    assert(taskConflictRes.payload.code === 'TASK_CONFLICT', '任务冲突保留 TASK_CONFLICT 错误码');
+    assert(taskConflictRes.payload.retryable === true, '任务冲突标记为可重试');
+  } finally {
+    setWorkspaceContextResolver(previousTaskConflictResolver);
+  }
+
   let invalidContractWorkspaceResolutions = 0;
   const previousWorkflowResolver = setWorkspaceContextResolver(() => {
     invalidContractWorkspaceResolutions += 1;
