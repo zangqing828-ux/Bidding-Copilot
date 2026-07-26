@@ -101,6 +101,10 @@ function createWebBidAnalysisTaskService({ aiService, technicalPlanStore, mutati
   const stateAdapter = {
     load: () => technicalPlanStore.loadTechnicalPlan(),
     persist(_definition, partial) {
+      const inputRevision = partial?.bidAnalysisTask?.input_revision;
+      if (Number.isInteger(inputRevision)) {
+        return mutationExecutor.execute(() => technicalPlanStore.updateTechnicalPlanForInputRevision(inputRevision, partial));
+      }
       return mutationExecutor.execute(() => technicalPlanStore.updateTechnicalPlan(partial));
     },
     snapshot(_definition, state, task, eventPatch = {}) {
@@ -146,6 +150,13 @@ function createWebBidAnalysisTaskService({ aiService, technicalPlanStore, mutati
       if (typeof aiService.resumeQueueScope === 'function') aiService.resumeQueueScope(queueScopeId);
     },
   });
+  let startingBidAnalysisPromise = null;
+
+  function clearStartingBidAnalysisPromise(promise) {
+    if (startingBidAnalysisPromise === promise) {
+      startingBidAnalysisPromise = null;
+    }
+  }
 
   return {
     close() {
@@ -160,7 +171,10 @@ function createWebBidAnalysisTaskService({ aiService, technicalPlanStore, mutati
       if (activeTask?.status === 'running' || activeTask?.status === 'pausing') {
         return activeTask;
       }
-      return mutationExecutor.execute(() => technicalPlanStore.prepareBidAnalysisRun({
+      if (startingBidAnalysisPromise) {
+        return startingBidAnalysisPromise;
+      }
+      const startPromise = mutationExecutor.execute(() => technicalPlanStore.prepareBidAnalysisRun({
         selectedTaskIds: input.selected_task_ids,
         taskIds: input.task_ids,
         forceRerun: input.force_rerun,
@@ -169,6 +183,12 @@ function createWebBidAnalysisTaskService({ aiService, technicalPlanStore, mutati
         payload: { ...input, input_revision: inputVersion.inputRevision },
         runner: runBidAnalysisTask,
       }));
+      startingBidAnalysisPromise = startPromise;
+      void startPromise.then(
+        () => clearStartingBidAnalysisPromise(startPromise),
+        () => clearStartingBidAnalysisPromise(startPromise),
+      );
+      return startPromise;
     },
   };
 }

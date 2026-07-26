@@ -45,11 +45,18 @@ async function main() {
     const service = createWebBidAnalysisTaskService({ aiService, technicalPlanStore: store, mutationExecutor });
     const events = [];
     const unsubscribe = service.subscribeCallback((event) => events.push(event));
-    const task = await service.startBidAnalysis({
+    const startPayload = {
       mode: 'key',
       selected_task_ids: ['projectOverview', 'techRequirements', 'projectInfo', 'partAInfo', 'deliveryAndServiceRequirements'],
-    });
+      force_rerun: true,
+    };
+    const [task, duplicateDuringStart] = await Promise.all([
+      service.startBidAnalysis(startPayload),
+      service.startBidAnalysis(startPayload),
+    ]);
     assert.equal(task.status, 'running', 'Web 返回运行中的任务');
+    assert.equal(duplicateDuringStart.task_id, task.task_id, '并发重复启动复用同一个准备中的 Web 任务');
+    assert.equal(store.getBidAnalysisInputVersion().inputRevision, 1, '并发重复启动只递增一次 input revision');
     const duplicate = service.startBidAnalysis({
       mode: 'key',
       selected_task_ids: ['projectOverview', 'techRequirements', 'projectInfo', 'partAInfo', 'deliveryAndServiceRequirements'],
@@ -65,6 +72,7 @@ async function main() {
     assert.equal(state.bidAnalysisTasks.techRequirements.status, 'success', '技术要求真实落盘');
     assert.equal(state.bidAnalysisTasks.projectInfo.status, 'success', '项目信息真实落盘');
     assert(events.some((event) => event.task?.status === 'success'), '事务提交后推送成功 SSE 快照');
+    await waitFor(() => service.getActiveTasks().length === 0);
     unsubscribe();
     await mutationExecutor.close();
     console.log('Web bid analysis real runner tests passed.');
