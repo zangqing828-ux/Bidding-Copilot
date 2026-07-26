@@ -184,7 +184,7 @@ jobs:
           docker rm web-prod-test
 
       - name: Block critical production vulnerabilities
-        run: npm audit --omit=dev --audit-level=critical
+        run: npm run audit:production
 
   analytics_worker:
     name: Analytics Worker Check

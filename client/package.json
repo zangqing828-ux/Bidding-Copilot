@@ -17,6 +17,7 @@
     "generate-build-attestation": "node scripts/generate-build-attestation.cjs",
     "prepare-opencode-tools": "node scripts/prepare-opencode-tools.cjs",
     "verify-opencode-tools": "node scripts/verify-opencode-tools.cjs",
+    "audit:production": "npm audit --omit=dev --audit-level=critical || node scripts/audit-production-dependencies.cjs",
     "smoke:electron-native": "electron --no-sandbox scripts/electron-native-smoke.cjs",
     "presmoke:electron-native": "npm rebuild better-sqlite3 --runtime=electron --target=41.10.2",
     "start": "electron .",
