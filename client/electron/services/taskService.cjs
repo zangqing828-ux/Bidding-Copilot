@@ -730,7 +730,7 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
         }
       },
     },
-    createRunnerContext({ definition, payload, queueScopeId, updateTask, taskControl, previousState }) {
+    createRunnerContext({ definition, payload, queueScopeId, updateTask, taskControl, previousState, signal }) {
       const workspaceStore = definition.stateKey === 'technicalPlan'
         ? technicalPlanStore
         : definition.stateKey === 'rejectionCheck'
@@ -743,6 +743,7 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
         knowledgeBaseService,
         updateTask,
         payload,
+        signal,
         taskControl,
         previousState,
       };

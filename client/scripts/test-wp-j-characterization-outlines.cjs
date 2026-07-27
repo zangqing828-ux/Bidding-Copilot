@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { runOutlineGenerationTask } = require('../electron/services/outlineGenerationTask.cjs');
+const { validateStartOutlineGenerationInput } = require('../shared/contracts/technical-plan/taskContracts.cjs');
 
 function readFixture(fileName) {
   const fixturePath = path.join(__dirname, '..', 'fixtures', 'technical-plan-characterization', fileName);
@@ -11,6 +12,22 @@ function readFixture(fileName) {
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function canonicalizeFixturePayload(payload = {}) {
+  return validateStartOutlineGenerationInput({
+    reference_knowledge_document_ids: [],
+    outline_expansion_mode: 'ai-complement',
+    ...payload,
+    word_control_options: {
+      enabled: false,
+      minimumWords: 0,
+      maximumWords: 0,
+      sectionWords: 0,
+      strictSectionWords: false,
+      ...(payload.word_control_options || {}),
+    },
+  });
 }
 
 function createWorkspaceStore(storedPlan, originalPlanMarkdown = '') {
@@ -117,7 +134,7 @@ async function runFixtureFixture(fixture, pathType) {
     workspaceStore,
     knowledgeBaseService,
     updateTask,
-    payload: fixtureInput.payload || {},
+    payload: canonicalizeFixturePayload(fixtureInput.payload),
   });
 
   const actualState = workspaceStore.loadTechnicalPlan();
