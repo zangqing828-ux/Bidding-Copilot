@@ -64,7 +64,7 @@ docker run --rm -v web-data:/data -v $(pwd):/backup alpine \
 
 1. 切换到旧版本镜像：`docker compose pull && docker compose up -d`
 2. 持久卷不删除，数据保留
-3. schema migration 向前兼容，旧版本可打开当前 schema
+3. 回滚镜像必须支持当前 Workspace 的 SQLite schema。schema v24 升级后，v23 及更早版本会拒绝打开；降级前需停止服务并恢复升级前备份。
 
 ## 安全检查
 

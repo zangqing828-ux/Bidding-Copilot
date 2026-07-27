@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
 const { buildOutlineExecutionPlan } = require('../outline/outlineExecutionPlan.cjs');
-const { buildOutlineStructure } = require('../outline/outlineStructure.cjs');
+const { assertOutlineNodeLimit, buildOutlineStructure } = require('../outline/outlineStructure.cjs');
 const { validateStartOutlineGenerationInput } = require('../../../shared/contracts/technical-plan/taskContracts.cjs');
 const { getBidAnalysisTasks } = require('../../bidAnalysisTask.cjs');
 const { splitUserTextByContextLimit } = require('../../userTextSplitter.cjs');
@@ -8,6 +8,21 @@ const { splitUserTextByContextLimit } = require('../../userTextSplitter.cjs');
 function formatSuggestions(suggestions) {
   if (!suggestions?.length) return '';
   return `\n\n本轮修正建议：\n${suggestions.map((item, index) => `${index + 1}. ${item}`).join('\n')}`;
+}
+
+function createTaskOutputInvalidError(message, cause) {
+  const detail = cause?.message ? `：${cause.message}` : '';
+  const error = new Error(`${message}${detail}`);
+  error.code = 'TASK_OUTPUT_INVALID';
+  error.retryable = true;
+  if (cause) error.cause = cause;
+  return error;
+}
+
+function assertAgentRecoveryAvailable(agentService, message, cause) {
+  if (!agentService?.runTask) {
+    throw createTaskOutputInvalidError(message, cause);
+  }
 }
 
 function formatOldOutlineForPrompt(oldOutline) {
@@ -1114,9 +1129,7 @@ function createAgentActivityLogHandler(log, progress) {
 }
 
 async function runOutlineAgentRecovery(agentService, context, log) {
-  if (!agentService?.runTask) {
-    throw new Error('Agent 服务尚未初始化，无法执行目录自主修复');
-  }
+  assertAgentRecoveryAvailable(agentService, '当前运行模式不允许 Agent 目录修复');
 
   const outputFile = context.outputFile || FINAL_AGENT_OUTPUT_FILE;
   const agentContext = { ...context, outputFile };
@@ -1183,9 +1196,7 @@ async function extractOriginalOutlineFirstPassWithAgent(agentService, payload, o
 }
 
 async function completeOriginalOutlineWithAgent(agentService, originalPlanMarkdown, outline, log) {
-  if (!agentService?.runTask) {
-    throw new Error('Agent 服务尚未初始化，无法执行旧目录补漏');
-  }
+  assertAgentRecoveryAvailable(agentService, '当前运行模式不允许 Agent 旧目录补漏');
 
   const outputFile = ORIGINAL_OUTLINE_AGENT_OUTPUT_FILE;
   log('正在交给 Agent 检查旧目录缺漏。', 15);
@@ -1559,6 +1570,7 @@ function normalizeOutlineItem(item, path = 'outline[]', allowedKnowledgeIds) {
 function normalizeOutlineResponse(payload, allowedKnowledgeIds) {
   const raw = requireObject(payload, 'OutlineResponse');
   const outline = requireArray(raw.outline, 'outline');
+  assertOutlineNodeLimit(outline);
   return { outline: outline.map((item, index) => normalizeOutlineItem(item, `outline[${index}]`, allowedKnowledgeIds)) };
 }
 
@@ -1581,6 +1593,7 @@ function normalizeOriginalOutlineResponse(payload) {
 function normalizeChildrenResponse(payload, allowedKnowledgeIds) {
   const raw = requireObject(payload, 'OutlineChildrenResponse');
   const children = requireArray(raw.children, 'children');
+  assertOutlineNodeLimit(children);
   return { children: children.map((item, index) => normalizeOutlineItem(item, `children[${index}]`, allowedKnowledgeIds)) };
 }
 
@@ -2094,6 +2107,7 @@ function formatMissingOutlineLabels(items, limit = 8) {
 
 function validateCompleteOutline(payload) {
   const outline = payload.outline || [];
+  assertOutlineNodeLimit(outline);
   if (!outline.length) throw new Error('目录不能为空');
   if (outlineDepth(outline) < 3) throw new Error('完整目录至少需要三级结构');
 }
@@ -2736,6 +2750,7 @@ async function runFinalOutlineGate({
   };
   if (shouldForceOutlineAgentRepair(testHarness)) {
     const finalReview = createSyntheticFinalReview('开发者模式强制触发 Agent 目录修复', new Error('本次目录生成启用了强制 Agent 修复调试开关'));
+    assertAgentRecoveryAvailable(agentService, '当前运行模式不允许 Agent 目录修复', finalReview);
     const repaired = await repairFinalOutlineWithAgent(agentService, {
       ...context,
       finalReview,
@@ -2751,6 +2766,7 @@ async function runFinalOutlineGate({
     finalReview = await reviewFinalOutline(aiService, context, log, signal);
   } catch (error) {
     assertRecoverableOutlineError(error, RECOVERABLE_FINAL_REVIEW_ERRORS);
+    assertAgentRecoveryAvailable(agentService, '最终目录审核结果无效，J-Core 已拒绝未校验结果', error);
     finalReview = createSyntheticFinalReview('最终目录审核结果格式无效，跳过审核 JSON 后由 Agent 自主审查并修复', error);
     const repaired = await repairFinalOutlineWithAgent(agentService, {
       ...context,
@@ -2765,6 +2781,7 @@ async function runFinalOutlineGate({
     try {
       validateFinalOutline(context);
     } catch (error) {
+      assertAgentRecoveryAvailable(agentService, '最终目录未通过程序校验，J-Core 已拒绝未校验结果', error);
       const validationReview = createSyntheticFinalReview('最终目录程序校验未通过', error);
       const repaired = await repairFinalOutlineWithAgent(agentService, {
         ...context,
@@ -2779,6 +2796,10 @@ async function runFinalOutlineGate({
     return { outline, groups: context.groups };
   }
 
+  assertAgentRecoveryAvailable(
+    agentService,
+    `最终目录审核未通过，J-Core 已拒绝未校验结果${formatSuggestions(finalReview.suggestions)}`,
+  );
   const repaired = await repairFinalOutlineWithAgent(agentService, {
     ...context,
     finalReview,
@@ -2979,6 +3000,7 @@ async function alignedWorkflow(aiService, agentService, payload, log, signal) {
     groups = await extractRequirementGroups(aiService, payload, undefined, log, signal);
   } catch (error) {
     assertRecoverableOutlineError(error, RECOVERABLE_REQUIREMENT_GROUP_ERRORS);
+    assertAgentRecoveryAvailable(agentService, '技术评分大类提取失败，J-Core 已拒绝无效模型输出', error);
     const finalReview = createSyntheticFinalReview('技术评分大类提取失败', error);
     const recovered = await runOutlineAgentRecovery(agentService, {
       recoveryKind: 'aligned-full-generation',
@@ -3005,6 +3027,7 @@ async function alignedWorkflow(aiService, agentService, payload, log, signal) {
     outline = await buildAligned(aiService, payload, groups, undefined, log, { start: OUTLINE_PROGRESS.mainChildrenStart, end: OUTLINE_PROGRESS.mainChildrenEnd }, signal);
   } catch (error) {
     assertRecoverableOutlineError(error, RECOVERABLE_ALIGNED_OUTLINE_ERRORS);
+    assertAgentRecoveryAvailable(agentService, '评分项对齐目录生成失败，J-Core 已拒绝无效模型输出', error);
     const finalReview = createSyntheticFinalReview('评分项对齐目录生成失败', error);
     const topLevelOutline = normalizeOutlineResponse({ outline: buildTopLevelOutlineFromGroups(groups) }, new Set());
     const recovered = await runOutlineAgentRecovery(agentService, {

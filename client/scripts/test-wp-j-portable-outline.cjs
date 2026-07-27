@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
+  assertOutlineNodeLimit,
   buildOutlineStructure,
   buildOutlineSemanticHash,
 } = require('../core/technical-plan/outline/outlineStructure.cjs');
@@ -120,6 +121,23 @@ function runHardConstraintCases() {
     () => buildOutlineStructure(nestedOverflow, { mode: 'standard' }),
     '目录节点数量不能超过 1000',
     '嵌套目录节点同样计入总数',
+  );
+
+  const deepRoot = buildNode(0);
+  let cursor = deepRoot;
+  for (let index = 1; index < 10_000; index += 1) {
+    const child = {
+      id: `deep-${index}`,
+      title: `深层目录 ${index}`,
+      description: `深层目录 ${index} 描述`,
+    };
+    cursor.children = [child];
+    cursor = child;
+  }
+  assertThrowsMessage(
+    () => assertOutlineNodeLimit([deepRoot]),
+    '目录节点数量不能超过 1000',
+    '一万层恶意目录应在迭代计数阶段 fail-closed',
   );
 }
 

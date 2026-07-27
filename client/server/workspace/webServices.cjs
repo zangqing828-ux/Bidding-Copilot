@@ -136,12 +136,15 @@ function captureTechnicalPlanGenerationConfig(aiService) {
     capabilities = {};
   }
   const contextLengthLimit = Number(config.context_length_limit);
+  const disabledAgentScenarios = Object.fromEntries(
+    Object.keys(booleanConfigProjection(config.agent_mode_scenarios)).map((key) => [key, false]),
+  );
   return Object.freeze({
     context_length_limit: Number.isFinite(contextLengthLimit) && contextLengthLimit > 0
       ? Math.floor(contextLengthLimit)
       : null,
     agent_mode_scenarios: Object.freeze({
-      ...booleanConfigProjection(config.agent_mode_scenarios),
+      ...disabledAgentScenarios,
       existing_plan_expansion_original_outline_extraction: false,
     }),
     capabilities: Object.freeze(booleanConfigProjection(capabilities)),

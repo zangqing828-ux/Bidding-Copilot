@@ -121,9 +121,17 @@ function validateDepth(nodes, depth = 1, path = 'outline') {
 }
 
 function countOutlineNodes(nodes) {
-  return (Array.isArray(nodes) ? nodes : []).reduce((total, node) => (
-    total + 1 + countOutlineNodes(node?.children)
-  ), 0);
+  const stack = [...(Array.isArray(nodes) ? nodes : [])];
+  let count = 0;
+  while (stack.length) {
+    const node = stack.pop();
+    count += 1;
+    if (count > MAX_OUTLINE_NODES) return count;
+    if (Array.isArray(node?.children) && node.children.length) {
+      stack.push(...node.children);
+    }
+  }
+  return count;
 }
 
 function assertOutlineNodeLimit(nodes) {

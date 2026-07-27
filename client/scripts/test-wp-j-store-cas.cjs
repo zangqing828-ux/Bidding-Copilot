@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const Database = require('better-sqlite3');
 const { createSqliteDatabase, schemaVersion } = require('../core/sqliteDatabase.cjs');
 const { createTechnicalPlanStore } = require('../core/stores/technicalPlanStore.cjs');
 const { createTechnicalPlanStore: createElectronTechnicalPlanStore } = require('../electron/services/technicalPlanStore.cjs');
@@ -566,6 +567,45 @@ async function runStageInvalidationMatrix() {
 
     migratedIllustrations.close();
     sqlite = null;
+
+    const v23BackupPath = fs.readdirSync(root)
+      .filter((fileName) => fileName.startsWith('workspace.sqlite.backup-'))
+      .map((fileName) => path.join(root, fileName))
+      .find((candidatePath) => {
+        const probe = new Database(candidatePath, { readonly: true });
+        try {
+          const version = Number(probe.pragma('user_version', { simple: true }) || 0);
+          const legacyPlanJson = probe.prepare(
+            'SELECT content_illustration_plan_json FROM technical_plan_meta WHERE id = 1',
+          ).get()?.content_illustration_plan_json;
+          const legacyPlan = legacyPlanJson ? JSON.parse(legacyPlanJson) : null;
+          return version === 23 && Boolean(legacyPlan?.items?.[0]?.generation);
+        } finally {
+          probe.close();
+        }
+      });
+    assert.ok(v23BackupPath, 'v23→v24 migration 前应生成包含旧 generation 的 v23 备份');
+    const restoredV23Path = path.join(root, 'restored-v23.sqlite');
+    fs.copyFileSync(v23BackupPath, restoredV23Path);
+    const restoredV23 = new Database(restoredV23Path, { readonly: true });
+    try {
+      assert.equal(
+        Number(restoredV23.pragma('user_version', { simple: true })),
+        23,
+        '恢复升级前备份后应重新得到 v23 schema',
+      );
+      const restoredPlan = JSON.parse(restoredV23.prepare(
+        'SELECT content_illustration_plan_json FROM technical_plan_meta WHERE id = 1',
+      ).get().content_illustration_plan_json);
+      assert.equal(
+        restoredPlan.items[0].generation.status,
+        'success',
+        '恢复 v23 备份后应保留迁移前的 generation 数据',
+      );
+    } finally {
+      restoredV23.close();
+    }
+
     const migrationIdempotencyProbe = createSqliteDatabase({ databasePath: dbPath });
     sqlite = migrationIdempotencyProbe;
     assert.equal(

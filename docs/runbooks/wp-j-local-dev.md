@@ -110,6 +110,36 @@ docker rm bidding-copilot-wp-j-local
 
 不要删除 Docker volume 或账号工作区数据。
 
+## schema v23 → v24 与回滚
+
+v24 将 `contentIllustrationPlan.items[*].generation` 拆到独立的
+`technical_plan_illustration_render_receipts` 表。升级事务会先对账号 Workspace 的 SQLite
+执行 checkpoint，并在原数据库旁生成：
+
+- `workspace.sqlite.backup-<时间戳>`；
+- 如存在 WAL/SHM，同时生成对应的 `.backup-<时间戳>` 文件。
+
+升级后必须验证：
+
+```bash
+cd client
+node scripts/test-wp-j-store-cas.cjs
+```
+
+v23 及更早版本无法直接打开 `user_version=24` 的 Workspace。允许读取 v24 的最低代码边界为
+`schemaVersion >= 24`，发布时应记录对应镜像 digest；不能只把容器镜像切回 v23。
+
+需要降级到 v23 时：
+
+1. 停止 Web 服务，阻止新的账号写入；
+2. 备份当前完整账号 Workspace，保留审计和再次升级能力；
+3. 将升级前的 `workspace.sqlite.backup-<时间戳>` 恢复为 `workspace.sqlite`；
+4. 同一备份批次如包含 WAL/SHM，必须一起恢复；也可恢复升级前的完整 Workspace 快照；
+5. 启动 v23 镜像，验证 SQLite `user_version=23`、招标文件、选段和目录状态；
+6. 任一步失败时停止降级，重新恢复 v24 Workspace 与支持 v24 的镜像。
+
+严禁通过手工修改 `PRAGMA user_version` 或删除 render receipt 表实现降级。
+
 ## 常见故障
 
 ### better-sqlite3 ABI 不匹配

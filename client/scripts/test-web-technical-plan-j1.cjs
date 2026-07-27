@@ -33,7 +33,13 @@ function waitFor(predicate, message, timeoutMs = 15_000) {
   });
 }
 
-function createFakeAi({ sectionTitle = '一标段' } = {}) {
+function createFakeAi({
+  sectionTitle = '一标段',
+  finalReviewMode = 'pass',
+  failAlignedChildren = false,
+  failRequirementGroups = false,
+  oversizedAlignedChildren = false,
+} = {}) {
   const sectionGate = deferred();
   const outlineGate = deferred();
   let holdSection = true;
@@ -42,6 +48,7 @@ function createFakeAi({ sectionTitle = '一标段' } = {}) {
   let contextLengthLimit = 400000;
   let capabilities = {};
   const scopedSnapshots = [];
+  const collectLabels = [];
 
   const service = {
     async chat({ messages = [] }) {
@@ -49,8 +56,15 @@ function createFakeAi({ sectionTitle = '一标段' } = {}) {
     },
     async collectJsonResponse(options = {}) {
       const label = String(options.progressLabel || options.logTitle || options.failureMessage || '');
+      collectLabels.push(label);
       if (label.includes('多标段识别') && holdSection) await sectionGate.promise;
       if (!label.includes('多标段识别') && holdOutline) await outlineGate.promise;
+      if (label.includes('技术评分大类') && failRequirementGroups) {
+        throw new Error('模型返回的技术评分大类格式无效');
+      }
+      if (label.includes('最终目录审核') && finalReviewMode === 'invalid') {
+        throw new Error('模型返回的最终目录审核结果格式无效');
+      }
 
       let result;
       if (label.includes('多标段识别')) {
@@ -63,9 +77,17 @@ function createFakeAi({ sectionTitle = '一标段' } = {}) {
       } else if (label.includes('技术评分大类')) {
         result = { groups: [{ requirement_id: 'REQ-J1-01', title: '技术能力', description: '架构、实施和验收能力。', detail_points: ['架构能力'] }] };
       } else if (label.includes('最终目录审核')) {
-        result = { passed: true, suggestions: [] };
+        result = { passed: finalReviewMode !== 'fail', suggestions: finalReviewMode === 'fail' ? ['目录需要修复'] : [] };
       } else {
-        result = { children: [{ id: '1.1', title: '总体架构与技术路线', description: '说明实施技术路线。', children: [{ id: '1.1.1', title: '平台架构说明', description: '说明平台模块与接口。' }] }] };
+        result = oversizedAlignedChildren
+          ? { children: Array.from({ length: 1001 }, (_, index) => ({
+            id: `1.${index + 1}`,
+            title: `超限目录 ${index + 1}`,
+            description: `超限目录 ${index + 1} 描述`,
+          })) }
+          : failAlignedChildren
+          ? { children: [] }
+          : { children: [{ id: '1.1', title: '总体架构与技术路线', description: '说明实施技术路线。', children: [{ id: '1.1.1', title: '平台架构说明', description: '说明平台模块与接口。' }] }] };
       }
       if (typeof options.normalizer === 'function') result = options.normalizer(result);
       if (typeof options.validator === 'function') options.validator(result);
@@ -89,6 +111,7 @@ function createFakeAi({ sectionTitle = '一标段' } = {}) {
     releaseSection() { holdSection = false; sectionGate.resolve(); },
     releaseOutline() { holdOutline = false; outlineGate.resolve(); },
     scopedSnapshots,
+    collectLabels,
   };
   return service;
 }
@@ -219,6 +242,37 @@ async function main() {
     await waitFor(() => service.getActiveTasks().length === 0, '招标分析完成后仍保留活动任务');
 
     const outlineInput = { reference_knowledge_document_ids: [], outline_expansion_mode: 'ai-complement', word_control_options: { enabled: false, minimumWords: 0, maximumWords: 0, sectionWords: 0, strictSectionWords: false } };
+    for (const scenario of [
+      { name: '最终审核拒绝', options: { finalReviewMode: 'fail' }, expectedCode: 'TASK_OUTPUT_INVALID' },
+      { name: '最终审核 JSON 无效', options: { finalReviewMode: 'invalid' }, expectedCode: 'TASK_OUTPUT_INVALID' },
+      { name: '评分项对齐目录无效', options: { failAlignedChildren: true }, expectedCode: 'TASK_OUTPUT_INVALID' },
+      { name: '技术评分大类无效', options: { failRequirementGroups: true }, expectedCode: 'TASK_OUTPUT_INVALID' },
+      { name: '模型返回 1001 个目录节点', options: { oversizedAlignedChildren: true }, expectedCode: 'TASK_INVALID_INPUT' },
+    ]) {
+      const coreOnlyAi = createFakeAi(scenario.options);
+      const coreOnlyService = createWebBidAnalysisTaskService({
+        aiService: coreOnlyAi,
+        agentService: createFakeAgent(),
+        technicalPlanStore: store,
+        mutationExecutor,
+        workspaceRuntimeGeneration: WORKSPACE_RUNTIME_GENERATION,
+      });
+      const task = await coreOnlyService.startOutlineGeneration(outlineInput);
+      coreOnlyAi.releaseOutline();
+      await waitFor(() => ['success', 'error'].includes(store.loadTechnicalPlan().outlineGenerationTask?.status), `${scenario.name} 未结束`);
+      assert.equal(store.loadTechnicalPlan().outlineGenerationTask?.error_code, scenario.expectedCode, `${scenario.name} 应返回稳定 ${scenario.expectedCode}`);
+      assert.equal(store.getTechnicalPlanRunRecord(task.execution_id)?.status, 'error', `${scenario.name} 应收口 run record`);
+      if (scenario.options.oversizedAlignedChildren) {
+        assert.equal(
+          coreOnlyAi.collectLabels.includes('最终目录审核'),
+          false,
+          '1001 节点应在 runner 归一化阶段终止，不能继续请求最终审核',
+        );
+      }
+      await waitFor(() => coreOnlyService.getActiveTasks().length === 0, `${scenario.name} 结束后仍保留活动任务`);
+    }
+    assert.equal(fakeAgentBindCalls, 0, 'J-Core 异常路径不得调用自由 Agent fallback');
+
     const configRaceAi = createFakeAi();
     const configRaceService = createWebBidAnalysisTaskService({
       aiService: configRaceAi,
