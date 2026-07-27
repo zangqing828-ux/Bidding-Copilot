@@ -254,7 +254,9 @@ function normalizeGenerationOptions(input) {
   const enableConsistencyAudit = validateBoolean(input.enableConsistencyAudit, 'generation_options.enableConsistencyAudit');
   const consistencyRepairMode = validateEnum(input.consistencyRepairMode, 'generation_options.consistencyRepairMode', CONSISTENCY_REPAIR_MODES);
   const enableOriginalPlanCoverageAudit = validateBoolean(input.enableOriginalPlanCoverageAudit, 'generation_options.enableOriginalPlanCoverageAudit');
-  const originalPlanCoverageRepairMode = validateEnum(input.originalPlanCoverageRepairMode, 'generation_options.originalPlanCoverageRepairMode', ORIGINAL_PLAN_COVERAGE_MODES);
+  const originalPlanCoverageRepairMode = input.originalPlanCoverageRepairMode === undefined
+    ? undefined
+    : validateEnum(input.originalPlanCoverageRepairMode, 'generation_options.originalPlanCoverageRepairMode', ORIGINAL_PLAN_COVERAGE_MODES);
 
   if (htmlImageTypes.length > MAX_IMAGE_TYPE_LENGTH) {
     throw createInputError(`generation_options.htmlImageTypes 长度不能超过 ${MAX_IMAGE_TYPE_LENGTH}`, TASK_ERROR_CODES.INVALID_INPUT);
@@ -348,7 +350,7 @@ function detectRendererContentAction(input) {
   if (hasOwnField(input, 'retryContentCorrection')) requested.push('retry');
   if (hasOwnField(input, 'rerunIllustrations')) requested.push('rerun');
   if (hasOwnField(input, 'targetItemId') || hasOwnField(input, 'requirement')) requested.push('section');
-  if (hasOwnField(input, 'regenerate')) requested.push('regenerate');
+  if (hasOwnField(input, 'regenerate') && input.regenerate === true) requested.push('regenerate');
   if (hasOwnField(input, 'generationOptions') && !requested.length) requested.push('start');
 
   if (requested.length !== 1) {
@@ -398,7 +400,7 @@ function canonicalizeRendererStartContentGenerationInput(input) {
   const generationOptions = normalizeGenerationOptions(input.generationOptions);
 
   if (action === 'start') {
-    validateUnknownFields(input, new Set(['generationOptions']), 'startContentGeneration');
+    validateUnknownFields(input, new Set(['regenerate', 'generationOptions']), 'startContentGeneration');
     return Object.freeze({
       action: 'start',
       generation_options: generationOptions,

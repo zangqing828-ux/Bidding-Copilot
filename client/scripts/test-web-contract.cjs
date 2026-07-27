@@ -1535,6 +1535,11 @@ async function runBridgeBehavior(inject, context) {
     assert(wsPendingRes.response.statusCode === 501, 'pending 能力返回 501，且不触发 workspace');
     assert(workspaceResolved === 0, 'pending 能力未初始化 workspace');
 
+    const wsImplementedInvalidRes = await statusPayload({ namespace: 'tasks', method: 'startGlobalFactsGeneration', args: [] });
+    assert(wsImplementedInvalidRes.response.statusCode === 400, 'implemented 能力缺少 payload 返回 400，且不触发 workspace');
+    assert(wsImplementedInvalidRes.payload.code === 'INVALID_BRIDGE_ARGUMENTS', 'implemented 能力缺少 payload 返回 INVALID_BRIDGE_ARGUMENTS');
+    assert(workspaceResolved === 0, 'implemented 能力输入校验失败时未初始化 workspace');
+
     for (const method of ['updateState']) {
       const wsDuplicateCheckPendingRes = await statusPayload({ namespace: 'duplicateCheck', method, args: [{ file_path: '/outside/workspace.txt', content_path: '/outside/content.txt' }] });
       assert(wsDuplicateCheckPendingRes.response.statusCode === 501, `duplicateCheck.${method} 返回 501 且不触发 workspace`);

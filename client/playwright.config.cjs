@@ -25,6 +25,7 @@ module.exports = defineConfig({
       SESSION_SECRET: 'playwright-session-secret',
       CONFIG_ENCRYPTION_KEY: 'playwright-config-key',
       WEB_BID_ANALYSIS_TEST_MODE: '1',
+      WEB_BID_ANALYSIS_TEST_CONTENT_DELAY_MS: '3000',
     },
   },
 });

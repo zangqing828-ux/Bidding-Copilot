@@ -124,12 +124,59 @@ function createTaskEventPortAndTrack(taskService, closeHandlers) {
 }
 
 function createBidAnalysisTestAiService() {
+  const contentDelayMs = Math.max(0, Number(process.env.WEB_BID_ANALYSIS_TEST_CONTENT_DELAY_MS) || 0);
+  const waitForContentFixture = () => contentDelayMs > 0
+    ? new Promise((resolve) => setTimeout(resolve, contentDelayMs))
+    : Promise.resolve();
   const service = {
-    chat: async ({ messages = [] } = {}) => `浏览器测试解析结果：${String(messages.at(-1)?.content || '').slice(0, 24)}`,
+    chat: async ({ messages = [], logTitle = '' } = {}) => {
+      if (String(logTitle).includes('正文') || String(logTitle).includes('原方案')) {
+        await waitForContentFixture();
+      }
+      return `浏览器测试解析结果：${String(messages.at(-1)?.content || '').slice(0, 24)}`;
+    },
     collectJsonResponse: async (options = {}) => {
       const label = String(options.progressLabel || options.logTitle || options.failureMessage || '');
       let value;
-      if (label.includes('多标段识别')) {
+      if (label.includes('正文编排')) {
+        await waitForContentFixture();
+        value = {
+          writing_focus: '围绕当前章节输出可落地的实施方案、职责边界和验收口径。',
+          knowledge: { item_ids: [] },
+          facts: { titles: ['项目事实'] },
+          table: { needed: false, purpose: '' },
+        };
+      } else if (label.includes('全局事实补充')) {
+        value = { patches: [] };
+      } else if (label.includes('全文一致性审计')) {
+        value = { conflicts: [] };
+      } else if (label.includes('全局事实')) {
+        value = {
+          groups: [{
+            id: 'project-facts',
+            title: '项目事实',
+            content: '- 项目经理：张伟，负责总体协调和质量把关。\n- 实施周期：六个月，按阶段验收。',
+          }],
+        };
+      } else if (label.includes('旧方案目录提取')) {
+        value = {
+          outline: [
+            { id: '1', title: '既有方案实施框架', description: '原方案已有的实施组织与交付框架。' },
+            { id: '2', title: '系统边界说明', description: '原方案已有的系统边界和接口说明。' },
+          ],
+        };
+      } else if (label.includes('旧方案目录缺漏') || label.includes('旧方案目录补漏') || label.includes('原方案旧目录补漏')) {
+        value = { additions: [] };
+      } else if (label.includes('原方案一级目录补充计划')) {
+        value = {
+          groups: [{
+            requirement_id: 'REQ-BROWSER-EXTRA-01',
+            title: '新增交付与验收保障',
+            description: '基于招标要求允许补充的交付、培训与验收保障。',
+            detail_points: ['交付资料', '验收组织'],
+          }],
+        };
+      } else if (label.includes('多标段识别')) {
         value = {
           sections: [
             {
@@ -196,7 +243,12 @@ function createBidAnalysisTestAiService() {
       capturedAt: new Date().toISOString(),
     }),
     close() {},
-    getConfig: () => ({ context_length_limit: 400000 }),
+    getConfig: () => ({
+      context_length_limit: 400000,
+      agent_mode_scenarios: {
+        existing_plan_expansion_original_outline_extraction: false,
+      },
+    }),
     getCapabilities: () => ({}),
     getImageQueueStatus: () => ({ active: 0, queued: 0 }),
     getTextQueueStatus: () => ({ active: 0, queued: 0 }),
