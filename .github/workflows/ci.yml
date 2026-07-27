@@ -363,7 +363,7 @@ jobs:
           path: |
             client/playwright-report
             client/test-results
-          if-no-files-found: warn
+          if-no-files-found: error
 
   agent_foundation:
     name: Agent Foundation

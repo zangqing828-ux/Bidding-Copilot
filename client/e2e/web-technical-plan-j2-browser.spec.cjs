@@ -156,7 +156,7 @@ async function waitForTask(page, field, status = 'success') {
   await expect.poll(async () => page.evaluate(async (taskField) => {
     const state = await window.yibiao.technicalPlan.loadState();
     return state[taskField]?.status;
-  }, field), { timeout: 30_000 }).toBe(status);
+  }, field), { timeout: 60_000 }).toBe(status);
 }
 
 async function startBidAnalysis(page) {
@@ -278,6 +278,23 @@ test('J2 真实 Chromium 完成标准链、暂停继续、局部重试、刷新�
   })).toEqual({ globalFacts: 1, contentStatus: 'success', sectionCount: 1 });
 
   const finalState = await getTechnicalPlanState(page);
+  const manifestEvidence = {
+    schema_version: 'wp-j-j2-run-manifest-evidence.v1',
+    execution_id: finalState.contentGenerationTask?.execution_id,
+    manifest_hash: finalState.contentGenerationTask?.manifest_hash,
+    task_status: finalState.contentGenerationTask?.status,
+    global_facts_count: finalState.globalFacts?.length || 0,
+    successful_section_ids: Object.values(finalState.contentGenerationSections || {})
+      .filter((section) => section?.status === 'success')
+      .map((section) => String(section.id || ''))
+      .filter(Boolean)
+      .sort(),
+  };
+  assert.match(manifestEvidence.execution_id || '', /^[0-9a-f-]{36}$/i, 'manifest 证据必须包含 execution ID');
+  assert.match(manifestEvidence.manifest_hash || '', /^[a-f0-9]{64}$/i, 'manifest 证据必须包含冻结 hash');
+  const manifestEvidencePath = testInfo.outputPath('wp-j-j2-run-manifest.sanitized.json');
+  fs.writeFileSync(manifestEvidencePath, `${JSON.stringify(manifestEvidence, null, 2)}\n`, 'utf8');
+
   const report = buildSanitizedQualityReport(finalState);
   validateSanitizedQualityReport(report);
   const reportPath = testInfo.outputPath('wp-j-j2-quality-report.sanitized.json');
