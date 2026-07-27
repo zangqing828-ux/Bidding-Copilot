@@ -74,6 +74,10 @@ const initialState = {
   globalFactsTask: undefined,
   globalFacts: [],
   contentGenerationTask: undefined,
+  agentQualityTask: undefined,
+  agentQualityState: 'unavailable',
+  illustrationPlanTask: undefined,
+  illustrationPlanState: 'unavailable',
   contentGenerationOptions: undefined,
   contentGenerationSections: {},
   contentGenerationPlans: {},
@@ -89,6 +93,8 @@ const taskFieldTypes = {
   outlineGenerationTask: 'outline-generation',
   globalFactsTask: 'global-facts-generation',
   contentGenerationTask: 'content-generation',
+  agentQualityTask: 'agent-quality',
+  illustrationPlanTask: 'illustration-plan',
 };
 
 const STAGE_REVISION_KEYS = Object.freeze([
@@ -209,6 +215,15 @@ function safeJsonParse(value, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function projectAgentQualityState(task) {
+  if (!task) return 'unavailable';
+  if (['accepted', 'queued', 'running', 'pausing', 'validating', 'committing'].includes(task.status)) return 'running';
+  if (task.status === 'success') return 'success';
+  if (task.status === 'error') return 'error';
+  if (task.status === 'paused') return 'warning';
+  return 'pending';
 }
 
 function jsonOrNull(value) {
@@ -2441,6 +2456,8 @@ function createTechnicalPlanStore({
 
     const contentIllustrationPlan = safeJsonParse(meta.content_illustration_plan_json, undefined);
     const contentIllustrationRenderReceipts = loadIllustrationRenderReceipts();
+    const agentQualityState = projectAgentQualityState(tasks.agentQualityTask);
+    const illustrationPlanState = projectAgentQualityState(tasks.illustrationPlanTask);
 
     return {
       ...initialState,
@@ -2470,6 +2487,8 @@ function createTechnicalPlanStore({
         : undefined,
       referenceKnowledgeDocumentIds: loadReferenceDocumentIds(),
       ...tasks,
+      agentQualityState,
+      illustrationPlanState,
       globalFacts: loadGlobalFacts(),
       contentGenerationOptions: safeJsonParse(meta.content_generation_options_json, undefined),
       contentGenerationRuntime: safeJsonParse(meta.content_generation_runtime_json, undefined),

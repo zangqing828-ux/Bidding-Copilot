@@ -18,8 +18,9 @@ export interface StartOutlineGenerationInput {
 export type BidAnalysisTaskStatus = 'idle' | 'running' | 'success' | 'error';
 export type BidSectionMode = 'single' | 'multiple';
 export type BidSectionExtractionStatus = 'idle' | 'running' | 'success' | 'error';
-export type BackgroundTaskType = 'bid-section-extraction' | 'bid-analysis' | 'outline-generation' | 'global-facts-generation' | 'content-generation';
+export type BackgroundTaskType = 'bid-section-extraction' | 'bid-analysis' | 'outline-generation' | 'global-facts-generation' | 'content-generation' | 'agent-quality' | 'illustration-plan';
 export type BackgroundTaskStatus = 'running' | 'pausing' | 'paused' | 'success' | 'error';
+export type AgentQualityState = 'unavailable' | 'pending' | 'running' | 'success' | 'warning' | 'error';
 export type ContentGenerationSectionStatus = 'idle' | 'running' | 'success' | 'error';
 export type ContentTableRequirement = 'none' | 'light' | 'moderate' | 'heavy';
 export type ConsistencyRepairMode = 'agent' | 'normal';
@@ -320,6 +321,10 @@ export interface TechnicalPlanState {
   globalFactsTask?: BackgroundTaskState;
   globalFacts: GlobalFactGroupState[];
   contentGenerationTask?: BackgroundTaskState;
+  agentQualityTask?: BackgroundTaskState;
+  agentQualityState: AgentQualityState;
+  illustrationPlanTask?: BackgroundTaskState;
+  illustrationPlanState: AgentQualityState;
   contentGenerationOptions?: ContentGenerationOptions;
   contentGenerationSections: ContentGenerationSections;
   contentGenerationPlans: ContentGenerationPlans;
