@@ -4,6 +4,7 @@
 
 - 初次进入仓库，依次阅读 `project.md`、本文件、`client/开发说明.md`。
 - 涉及 Web 架构收敛时，必须阅读 `.planning/web-architecture-convergence/architecture-convergence.spec.md`。
+- 涉及技术方案、多标段、目录、全局事实、正文生成、Agent Sidecar 或配图计划时，必须阅读 `.planning/wp-j-technical-plan-generation/wp-j.spec.md` 和对应测试计划。
 - 涉及品牌、命名、外链、发布元数据或兼容标识时，必须阅读 `.planning/yibiao-brand-cleanup/brand-cleanup.spec.md`。
 - 冲突时采用以下权威顺序：老板最新明确决策 > `project.md` 的锁定决策 > 两份当前 Spec > 本文件 > 旧 Sprint 文档、历史计划和代码注释。
 - `.planning/web-mainquest-v1/` 和 `.planning/yibiao-brand-cleanup/plan.md` 是历史输入，不再作为当前实施范围或“已完成”证明。

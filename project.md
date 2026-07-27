@@ -7,13 +7,15 @@
 当前实施文档：
 
 - Web 架构收敛：`.planning/web-architecture-convergence/architecture-convergence.spec.md`
+- Business Task & Agent Foundation：`.planning/wp-i-business-task-agent-execution/wp-i.spec.md`、`.planning/wp-i2-agent-execution-foundation/wp-i2.spec.md`
+- 技术方案文本草稿闭环：`.planning/wp-j-technical-plan-generation/wp-j.spec.md`
 - 品牌清理：`.planning/yibiao-brand-cleanup/brand-cleanup.spec.md`
 
 ## 项目目标
 
 基于 Bidding Copilot 现有投标业务能力，交付一个可在浏览器完成核心标书工作流、可使用 Docker 部署、通过 MainQuest OAuth 登录并按账号隔离数据的 `BidMaster` Web 产品。
 
-目标不是给 Electron UI 外挂一个 HTTP 壳，而是建立能够在 Linux 容器中独立完成文件导入、AI/Agent 任务、进度恢复、图片渲染、Word 导出和下载的 Web 运行时。
+目标是建立能够在 Linux 容器中独立完成文件导入、AI/Agent 任务、进度恢复、图片渲染、Word 导出和下载的 Web 运行时；Electron UI 外挂 HTTP 壳不属于正式交付形态。
 
 ## 2026-07-24 锁定决策
 
@@ -69,6 +71,16 @@
 - Linux OpenCode Runner 已具备只读输入、安全输出读取、`prlimit`、有界日志、进程组终止和清理。
 - 独立 `agent-e2e` Docker target 使用真实 OpenCode 完成 Responses/Chat 适配、两轮 tool-call、结果文件安全读取与目录清理；最终 runtime target 不包含测试 harness。
 - 浏览器 Agent API 和生产 Task Spec 注册表继续保持关闭；egress deny、`no_new_privs`、seccomp、cgroup 内存硬限制仍属于后续 Release Gate。
+
+## WP-J 规划决策（2026-07-27）
+
+- WP-J 交付“可审阅、可编辑、可恢复的技术方案文本草稿闭环”；实际图形渲染、Word 图文导出和下载验收由 WP-L 完成。
+- `J-Core` 通过受限 AI service 完成多标段、目录、全局事实和正文主链，不依赖生产 Agent。
+- `J-Agent Quality` 负责复杂修复、跨章节审校、原方案覆盖修复与配图计划。
+- 生产 Agent 采用独立 Runner sidecar；单容器模式只用于 development/test。
+- Sidecar 通过双网络、独立内部监听、一次性 token、非 root、seccomp、`no-new-privileges`、cap drop 与资源配额建立 OS 隔离。门禁失败时 Agent Quality fail closed，J-Core 保持可用。
+- WP-J 只支持用户手动选择并冻结知识文档；自动匹配、推荐和召回由 WP-K 承接。
+- 规划按 J-1 目录纵向切片、J-2 正文纵向切片、J-3 Agent Quality 与发布验收顺序实施。
 
 ## 目标架构
 

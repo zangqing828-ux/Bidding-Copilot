@@ -18,7 +18,13 @@
 
 - [项目目标与锁定决策](./project.md)
 - [Web 架构收敛 Spec](./.planning/web-architecture-convergence/architecture-convergence.spec.md)
+- [WP-J 技术方案文本草稿闭环 Spec](./.planning/wp-j-technical-plan-generation/wp-j.spec.md)
+- [WP-J 测试计划](./.planning/wp-j-technical-plan-generation/wp-j.test-plan.md)
 - [品牌清理 Spec](./.planning/yibiao-brand-cleanup/brand-cleanup.spec.md)
+
+## WP-J Web 开发入口
+
+WP-J 当前处于规划阶段，实施按 J-1 目录、J-2 正文、J-3 Agent Quality 三个纵向 PR 推进。现阶段 Web 开发从 `client/` 执行 `npm ci && npm run dev:web`；各 PR 合入时必须同步提供 `wp-j:gate:j1/j2/j3` 聚合门禁和对应 runbook，未落地命令不能作为当前可用能力宣传。
 
 > 下方内容保留的是上游桌面项目历史说明，尚未完成品牌 Spec 的系统性重写；与上述决策冲突时不具备权威性。
 
