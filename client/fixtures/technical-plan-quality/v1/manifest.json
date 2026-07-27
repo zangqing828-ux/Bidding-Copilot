@@ -1,0 +1,33 @@
+{
+  "schema_version": "technical-plan-quality.v1",
+  "fixture_id": "wp-j-technical-plan-v1-sanitized",
+  "description": "脱敏技术方案质量基线，仅保留结构化要求与证据哈希。",
+  "source": {
+    "tender_document_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "evidence_hash_algorithm": "sha256"
+  },
+  "supported_workflow_modes": ["standard", "original-only", "ai-complement"],
+  "requirements": [
+    {
+      "requirement_id": "REQ-TP-001",
+      "requirement_text_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "evidence_excerpt_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "expected_section_types": ["implementation", "acceptance"],
+      "hard_requirement": true
+    },
+    {
+      "requirement_id": "REQ-TP-002",
+      "requirement_text_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "evidence_excerpt_hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "expected_section_types": ["service"],
+      "hard_requirement": true
+    }
+  ],
+  "allowed_model_snapshots": ["controlled-fixture/technical-plan-v1"],
+  "rubric": {
+    "require_hard_requirement_coverage": true,
+    "reject_fact_conflicts": true,
+    "reject_unmapped_original_material_without_reason": true,
+    "max_warning_count": 5
+  }
+}

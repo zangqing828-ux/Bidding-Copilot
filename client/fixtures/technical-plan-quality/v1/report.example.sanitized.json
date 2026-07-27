@@ -1,0 +1,65 @@
+{
+  "schema_version": "quality-report.v1",
+  "fixture_id": "wp-j-technical-plan-v1-sanitized",
+  "generated_at": "2026-07-27T07:00:00.000Z",
+  "model_snapshot": {
+    "provider": "controlled-fixture",
+    "model": "technical-plan-v1",
+    "snapshot_id": "controlled-fixture/technical-plan-v1",
+    "config_hash": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  "prompt_template_version": "technical-plan-content-v4",
+  "source_manifest_hash": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+  "requirements": [
+    {
+      "requirement_id": "REQ-TP-001",
+      "expected_section_types": ["implementation", "acceptance"],
+      "mapped_outline_ids": ["1.1"],
+      "mapped_section_ids": ["1.1.1"],
+      "fact_references": ["项目事实"],
+      "conflict_status": "none",
+      "coverage_status": "covered",
+      "evidence_hashes": {
+        "requirement_text": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "evidence_excerpt": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "requirement_id": "REQ-TP-002",
+      "expected_section_types": ["service"],
+      "mapped_outline_ids": ["1.2"],
+      "mapped_section_ids": ["1.2.1"],
+      "fact_references": ["项目事实"],
+      "conflict_status": "none",
+      "coverage_status": "covered",
+      "evidence_hashes": {
+        "requirement_text": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "evidence_excerpt": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "warnings": [],
+      "errors": []
+    }
+  ],
+  "original_material": {
+    "mode": "standard",
+    "source_document_hash": null,
+    "retained_segments": [],
+    "unmapped_reasons": []
+  },
+  "metrics": {
+    "total_word_count": 126,
+    "section_count": 2,
+    "structure": {
+      "all_required_sections_present": true,
+      "invalid_heading_count": 0
+    },
+    "fact_conflict_count": 0,
+    "warning_count": 0,
+    "error_count": 0
+  },
+  "warnings": [],
+  "errors": [],
+  "verdict": "pass"
+}

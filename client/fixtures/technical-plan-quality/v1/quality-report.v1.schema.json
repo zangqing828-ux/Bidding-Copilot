@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bidding-copilot.local/schemas/quality-report.v1.schema.json",
+  "title": "Technical Plan Quality Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fixture_id",
+    "generated_at",
+    "model_snapshot",
+    "prompt_template_version",
+    "source_manifest_hash",
+    "requirements",
+    "original_material",
+    "metrics",
+    "warnings",
+    "errors",
+    "verdict"
+  ],
+  "properties": {
+    "schema_version": { "const": "quality-report.v1" },
+    "fixture_id": { "type": "string", "minLength": 1 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "model_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "model", "snapshot_id", "config_hash"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "snapshot_id": { "type": "string", "minLength": 1 },
+        "config_hash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "prompt_template_version": { "type": "string", "minLength": 1 },
+    "source_manifest_hash": { "$ref": "#/$defs/sha256" },
+    "requirements": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/requirementResult" }
+    },
+    "original_material": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "source_document_hash", "retained_segments", "unmapped_reasons"],
+      "properties": {
+        "mode": { "enum": ["standard", "original-only", "ai-complement"] },
+        "source_document_hash": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+        "retained_segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source_id", "source_hash", "mapped_section_ids"],
+            "properties": {
+              "source_id": { "type": "string", "minLength": 1 },
+              "source_hash": { "$ref": "#/$defs/sha256" },
+              "mapped_section_ids": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+            }
+          }
+        },
+        "unmapped_reasons": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_word_count", "section_count", "structure", "fact_conflict_count", "warning_count", "error_count"],
+      "properties": {
+        "total_word_count": { "type": "integer", "minimum": 0 },
+        "section_count": { "type": "integer", "minimum": 0 },
+        "structure": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["all_required_sections_present", "invalid_heading_count"],
+          "properties": {
+            "all_required_sections_present": { "type": "boolean" },
+            "invalid_heading_count": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "fact_conflict_count": { "type": "integer", "minimum": 0 },
+        "warning_count": { "type": "integer", "minimum": 0 },
+        "error_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "warnings": { "type": "array", "items": { "$ref": "#/$defs/diagnostic" } },
+    "errors": { "type": "array", "items": { "$ref": "#/$defs/diagnostic" } },
+    "verdict": { "enum": ["pass", "fail"] }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "requirement_id": { "type": "string", "minLength": 1 },
+        "section_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "requirementResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirement_id",
+        "expected_section_types",
+        "mapped_outline_ids",
+        "mapped_section_ids",
+        "fact_references",
+        "conflict_status",
+        "coverage_status",
+        "evidence_hashes",
+        "warnings",
+        "errors"
+      ],
+      "properties": {
+        "requirement_id": { "type": "string", "minLength": 1 },
+        "expected_section_types": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "mapped_outline_ids": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "mapped_section_ids": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "fact_references": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "conflict_status": { "enum": ["none", "warning", "error"] },
+        "coverage_status": { "enum": ["covered", "partial", "uncovered"] },
+        "evidence_hashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["requirement_text", "evidence_excerpt"],
+          "properties": {
+            "requirement_text": { "$ref": "#/$defs/sha256" },
+            "evidence_excerpt": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "warnings": { "type": "array", "items": { "$ref": "#/$defs/diagnostic" } },
+        "errors": { "type": "array", "items": { "$ref": "#/$defs/diagnostic" } }
+      }
+    }
+  }
+}
