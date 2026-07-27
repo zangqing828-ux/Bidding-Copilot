@@ -63,6 +63,13 @@
 - 首个正式 Agent 业务任务开放前，必须单独通过 OS 级隔离 Release Gate：非 root、只读输入、独立可写目录、egress deny、`no_new_privs`、seccomp 与资源配额。当前应用级权限测试不代表该 Gate 已完成。
 - 品牌清理仍冻结，等待 I-1、I-2 两轮架构实施和相应验收完成。
 
+## WP-I-2 Agent Execution Foundation 状态（2026-07-27）
+
+- 已建立受限 Task Spec、进程级 Coordinator、Workspace 生命周期、SQLite 幂等账本、CAS 与原子提交边界。
+- Linux OpenCode Runner 已具备只读输入、安全输出读取、`prlimit`、有界日志、进程组终止和清理。
+- 独立 `agent-e2e` Docker target 使用真实 OpenCode 完成 Responses/Chat 适配、两轮 tool-call、结果文件安全读取与目录清理；最终 runtime target 不包含测试 harness。
+- 浏览器 Agent API 和生产 Task Spec 注册表继续保持关闭；egress deny、`no_new_privs`、seccomp、cgroup 内存硬限制仍属于后续 Release Gate。
+
 ## 目标架构
 
 ```text

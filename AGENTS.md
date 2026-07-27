@@ -73,6 +73,7 @@
 - 改依赖后运行 `npm audit --omit=dev --audit-level=critical`；不能把已知关键漏洞当作普通警告。
 - 完成标准必须包含真实成功链路、边界/失败链路、账号隔离和持久化验证。测试如果只证明 `500/501` 可解释，只能说明占位受控。
 - 浏览器 Agent 入口在 WP-I 继续保持 pending；首个正式 Agent 业务任务开放前，另行完成非 root、只读输入、egress deny、`no_new_privs`、seccomp 与资源配额的 OS 级隔离 Release Gate。应用级 permission 测试不构成该 Gate 证据。
+- Agent Foundation 变更必须通过 `test:web-agent-protocol/runtime/coordinator/executor` 和独立 Docker `agent-e2e`；生产 runtime 镜像不得包含 fixture、受控 Provider 或测试 harness。
 
 ## SDD 与变更纪律
 

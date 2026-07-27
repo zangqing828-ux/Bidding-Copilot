@@ -284,6 +284,34 @@ jobs:
       - name: Block critical vulnerabilities
         run: npm audit --audit-level=critical
 
+  agent_foundation:
+    name: Agent Foundation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Install dependencies
+        working-directory: client
+        run: npm ci && npm rebuild better-sqlite3 --runtime=node
+      - name: Run Agent foundation tests
+        working-directory: client
+        run: npm run test:web-agent-protocol && npm run test:web-agent-runtime && npm run test:web-agent-coordinator && npm run test:web-agent-executor
+      - name: Run real OpenCode Docker E2E
+        run: |
+          docker build --target agent-e2e -t bidding-copilot-agent:e2e .
+          docker run --rm \
+            -e YIBIAO_WEB_OPENCODE_BIN=/app/client/vendor/opencode/linux-x64/opencode \
+            bidding-copilot-agent:e2e
+          docker build --target runtime -t bidding-copilot-agent:runtime .
+          test "$(docker run --rm --entrypoint /bin/sh bidding-copilot-agent:runtime -lc 'test ! -e scripts/test-web-agent-docker.cjs && echo clean')" = clean
+
   analytics_dashboard:
     name: Analytics Dashboard Check
     runs-on: ubuntu-latest
@@ -324,6 +352,7 @@ jobs:
       - client
       - analytics_worker
       - analytics_dashboard
+      - agent_foundation
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -334,14 +363,17 @@ jobs:
           CLIENT_RESULT: ${{ needs.client.result }}
           ANALYTICS_WORKER_RESULT: ${{ needs.analytics_worker.result }}
           ANALYTICS_DASHBOARD_RESULT: ${{ needs.analytics_dashboard.result }}
+          AGENT_FOUNDATION_RESULT: ${{ needs.agent_foundation.result }}
         run: |
           printf '%s\n' \
             "Repository Hygiene: $REPO_HYGIENE_RESULT" \
             "Client Build: $CLIENT_RESULT" \
             "Analytics Worker Check: $ANALYTICS_WORKER_RESULT" \
-            "Analytics Dashboard Check: $ANALYTICS_DASHBOARD_RESULT"
+            "Analytics Dashboard Check: $ANALYTICS_DASHBOARD_RESULT" \
+            "Agent Foundation: $AGENT_FOUNDATION_RESULT"
 
           test "$REPO_HYGIENE_RESULT" = "success"
           test "$CLIENT_RESULT" = "success"
           test "$ANALYTICS_WORKER_RESULT" = "success"
           test "$ANALYTICS_DASHBOARD_RESULT" = "success"
+          test "$AGENT_FOUNDATION_RESULT" = "success"

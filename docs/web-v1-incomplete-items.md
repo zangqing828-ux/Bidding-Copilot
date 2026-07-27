@@ -7,6 +7,7 @@
 **来源**：Sprint 05 工包 B/C（缩减范围时跳过）
 
 - Docker 镜像已提供 OpenCode Linux binary 与 `rg`/`fd`/`jq`，并由 readiness 检查；浏览器 Agent 业务能力仍未开放。
+- Agent Execution Foundation 已通过真实 OpenCode Docker 两轮 tool-call、安全输出读取和清理；egress deny、seccomp、`no_new_privs` 与 cgroup 内存限制仍待 Release Gate。
 - Dockerfile 未安装 Chromium、LibreOffice。
 - `localImageRenderService.cjs` 的渲染 adapter 仍依赖 Electron BrowserWindow（已延迟加载，Web 端调用会抛错）
 - Web Word 导出与一次性浏览器下载仍需在当前修复提交的完整浏览器和 Docker 门禁中复核。
