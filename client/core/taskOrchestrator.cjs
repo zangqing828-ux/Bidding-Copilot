@@ -154,7 +154,7 @@ function createTaskOrchestrator({
       activeTasks.set(type, currentTask);
       if (workspaceState) {
         let persistedState = workspaceState;
-        if (definition.field) {
+        if (definition.field && options.persist !== false) {
           persistedState = trackPersist(stateAdapter.persist(definition, { [definition.field]: currentTask }, options));
         }
         if (persistedState && typeof persistedState.then === 'function') {

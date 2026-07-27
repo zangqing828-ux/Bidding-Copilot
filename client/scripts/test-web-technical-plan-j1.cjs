@@ -39,6 +39,8 @@ function createFakeAi({ sectionTitle = '一标段' } = {}) {
   let holdSection = true;
   let holdOutline = true;
   let modelName = 'j1-model-frozen-a';
+  let contextLengthLimit = 400000;
+  let capabilities = {};
   const scopedSnapshots = [];
 
   const service = {
@@ -77,11 +79,13 @@ function createFakeAi({ sectionTitle = '一标段' } = {}) {
       scopedSnapshots.push(modelSnapshot);
       return service;
     },
-    getConfig: () => ({ context_length_limit: 400000 }),
-    getCapabilities: () => ({}),
+    getConfig: () => ({ context_length_limit: contextLengthLimit }),
+    getCapabilities: () => capabilities,
     resumeQueueScope() {},
     pauseQueueScope() {},
     setModelName(value) { modelName = value; },
+    setContextLengthLimit(value) { contextLengthLimit = value; },
+    setCapabilities(value) { capabilities = { ...(value || {}) }; },
     releaseSection() { holdSection = false; sectionGate.resolve(); },
     releaseOutline() { holdOutline = false; outlineGate.resolve(); },
     scopedSnapshots,
@@ -89,9 +93,12 @@ function createFakeAi({ sectionTitle = '一标段' } = {}) {
   return service;
 }
 
+let fakeAgentBindCalls = 0;
+
 function createFakeAgent() {
   return {
     bindSelectedRuntime() {
+      fakeAgentBindCalls += 1;
       return { async runTask() { return { output: '{}' }; } };
     },
   };
@@ -154,6 +161,25 @@ async function main() {
     assert.equal(fakeAi.scopedSnapshots[0]?.modelName, 'j1-model-frozen-a', 'execution 内模型快照必须在受理时冻结');
     assert.ok(!JSON.stringify(bidSectionRecord.manifest).includes('j1-test-key'), 'run manifest 不得保存模型密钥');
 
+    store.selectBidSection(store.loadTechnicalPlan().bidSections[1]);
+    assert.ok(!store.readTenderMarkdown().includes('一标段：云平台建设'), '选择第二标段后 working copy 不应包含第一标段正文');
+    const rerunSectionAi = createFakeAi();
+    const rerunSectionService = createWebBidAnalysisTaskService({
+      aiService: rerunSectionAi,
+      agentService: createFakeAgent(),
+      technicalPlanStore: store,
+      mutationExecutor,
+      workspaceRuntimeGeneration: WORKSPACE_RUNTIME_GENERATION,
+    });
+    await rerunSectionService.startBidSectionExtraction({});
+    const rerunAcceptedState = store.loadTechnicalPlan();
+    assert.equal(rerunAcceptedState.bidSections.length, 0, '重新识别标段受理时必须清除旧选择和旧识别结果');
+    assert.ok(store.readTenderMarkdown().includes('一标段：云平台建设'), '重新识别标段必须先恢复 original working copy');
+    rerunSectionAi.releaseSection();
+    await waitFor(() => ['success', 'error'].includes(store.loadTechnicalPlan().bidSectionExtractionTask?.status), '重新识别标段未完成');
+    assert.equal(store.loadTechnicalPlan().bidSectionExtractionTask?.status, 'success', '恢复 original 后重新识别应成功');
+    await waitFor(() => rerunSectionService.getActiveTasks().length === 0, '重新识别完成后仍保留活动任务');
+
     const modelRaceAi = createFakeAi({ sectionTitle: '模型竞态标段' });
     const modelRaceService = createWebBidAnalysisTaskService({
       aiService: modelRaceAi,
@@ -193,6 +219,71 @@ async function main() {
     await waitFor(() => service.getActiveTasks().length === 0, '招标分析完成后仍保留活动任务');
 
     const outlineInput = { reference_knowledge_document_ids: [], outline_expansion_mode: 'ai-complement', word_control_options: { enabled: false, minimumWords: 0, maximumWords: 0, sectionWords: 0, strictSectionWords: false } };
+    const configRaceAi = createFakeAi();
+    const configRaceService = createWebBidAnalysisTaskService({
+      aiService: configRaceAi,
+      agentService: createFakeAgent(),
+      technicalPlanStore: store,
+      mutationExecutor,
+      workspaceRuntimeGeneration: WORKSPACE_RUNTIME_GENERATION,
+    });
+    const configRaceTask = await configRaceService.startOutlineGeneration(outlineInput);
+    configRaceAi.setContextLengthLimit(200000);
+    configRaceAi.setCapabilities({ structured_output: true });
+    configRaceAi.releaseOutline();
+    await waitFor(() => ['success', 'error'].includes(store.loadTechnicalPlan().outlineGenerationTask?.status), '运行配置变更竞态未结束');
+    assert.equal(store.loadTechnicalPlan().outlineGenerationTask?.error_code, 'TASK_INPUT_CHANGED', '运行配置变化必须拒绝旧目录结果');
+    assert.equal(store.getTechnicalPlanRunRecord(configRaceTask.execution_id)?.status, 'error', '运行配置变化必须收口 run record');
+    assert.equal(store.loadTechnicalPlan().outlineData, null, '运行配置变化后的目录结果不得写回');
+    await waitFor(() => configRaceService.getActiveTasks().length === 0, '运行配置变更竞态结束后仍保留活动任务');
+
+    const knowledgeRaceAi = createFakeAi();
+    const knowledgeBaseService = {
+      store: {
+        getDocument(documentId) {
+          return {
+            document_id: documentId,
+            file_name: '竞态知识.md',
+            status: 'success',
+            created_at: '2026-07-27T00:00:00.000Z',
+            updated_at: '2026-07-27T00:00:00.000Z',
+          };
+        },
+        readMarkdown() {
+          return '# 竞态知识\n运行期间加入的知识内容。';
+        },
+      },
+    };
+    const knowledgeRaceService = createWebBidAnalysisTaskService({
+      aiService: knowledgeRaceAi,
+      agentService: createFakeAgent(),
+      knowledgeBaseService,
+      technicalPlanStore: store,
+      mutationExecutor,
+      workspaceRuntimeGeneration: WORKSPACE_RUNTIME_GENERATION,
+    });
+    const knowledgeRaceTask = await knowledgeRaceService.startOutlineGeneration(outlineInput);
+    store.saveOutlineConfig({
+      referenceKnowledgeDocumentIds: ['knowledge-mutated-after-acceptance'],
+      outlineExpansionMode: 'ai-complement',
+      wordControlOptions: outlineInput.word_control_options,
+    });
+    knowledgeRaceAi.releaseOutline();
+    await waitFor(() => ['success', 'error'].includes(store.loadTechnicalPlan().outlineGenerationTask?.status), '知识选择变更竞态未结束');
+    assert.equal(store.loadTechnicalPlan().outlineGenerationTask?.error_code, 'TASK_INPUT_CHANGED', '知识选择变化必须拒绝旧目录结果');
+    assert.equal(store.getTechnicalPlanRunRecord(knowledgeRaceTask.execution_id)?.status, 'error', '知识选择变化必须收口 run record');
+    assert.deepEqual(
+      store.loadTechnicalPlan().referenceKnowledgeDocumentIds,
+      ['knowledge-mutated-after-acceptance'],
+      '旧目录结果不得覆盖运行期间的新知识选择',
+    );
+    await waitFor(() => knowledgeRaceService.getActiveTasks().length === 0, '知识选择变更竞态结束后仍保留活动任务');
+    store.saveOutlineConfig({
+      referenceKnowledgeDocumentIds: [],
+      outlineExpansionMode: 'ai-complement',
+      wordControlOptions: outlineInput.word_control_options,
+    });
+
     const firstOutline = service.startOutlineGeneration(outlineInput);
     const duplicateOutline = service.startOutlineGeneration(outlineInput);
     await assert.rejects(
@@ -208,6 +299,8 @@ async function main() {
     const outlineRecord = store.getTechnicalPlanRunRecord(outlineTask.execution_id);
     assert.equal(outlineRecord?.status, 'succeeded', 'outline 最终结果必须通过 run record 标记为 succeeded');
     assert.ok(store.loadTechnicalPlan().outlineData?.outline?.length, 'outline 最终结果必须经 CAS 落盘');
+    assert.equal(store.loadTechnicalPlan().outlineGenerationTask?.status, 'success', '目录业务结果与 task success 必须在同一最终状态出现');
+    assert.equal(fakeAgentBindCalls, 0, 'Web J-Core 不得调用自由 Agent fallback');
 
     const preOrchestratorAbort = new AbortController();
     let preOrchestratorRecord = null;

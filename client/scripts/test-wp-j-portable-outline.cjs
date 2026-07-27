@@ -93,6 +93,34 @@ function runHardConstraintCases() {
       `outline case ${entry.name}`,
     );
   }
+
+  const buildNode = (index) => ({
+    id: String(index + 1),
+    title: `目录 ${index + 1}`,
+    description: `目录 ${index + 1} 描述`,
+    source_requirement_id: `REQ-${index + 1}`,
+    source_requirement_title: `需求 ${index + 1}`,
+  });
+  const allowed = Array.from({ length: 1000 }, (_, index) => buildNode(index));
+  assert.equal(buildOutlineStructure(allowed, { mode: 'standard' }).outline.length, 1000, '1000 个目录节点应允许');
+  assertThrowsMessage(
+    () => buildOutlineStructure([...allowed, buildNode(1000)], { mode: 'standard' }),
+    '目录节点数量不能超过 1000',
+    '1001 个目录节点',
+  );
+  const nestedOverflow = [{
+    ...buildNode(0),
+    children: Array.from({ length: 1000 }, (_, index) => ({
+      id: `1.${index + 1}`,
+      title: `子目录 ${index + 1}`,
+      description: `子目录 ${index + 1} 描述`,
+    })),
+  }];
+  assertThrowsMessage(
+    () => buildOutlineStructure(nestedOverflow, { mode: 'standard' }),
+    '目录节点数量不能超过 1000',
+    '嵌套目录节点同样计入总数',
+  );
 }
 
 function runWordControlChecks() {

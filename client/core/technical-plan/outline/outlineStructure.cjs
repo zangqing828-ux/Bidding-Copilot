@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 
 const MAX_OUTLINE_DEPTH = 3;
+const MAX_OUTLINE_NODES = 1000;
 const MAX_OUTLINE_ID_LENGTH = 256;
 const MAX_OUTLINE_TITLE_LENGTH = 2048;
 const MAX_OUTLINE_DESCRIPTION_LENGTH = 4096;
@@ -119,9 +120,24 @@ function validateDepth(nodes, depth = 1, path = 'outline') {
   }
 }
 
+function countOutlineNodes(nodes) {
+  return (Array.isArray(nodes) ? nodes : []).reduce((total, node) => (
+    total + 1 + countOutlineNodes(node?.children)
+  ), 0);
+}
+
+function assertOutlineNodeLimit(nodes) {
+  const nodeCount = countOutlineNodes(nodes);
+  if (nodeCount > MAX_OUTLINE_NODES) {
+    throw createError(`目录节点数量不能超过 ${MAX_OUTLINE_NODES}`);
+  }
+  return nodeCount;
+}
+
 function normalizeOutlineTree(rawOutline, options = {}) {
   const mode = normalizeMode(options.mode);
   const rawNodes = Array.isArray(rawOutline) ? rawOutline : [];
+  assertOutlineNodeLimit(rawNodes);
   const nodes = rawNodes.map((node, index) => normalizeNode(node, `outline[${index}]`));
   if (!nodes.length) {
     throw createError('目录不能为空');
@@ -210,6 +226,8 @@ function buildOutlineStructure(nodes, options = {}) {
 module.exports = {
   normalizeOutlineTree,
   validateOutlineTree,
+  assertOutlineNodeLimit,
+  countOutlineNodes,
   renumberOutlineTree,
   countOutlineLeafNodes,
   buildOutlineSemanticHash,

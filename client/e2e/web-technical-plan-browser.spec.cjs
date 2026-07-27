@@ -73,6 +73,8 @@ test('真实 Chromium 完成双标段识别、选段、目录生成并在刷新�
     const state = await window.yibiao.technicalPlan.loadState();
     return { selected: state.tenderFile?.selectedSectionId, markdown: await window.yibiao.technicalPlan.readTenderMarkdown() };
   })).toMatchObject({ selected: 'section-2', markdown: expect.stringContaining('二标段：运维保障') });
+  const selectedMarkdown = await page.evaluate(async () => window.yibiao.technicalPlan.readTenderMarkdown());
+  expect(selectedMarkdown).not.toContain('范围：平台架构、系统集成与上线。');
 
   await page.evaluate(() => window.yibiao.technicalPlan.updateStep('outline-generation'));
   await page.reload();

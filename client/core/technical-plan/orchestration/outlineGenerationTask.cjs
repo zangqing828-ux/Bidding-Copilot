@@ -3727,7 +3727,7 @@ async function runOutlineGenerationTask({
         current_leaf_count: countOutlineLeafItems(oldOutline?.outline || []),
       };
       const finalLogs = [...logs, '目录生成完成。'];
-      const finalTask = updateTask({ status: 'success', progress: OUTLINE_PROGRESS.complete, logs: finalLogs, stats: taskStats() });
+      const finalTaskPatch = { status: 'success', progress: OUTLINE_PROGRESS.complete, logs: finalLogs, stats: taskStats() };
       const finalPatch = {
         outlineData: { ...oldOutline, project_overview: overview },
         outlineWordControlSnapshot: wordControlOptions,
@@ -3736,12 +3736,15 @@ async function runOutlineGenerationTask({
         contentGenerationPlans: {},
         contentGenerationRuntime: undefined,
         contentIllustrationPlan: undefined,
-        outlineGenerationTask: finalTask,
       };
-      technicalPlan = typeof workspaceStore.commitOutlineGenerationResult === 'function'
-        ? await workspaceStore.commitOutlineGenerationResult(finalPatch)
-        : workspaceStore.updateTechnicalPlan(finalPatch);
-      updateTask(finalTask, technicalPlan);
+      if (typeof workspaceStore.commitOutlineGenerationResult === 'function') {
+        technicalPlan = await workspaceStore.commitOutlineGenerationResult(finalPatch, finalTaskPatch);
+        updateTask(finalTaskPatch, technicalPlan, undefined, { persist: false });
+      } else {
+        const finalTask = updateTask(finalTaskPatch);
+        technicalPlan = workspaceStore.updateTechnicalPlan({ ...finalPatch, outlineGenerationTask: finalTask });
+        updateTask(finalTask, technicalPlan);
+      }
       return;
     } else {
       outline = await expansionComplementWorkflow(aiService, taskPayload, oldOutline, log, signal);
@@ -3823,7 +3826,7 @@ async function runOutlineGenerationTask({
     ...(wordControlWarning ? { word_adjustment_warning: wordControlWarning, word_adjustment_warning_kind: wordControlWarningKind } : {}),
   };
   const finalLogs = [...logs, '目录生成完成。', ...(wordControlWarning ? [wordControlWarning] : [])];
-  const finalTask = updateTask({ status: 'success', progress: OUTLINE_PROGRESS.complete, logs: finalLogs, stats: taskStats() });
+  const finalTaskPatch = { status: 'success', progress: OUTLINE_PROGRESS.complete, logs: finalLogs, stats: taskStats() };
   const finalPatch = {
     outlineData: { ...outline, project_overview: overview },
     outlineWordControlSnapshot: wordControlOptions,
@@ -3832,12 +3835,15 @@ async function runOutlineGenerationTask({
     contentGenerationPlans: {},
     contentGenerationRuntime: undefined,
     contentIllustrationPlan: undefined,
-    outlineGenerationTask: finalTask,
   };
-  technicalPlan = typeof workspaceStore.commitOutlineGenerationResult === 'function'
-    ? await workspaceStore.commitOutlineGenerationResult(finalPatch)
-    : workspaceStore.updateTechnicalPlan(finalPatch);
-  updateTask(finalTask, technicalPlan);
+  if (typeof workspaceStore.commitOutlineGenerationResult === 'function') {
+    technicalPlan = await workspaceStore.commitOutlineGenerationResult(finalPatch, finalTaskPatch);
+    updateTask(finalTaskPatch, technicalPlan, undefined, { persist: false });
+  } else {
+    const finalTask = updateTask(finalTaskPatch);
+    technicalPlan = workspaceStore.updateTechnicalPlan({ ...finalPatch, outlineGenerationTask: finalTask });
+    updateTask(finalTask, technicalPlan);
+  }
 }
 
 module.exports = { runOutlineGenerationTask };

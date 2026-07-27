@@ -323,11 +323,15 @@ async function runBidSectionExtractionTask({
       bidSectionExtractionStatus: 'success',
       bidSectionExtractionError: undefined,
     };
-    const finalState = typeof workspaceStore.commitBidSectionExtractionResult === 'function'
-      ? await workspaceStore.commitBidSectionExtractionResult(finalPatch)
-      : workspaceStore.updateTechnicalPlan(finalPatch);
     const finalLogs = pushLog(logs, `已识别 ${merged.sections.length} 个标段，请选择本次投标范围。`);
-    updateTask({ status: 'success', progress: 100, logs: finalLogs }, finalState);
+    const finalTaskPatch = { status: 'success', progress: 100, logs: finalLogs };
+    if (typeof workspaceStore.commitBidSectionExtractionResult === 'function') {
+      const finalState = await workspaceStore.commitBidSectionExtractionResult(finalPatch, finalTaskPatch);
+      updateTask(finalTaskPatch, finalState, undefined, { persist: false });
+    } else {
+      const finalState = workspaceStore.updateTechnicalPlan(finalPatch);
+      updateTask(finalTaskPatch, finalState);
+    }
   } catch (error) {
     const failureReason = error instanceof Error ? error : new Error('多标段识别失败');
     const message = failureReason.message;

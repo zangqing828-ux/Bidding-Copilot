@@ -5,6 +5,7 @@ const { getBidAnalysisTasks } = require('../bidAnalysisTask.cjs');
 const { resolveWorkspacePaths } = require('../workspacePaths.cjs');
 const { deleteImportedImageBatches, clearMermaidCache } = require('../workspaceCleanup.cjs');
 const { detectBidSections } = require('../bidSectionDetector.cjs');
+const { assertOutlineNodeLimit } = require('../technical-plan/outline/outlineStructure.cjs');
 const {
   canonicalizeRunManifestV1,
   computeRunManifestV1Hash,
@@ -60,6 +61,7 @@ const initialState = {
   contentGenerationSections: {},
   contentGenerationPlans: {},
   contentIllustrationPlan: undefined,
+  contentIllustrationRenderReceipts: {},
   contentGenerationRuntime: undefined,
   outlineData: null,
 };
@@ -515,7 +517,13 @@ function mapOutlineItems(items, mapper) {
   });
 }
 
-function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRuntimeGeneration } = {}) {
+function createTechnicalPlanStore({
+  db,
+  fileService,
+  workspaceRoot,
+  workspaceRuntimeGeneration,
+  composeLegacyIllustrationReceipts = false,
+} = {}) {
   const hasWorkspaceRuntimeGeneration = workspaceRuntimeGeneration !== undefined;
   const capturedWorkspaceRuntimeGeneration = hasWorkspaceRuntimeGeneration
     ? normalizeWorkspaceRuntimeGeneration(workspaceRuntimeGeneration)
@@ -759,6 +767,75 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
       ...Object.fromEntries(entries),
       updated_at: now(),
     });
+    if (Object.prototype.hasOwnProperty.call(fields || {}, 'content_illustration_plan_json')
+      && fields.content_illustration_plan_json === null) {
+      db.prepare('DELETE FROM technical_plan_illustration_render_receipts').run();
+    }
+  }
+
+  function splitIllustrationPlanAndReceipts(value) {
+    if (value === undefined || value === null) {
+      return { plan: undefined, receipts: {} };
+    }
+    const source = JSON.parse(JSON.stringify(value));
+    const receipts = {};
+    const items = Array.isArray(source.items) ? source.items.map((item, index) => {
+      if (!item || typeof item !== 'object' || !Object.prototype.hasOwnProperty.call(item, 'generation')) {
+        return item;
+      }
+      const itemId = String(item.item_id || item.id || `legacy-index-${index}`);
+      receipts[itemId] = item.generation ?? null;
+      const { generation: _generation, ...pureItem } = item;
+      return pureItem;
+    }) : [];
+    return {
+      plan: { ...source, items },
+      receipts,
+    };
+  }
+
+  function replaceIllustrationRenderReceipts(receipts) {
+    db.prepare('DELETE FROM technical_plan_illustration_render_receipts').run();
+    const insert = db.prepare(`
+      INSERT INTO technical_plan_illustration_render_receipts (
+        item_id,
+        generation_json,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?)
+    `);
+    const timestamp = now();
+    for (const [itemId, generation] of Object.entries(receipts || {})) {
+      insert.run(itemId, JSON.stringify(generation ?? null), timestamp, timestamp);
+    }
+  }
+
+  function saveContentIllustrationPlan(value) {
+    const { plan, receipts } = splitIllustrationPlanAndReceipts(value);
+    replaceIllustrationRenderReceipts(receipts);
+    updateMeta({
+      content_illustration_plan_json: plan === undefined ? null : JSON.stringify(plan),
+    });
+  }
+
+  function loadIllustrationRenderReceipts() {
+    return Object.fromEntries(db.prepare(`
+      SELECT item_id, generation_json
+      FROM technical_plan_illustration_render_receipts
+      ORDER BY item_id
+    `).all().map((row) => [row.item_id, safeJsonParse(row.generation_json, null)]));
+  }
+
+  function composeIllustrationPlanWithReceipts(plan, receipts) {
+    if (!plan || !Array.isArray(plan.items)) return plan;
+    return {
+      ...plan,
+      items: plan.items.map((item, index) => {
+        const itemId = String(item?.item_id || item?.id || `legacy-index-${index}`);
+        if (!Object.prototype.hasOwnProperty.call(receipts, itemId)) return item;
+        return { ...item, generation: receipts[itemId] };
+      }),
+    };
   }
 
   function currentInputRevision(meta = ensureMetaRow()) {
@@ -899,7 +976,17 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
     };
 
     if (taskType === 'bid-section-extraction') {
-      clearDownstreamFromBidAnalysisChange();
+      resetTenderWorkingCopyToOriginal();
+      clearDownstreamFromBidSectionChange();
+      bumpInputRevision();
+      updateMeta({
+        bid_section_mode: 'multiple',
+        bid_sections_json: null,
+        bid_section_extraction_status: 'running',
+        bid_section_extraction_error: null,
+        selected_section_id: null,
+        selected_section_title: null,
+      });
       return;
     }
     if (taskType === 'outline-generation') {
@@ -917,7 +1004,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
     }
   }
 
-  function acceptTechnicalPlanTaskRun(manifest) {
+  function acceptTechnicalPlanTaskRun(manifest, { initialPartial } = {}) {
     const normalized = normalizeRunManifest(manifest);
     const canonicalManifest = canonicalizeRunManifest(normalized);
     const manifestHash = computeRunManifestV1Hash(canonicalManifest);
@@ -951,6 +1038,9 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
       const currentMeta = ensureMetaRow();
       const nextRevisions = bumpStageRevision(targetStageKey, currentMeta);
       runAcceptanceInvalidate(normalized.task_type);
+      if (initialPartial && typeof initialPartial === 'object') {
+        applyPartial(initialPartial);
+      }
 
       const timestamp = now();
       const runId = crypto.randomUUID();
@@ -1048,6 +1138,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
     errorCode,
     message,
     retryable = false,
+    task,
   } = {}) {
     if (!executionId) {
       throw stageManifestConflictError('执行 ID 缺失');
@@ -1072,6 +1163,9 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
         checkpoint_json: JSON.stringify(checkpoint),
         updated_at: now(),
       });
+      if (task) {
+        saveTask(record.taskType, task);
+      }
       return getTechnicalPlanRunRecord(executionId);
     })();
   }
@@ -1533,6 +1627,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
       return;
     }
 
+    assertOutlineNodeLimit(outlineData.outline);
     const rows = flattenOutlineItems(outlineData.outline);
     const nextIds = new Set(rows.map((row) => row.node_id));
     const upsert = db.prepare(`
@@ -2048,9 +2143,10 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
     }
     if (hasOwn(partial, 'contentGenerationOptions')) metaUpdates.content_generation_options_json = jsonOrNull(partial.contentGenerationOptions);
     if (hasOwn(partial, 'contentGenerationRuntime')) metaUpdates.content_generation_runtime_json = jsonOrNull(partial.contentGenerationRuntime);
-    if (hasOwn(partial, 'contentIllustrationPlan')) metaUpdates.content_illustration_plan_json = jsonOrNull(partial.contentIllustrationPlan);
+    const hasIllustrationPlan = hasOwn(partial, 'contentIllustrationPlan');
 
     if (Object.keys(metaUpdates).length) updateMeta(metaUpdates);
+    if (hasIllustrationPlan) saveContentIllustrationPlan(partial.contentIllustrationPlan);
 
     const nextBidMode = isValidBidMode(partial.bidAnalysisMode) ? partial.bidAnalysisMode : meta.bid_analysis_mode;
     if (hasOwn(partial, 'referenceKnowledgeDocumentIds')) replaceReferenceDocumentIds(partial.referenceKnowledgeDocumentIds);
@@ -2126,6 +2222,9 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
       updatedAt: meta.updated_at,
     } : null;
 
+    const contentIllustrationPlan = safeJsonParse(meta.content_illustration_plan_json, undefined);
+    const contentIllustrationRenderReceipts = loadIllustrationRenderReceipts();
+
     return {
       ...initialState,
       workflowKind: normalizeWorkflowKind(meta.workflow_kind),
@@ -2157,7 +2256,10 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
       globalFacts: loadGlobalFacts(),
       contentGenerationOptions: safeJsonParse(meta.content_generation_options_json, undefined),
       contentGenerationRuntime: safeJsonParse(meta.content_generation_runtime_json, undefined),
-      contentIllustrationPlan: safeJsonParse(meta.content_illustration_plan_json, undefined),
+      contentIllustrationPlan: composeLegacyIllustrationReceipts
+        ? composeIllustrationPlanWithReceipts(contentIllustrationPlan, contentIllustrationRenderReceipts)
+        : contentIllustrationPlan,
+      contentIllustrationRenderReceipts,
       contentGenerationSections: loadContentSections(outlineData),
       contentGenerationPlans: loadContentPlans(),
       outlineData,
@@ -2239,12 +2341,28 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
   }
 
   function saveOutlineConfig({ referenceKnowledgeDocumentIds, outlineExpansionMode, wordControlOptions } = {}) {
-    return updateTechnicalPlan({
+    const nextPartial = {
       outlineMode: 'aligned',
       outlineExpansionMode: isValidOutlineExpansionMode(outlineExpansionMode) ? outlineExpansionMode : 'ai-complement',
       outlineWordControlOptions: normalizeOutlineWordControlOptions(wordControlOptions),
       referenceKnowledgeDocumentIds,
-    });
+    };
+    const current = loadTechnicalPlan();
+    const changed = current.outlineExpansionMode !== nextPartial.outlineExpansionMode
+      || JSON.stringify(current.outlineWordControlOptions) !== JSON.stringify(nextPartial.outlineWordControlOptions)
+      || JSON.stringify(current.referenceKnowledgeDocumentIds || []) !== JSON.stringify(
+        [...new Set((referenceKnowledgeDocumentIds || []).map((id) => String(id || '').trim()).filter(Boolean))],
+      );
+    if (!changed) {
+      return updateTechnicalPlan(nextPartial);
+    }
+    db.transaction(() => {
+      clearDownstreamFromOutlineChange();
+      bumpStageRevision('outline_revision');
+      bumpInputRevision();
+      applyPartial(nextPartial);
+    })();
+    return loadTechnicalPlan();
   }
 
   function resetTenderWorkingCopyToOriginal() {

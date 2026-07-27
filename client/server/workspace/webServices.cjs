@@ -112,6 +112,42 @@ function createModelSnapshotReference(modelSnapshot) {
   };
 }
 
+function booleanConfigProjection(value) {
+  return Object.fromEntries(
+    Object.entries(value && typeof value === 'object' ? value : {})
+      .filter(([, item]) => typeof item === 'boolean')
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function captureTechnicalPlanGenerationConfig(aiService) {
+  let config = {};
+  let capabilities = {};
+  try {
+    config = typeof aiService?.getConfig === 'function' ? aiService.getConfig() || {} : {};
+  } catch {
+    config = {};
+  }
+  try {
+    capabilities = typeof aiService?.getCapabilities === 'function'
+      ? aiService.getCapabilities() || {}
+      : aiService?.capabilities || {};
+  } catch {
+    capabilities = {};
+  }
+  const contextLengthLimit = Number(config.context_length_limit);
+  return Object.freeze({
+    context_length_limit: Number.isFinite(contextLengthLimit) && contextLengthLimit > 0
+      ? Math.floor(contextLengthLimit)
+      : null,
+    agent_mode_scenarios: Object.freeze({
+      ...booleanConfigProjection(config.agent_mode_scenarios),
+      existing_plan_expansion_original_outline_extraction: false,
+    }),
+    capabilities: Object.freeze(booleanConfigProjection(capabilities)),
+  });
+}
+
 function createTechnicalPlanRunManifest({
   type,
   input,
@@ -121,16 +157,20 @@ function createTechnicalPlanRunManifest({
   technicalPlanStore,
   knowledgeBaseService,
   modelSnapshot,
+  generationConfigSnapshot,
   stageRevisionVector,
+  referenceDocumentIds,
 }) {
   const state = technicalPlanStore.loadTechnicalPlan() || {};
-  const referenceDocumentIds = type === 'outline-generation'
-    ? input.reference_knowledge_document_ids
+  const selectedReferenceDocumentIds = type === 'outline-generation'
+    ? (referenceDocumentIds || input.reference_knowledge_document_ids)
     : [];
-  const referenceDocuments = createReferenceDocumentManifest(knowledgeBaseService, referenceDocumentIds);
-  const tenderMarkdown = technicalPlanStore.readTenderMarkdown?.() || '';
+  const referenceDocuments = createReferenceDocumentManifest(knowledgeBaseService, selectedReferenceDocumentIds);
+  const tenderMarkdown = type === 'bid-section-extraction'
+    ? technicalPlanStore.readOriginalTenderMarkdown?.() || technicalPlanStore.readTenderMarkdown?.() || ''
+    : technicalPlanStore.readTenderMarkdown?.() || '';
   const originalPlanMarkdown = technicalPlanStore.readOriginalPlanMarkdown?.() || '';
-  const selectedSectionId = String(state.selectedSectionId || '').trim();
+  const selectedSectionId = String(state.tenderFile?.selectedSectionId || state.selectedSectionId || '').trim();
   const { publicSnapshot, reference: modelSnapshotRef } = createModelSnapshotReference(modelSnapshot);
   const bidAnalysisHash = hashNullableText(JSON.stringify({
     bidAnalysisTasks: state.bidAnalysisTasks || {},
@@ -154,7 +194,7 @@ function createTechnicalPlanRunManifest({
       original_plan_hash: hashNullableText(originalPlanMarkdown),
       reference_documents: referenceDocuments,
     },
-    selected_bid_section: selectedSectionId ? {
+    selected_bid_section: type !== 'bid-section-extraction' && selectedSectionId ? {
       section_id: selectedSectionId,
       content_hash: stableHash(tenderMarkdown),
     } : null,
@@ -168,6 +208,7 @@ function createTechnicalPlanRunManifest({
       input,
       model: publicSnapshot,
       api_key_hash: stableHash(String(modelSnapshot?.apiKey || '')),
+      runtime: generationConfigSnapshot || {},
     }),
     prompt_template_version: promptVersion,
     model_snapshot_ref: modelSnapshotRef,
@@ -302,15 +343,8 @@ function createWebBidAnalysisTaskService({
   if (!aiService || !technicalPlanStore || !mutationExecutor) {
     throw new Error('Web 招标解析任务服务缺少运行时依赖');
   }
-  const boundAgentService = typeof agentService?.bindSelectedRuntime === 'function'
-    ? agentService.bindSelectedRuntime()
-    : {
-      runTask: async () => {
-        const error = new Error('Web Agent 运行时尚未装配');
-        error.code = 'AGENT_SANDBOX_UNAVAILABLE';
-        throw error;
-      },
-    };
+  // WP-J J-1 固定走 J-Core；生产 Agent 修复链在 J-3 Sidecar Gate 前保持关闭。
+  const boundAgentService = null;
 
   const definitions = TECHNICAL_PLAN_TASK_DEFINITIONS;
   const stateAdapter = {
@@ -331,7 +365,9 @@ function createWebBidAnalysisTaskService({
             errorCode: error?.code,
             message: error?.message,
             retryable: error?.retryable === true,
+            task: failedTask,
           });
+          return technicalPlanStore.loadTechnicalPlan();
         }
         return technicalPlanStore.updateTechnicalPlan({ [definition.field]: failedTask });
       });
@@ -420,13 +456,21 @@ function createWebBidAnalysisTaskService({
     createRunnerContext({ type, payload, queueScopeId, updateTask, emitTask, taskControl, signal, taskMetadata = {} }) {
       const inputRevision = payload.input_revision;
       const runRecord = taskMetadata.runRecord;
-      const commitAcceptedResult = (partial) => mutationExecutor.execute(() => {
+      let volatileState = technicalPlanStore.loadTechnicalPlan() || {};
+      let volatileOriginalOutlineRuntime = technicalPlanStore.readOriginalOutlineRuntime?.() || null;
+      const updateVolatileState = (partial) => {
+        volatileState = { ...volatileState, ...(partial || {}) };
+        return volatileState;
+      };
+      const commitAcceptedResult = (partial, finalTaskPatch) => mutationExecutor.execute(() => {
         let currentModelSnapshot;
         try {
           currentModelSnapshot = captureModelSnapshot();
         } catch {
           throw createTaskInputChangedError('模型配置已变化，请重新执行任务');
         }
+        const currentGenerationConfig = captureTechnicalPlanGenerationConfig(aiService);
+        const currentState = technicalPlanStore.loadTechnicalPlan() || {};
         const currentManifest = createTechnicalPlanRunManifest({
           type,
           input: payload,
@@ -436,24 +480,39 @@ function createWebBidAnalysisTaskService({
           technicalPlanStore,
           knowledgeBaseService,
           modelSnapshot: currentModelSnapshot,
+          generationConfigSnapshot: currentGenerationConfig,
           stageRevisionVector: runRecord.manifest.stage_revision_vector,
+          referenceDocumentIds: type === 'outline-generation'
+            ? currentState.referenceKnowledgeDocumentIds || []
+            : [],
         });
         if (computeRunManifestV1Hash(currentManifest) !== runRecord.manifestHash) {
           throw createTaskInputChangedError();
         }
+        const activeTask = orchestrator.activeTasks.get(type);
+        const finalTask = finalTaskPatch ? {
+          ...(activeTask || {}),
+          ...finalTaskPatch,
+          updated_at: new Date().toISOString(),
+        } : null;
+        const committedPartial = finalTask
+          ? { ...partial, [definitions[type].field]: finalTask }
+          : partial;
         const writeback = technicalPlanStore.writebackTechnicalPlanTaskRun({
           executionId: runRecord.executionId,
           manifestHash: runRecord.manifestHash,
           targetStageGeneration: runRecord.targetStageGeneration,
-          apply: () => technicalPlanStore.updateTechnicalPlan(partial),
+          apply: () => technicalPlanStore.updateTechnicalPlan(committedPartial),
         });
         return writeback.payload;
       }, { signal });
       const workspaceStore = {
         ...technicalPlanStore,
         readTenderMarkdown: () => technicalPlanStore.readTenderMarkdown(),
-        loadTechnicalPlan: () => technicalPlanStore.loadTechnicalPlan(),
-        updateTechnicalPlan: (partial) => technicalPlanStore.updateTechnicalPlan(partial),
+        loadTechnicalPlan: () => runRecord ? volatileState : technicalPlanStore.loadTechnicalPlan(),
+        updateTechnicalPlan: (partial) => runRecord
+          ? updateVolatileState(partial)
+          : technicalPlanStore.updateTechnicalPlan(partial),
         updateTechnicalPlanForInputRevision: (revision, partial) => mutationExecutor.execute(() => technicalPlanStore.updateTechnicalPlanForInputRevision(revision, partial)),
         commitBidAnalysisMutation: (revision, build) => mutationExecutor.execute(() => {
           const previous = technicalPlanStore.loadTechnicalPlan() || {};
@@ -461,13 +520,28 @@ function createWebBidAnalysisTaskService({
           const state = technicalPlanStore.updateTechnicalPlanForInputRevision(revision, result.partial || {});
           return { ...result, state };
         }),
-        prepareBidSectionExtraction: runRecord ? () => technicalPlanStore.loadTechnicalPlan() : technicalPlanStore.prepareBidSectionExtraction,
+        prepareBidSectionExtraction: runRecord ? () => volatileState : technicalPlanStore.prepareBidSectionExtraction,
+        readOriginalOutlineRuntime: runRecord ? () => volatileOriginalOutlineRuntime : technicalPlanStore.readOriginalOutlineRuntime,
+        saveOriginalOutlineRuntime: runRecord ? (value) => {
+          volatileOriginalOutlineRuntime = value;
+        } : technicalPlanStore.saveOriginalOutlineRuntime,
+        clearOriginalOutlineRuntime: runRecord ? () => {
+          volatileOriginalOutlineRuntime = null;
+        } : technicalPlanStore.clearOriginalOutlineRuntime,
         commitBidSectionExtractionResult: type === 'bid-section-extraction' && runRecord ? commitAcceptedResult : undefined,
         commitOutlineGenerationResult: type === 'outline-generation' && runRecord ? commitAcceptedResult : undefined,
       };
-      const scopedAiService = typeof aiService.withQueueScope === 'function'
+      const scopedBaseAiService = typeof aiService.withQueueScope === 'function'
         ? aiService.withQueueScope(queueScopeId, taskMetadata.modelSnapshot ? { modelSnapshot: taskMetadata.modelSnapshot } : {})
         : aiService;
+      const scopedAiService = taskMetadata.generationConfigSnapshot ? {
+        ...scopedBaseAiService,
+        getConfig: () => ({
+          context_length_limit: taskMetadata.generationConfigSnapshot.context_length_limit,
+          agent_mode_scenarios: { ...taskMetadata.generationConfigSnapshot.agent_mode_scenarios },
+        }),
+        getCapabilities: () => ({ ...taskMetadata.generationConfigSnapshot.capabilities }),
+      } : scopedBaseAiService;
       return {
         aiService: scopedAiService,
         agentService: boundAgentService,
@@ -531,10 +605,12 @@ function createWebBidAnalysisTaskService({
     else signal?.addEventListener?.('abort', abortAcceptance, { once: true });
 
     let acceptedRunRecord = null;
+    let acceptedTask = null;
     const startPromise = Promise.resolve()
       .then(() => prepare(controller.signal))
       .then((prepared = {}) => {
         acceptedRunRecord = prepared.runRecord || null;
+        acceptedTask = prepared.acceptedTask || null;
         if (controller.signal.aborted) throw controller.signal.reason || createAcceptanceAbortError();
         const preparedPayload = prepared.payloadPatch ? { ...input, ...prepared.payloadPatch } : { ...input };
         payloadSignatures.set(preparedPayload, payloadSignature);
@@ -558,6 +634,14 @@ function createWebBidAnalysisTaskService({
             errorCode: error?.code || 'TASK_ACCEPTANCE_FAILED',
             message: error?.message || '任务受理失败',
             retryable: error?.retryable === true,
+            task: acceptedTask ? {
+              ...acceptedTask,
+              status: 'error',
+              error: error?.message || '任务受理失败',
+              error_code: error?.code || 'TASK_ACCEPTANCE_FAILED',
+              retryable: error?.retryable === true,
+              updated_at: new Date().toISOString(),
+            } : undefined,
           }));
         }
         throw error;
@@ -583,7 +667,7 @@ function createWebBidAnalysisTaskService({
     throw error;
   }
 
-  function prepareTechnicalPlanRun(type, input, signal) {
+  function prepareTechnicalPlanRun(type, input, initialPartial, payloadSignature, signal) {
     if (!Number.isInteger(workspaceRuntimeGeneration) || workspaceRuntimeGeneration <= 0) {
       return Promise.reject(createTaskConflictError());
     }
@@ -591,6 +675,7 @@ function createWebBidAnalysisTaskService({
     const executionId = crypto.randomUUID();
     return mutationExecutor.execute(() => {
       const modelSnapshot = captureModelSnapshot();
+      const generationConfigSnapshot = captureTechnicalPlanGenerationConfig(aiService);
       const manifest = createTechnicalPlanRunManifest({
         type,
         input,
@@ -600,12 +685,25 @@ function createWebBidAnalysisTaskService({
         technicalPlanStore,
         knowledgeBaseService,
         modelSnapshot,
+        generationConfigSnapshot,
       });
-      const runRecord = technicalPlanStore.acceptTechnicalPlanTaskRun(manifest);
+      const acceptedTask = createTask(type, input, {
+        taskId,
+        executionId,
+        payloadSignature,
+      });
+      const runRecord = technicalPlanStore.acceptTechnicalPlanTaskRun(manifest, {
+        initialPartial: {
+          ...(initialPartial || {}),
+          [definitions[type].field]: acceptedTask,
+        },
+      });
       return {
         taskId,
         executionId,
         modelSnapshot,
+        generationConfigSnapshot,
+        acceptedTask,
         runRecord,
       };
     }, { signal });
@@ -627,35 +725,43 @@ function createWebBidAnalysisTaskService({
     unsubscribeCallback: orchestrator.unsubscribe,
     startBidSectionExtraction(payload, { signal } = {}) {
       const input = validateStartBidSectionExtractionInput(payload);
+      const payloadSignature = stableHash(input);
+      const initialPartial = {
+        bidSectionMode: 'multiple',
+        bidSections: [],
+        bidSectionExtractionStatus: 'running',
+        bidSectionExtractionError: undefined,
+        bidAnalysisTask: undefined,
+        bidAnalysisTasks: {},
+        bidAnalysisProgress: 0,
+        projectOverview: '',
+        techRequirements: '',
+        outlineData: null,
+        outlineWordControlSnapshot: undefined,
+        outlineGenerationTask: undefined,
+        referenceKnowledgeDocumentIds: [],
+        globalFactsTask: undefined,
+        globalFacts: [],
+        contentGenerationTask: undefined,
+        contentGenerationOptions: undefined,
+        contentGenerationSections: {},
+        contentGenerationPlans: {},
+        contentIllustrationPlan: undefined,
+        contentGenerationRuntime: undefined,
+      };
       return startManagedTask({
         type: 'bid-section-extraction',
         input,
-        payloadSignature: stableHash(input),
+        payloadSignature,
         runner: runBidSectionExtractionTask,
-        initialPartial: {
-          bidSectionMode: 'multiple',
-          bidSections: [],
-          bidSectionExtractionStatus: 'running',
-          bidSectionExtractionError: undefined,
-          bidAnalysisTask: undefined,
-          bidAnalysisTasks: {},
-          bidAnalysisProgress: 0,
-          projectOverview: '',
-          techRequirements: '',
-          outlineData: null,
-          outlineWordControlSnapshot: undefined,
-          outlineGenerationTask: undefined,
-          referenceKnowledgeDocumentIds: [],
-          globalFactsTask: undefined,
-          globalFacts: [],
-          contentGenerationTask: undefined,
-          contentGenerationOptions: undefined,
-          contentGenerationSections: {},
-          contentGenerationPlans: {},
-          contentIllustrationPlan: undefined,
-          contentGenerationRuntime: undefined,
-        },
-        prepare: (acceptanceSignal) => prepareTechnicalPlanRun('bid-section-extraction', input, acceptanceSignal),
+        initialPartial,
+        prepare: (acceptanceSignal) => prepareTechnicalPlanRun(
+          'bid-section-extraction',
+          input,
+          initialPartial,
+          payloadSignature,
+          acceptanceSignal,
+        ),
         signal,
       });
     },
@@ -680,18 +786,35 @@ function createWebBidAnalysisTaskService({
     },
     startOutlineGeneration(payload, { signal } = {}) {
       const input = validateStartOutlineGenerationInput(payload);
+      const payloadSignature = stableHash(input);
+      const initialPartial = {
+        outlineMode: 'aligned',
+        outlineExpansionMode: input.outline_expansion_mode,
+        outlineWordControlOptions: input.word_control_options,
+        outlineWordControlSnapshot: undefined,
+        referenceKnowledgeDocumentIds: input.reference_knowledge_document_ids,
+        outlineData: null,
+        globalFactsTask: undefined,
+        globalFacts: [],
+        contentGenerationTask: undefined,
+        contentGenerationSections: {},
+        contentGenerationPlans: {},
+        contentIllustrationPlan: undefined,
+        contentGenerationRuntime: undefined,
+      };
       return startManagedTask({
         type: 'outline-generation',
         input,
-        payloadSignature: stableHash(input),
+        payloadSignature,
         runner: runOutlineGenerationTask,
-        initialPartial: {
-          outlineMode: 'aligned',
-          outlineExpansionMode: input.outline_expansion_mode,
-          outlineWordControlOptions: input.word_control_options,
-          referenceKnowledgeDocumentIds: input.reference_knowledge_document_ids,
-        },
-        prepare: (acceptanceSignal) => prepareTechnicalPlanRun('outline-generation', input, acceptanceSignal),
+        initialPartial,
+        prepare: (acceptanceSignal) => prepareTechnicalPlanRun(
+          'outline-generation',
+          input,
+          initialPartial,
+          payloadSignature,
+          acceptanceSignal,
+        ),
         signal,
       });
     },

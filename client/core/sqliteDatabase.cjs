@@ -3,7 +3,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 
 
-const schemaVersion = 23;
+const schemaVersion = 24;
 
 function createInitialSchema(db) {
   db.exec(`
@@ -152,6 +152,13 @@ function createInitialSchema(db) {
 
     CREATE INDEX IF NOT EXISTS idx_technical_plan_global_fact_groups_order
     ON technical_plan_global_fact_groups(sort_order);
+
+    CREATE TABLE IF NOT EXISTS technical_plan_illustration_render_receipts (
+      item_id TEXT PRIMARY KEY,
+      generation_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 }
 
@@ -217,6 +224,57 @@ function createTechnicalPlanRunRecordsSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_technical_plan_run_records_task_type
     ON technical_plan_run_records(task_type);
   `);
+}
+
+function createTechnicalPlanIllustrationRenderReceiptsSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS technical_plan_illustration_render_receipts (
+      item_id TEXT PRIMARY KEY,
+      generation_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+}
+
+function migrateTechnicalPlanIllustrationRenderReceipts(db) {
+  createTechnicalPlanIllustrationRenderReceiptsSchema(db);
+  const row = db.prepare('SELECT content_illustration_plan_json FROM technical_plan_meta WHERE id = 1').get();
+  if (!row?.content_illustration_plan_json) return;
+
+  let plan;
+  try {
+    plan = JSON.parse(row.content_illustration_plan_json);
+  } catch {
+    return;
+  }
+  if (!plan || !Array.isArray(plan.items)) return;
+
+  const timestamp = new Date().toISOString();
+  const insertReceipt = db.prepare(`
+    INSERT INTO technical_plan_illustration_render_receipts (
+      item_id,
+      generation_json,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?)
+    ON CONFLICT(item_id) DO NOTHING
+  `);
+  let changed = false;
+  const items = plan.items.map((item, index) => {
+    if (!item || typeof item !== 'object' || !Object.prototype.hasOwnProperty.call(item, 'generation')) {
+      return item;
+    }
+    const itemId = String(item.item_id || item.id || `legacy-index-${index}`);
+    insertReceipt.run(itemId, JSON.stringify(item.generation ?? null), timestamp, timestamp);
+    const { generation: _generation, ...pureItem } = item;
+    changed = true;
+    return pureItem;
+  });
+  if (changed) {
+    db.prepare('UPDATE technical_plan_meta SET content_illustration_plan_json = ?, updated_at = ? WHERE id = 1')
+      .run(JSON.stringify({ ...plan, items }), timestamp);
+  }
 }
 
 function createAgentResultApplicationsSchema(db) {
@@ -1081,6 +1139,11 @@ const schemaHealthTableGroups = [
     tables: ['technical_plan_run_records'],
     repair: createTechnicalPlanRunRecordsSchema,
   },
+  {
+    version: 24,
+    tables: ['technical_plan_illustration_render_receipts'],
+    repair: migrateTechnicalPlanIllustrationRenderReceipts,
+  },
 ];
 
 const schemaHealthColumnGroups = [
@@ -1320,6 +1383,16 @@ const schemaHealthColumnGroups = [
       content_revision: 'INTEGER NOT NULL DEFAULT 0',
     },
   },
+  {
+    version: 24,
+    table: 'technical_plan_illustration_render_receipts',
+    columns: {
+      item_id: 'TEXT',
+      generation_json: 'TEXT',
+      created_at: 'TEXT',
+      updated_at: 'TEXT',
+    },
+  },
 ];
 
 function quoteIdentifier(value) {
@@ -1501,6 +1574,11 @@ const migrations = [
       addTechnicalPlanStageRevisions(db);
       createTechnicalPlanRunRecordsSchema(db);
     },
+  },
+  {
+    version: 24,
+    description: '拆分技术方案配图计划与渲染凭据',
+    up: migrateTechnicalPlanIllustrationRenderReceipts,
   },
 ];
 

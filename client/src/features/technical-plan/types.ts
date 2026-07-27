@@ -206,22 +206,23 @@ export interface ContentIllustrationPlanItem {
   section_ids: string[];
   placement: ContentIllustrationPlacement;
   priority: number;
-  generation?: {
-    status: 'pending' | 'running' | 'success' | 'error';
-    mode?: 'normal' | 'agent';
-    code?: string;
-    source_path?: string;
-    asset_url?: string;
-    attempts?: number;
-    error?: string;
-    updated_at?: string;
-  };
+}
+
+export interface ContentIllustrationRenderReceipt {
+  status: 'pending' | 'running' | 'success' | 'error';
+  mode?: 'normal' | 'agent';
+  code?: string;
+  source_path?: string;
+  asset_url?: string;
+  attempts?: number;
+  error?: string;
+  updated_at?: string;
 }
 
 export interface ContentIllustrationPlanState {
   plan_version: number;
   revision: string;
-  items: ContentIllustrationPlanItem[];
+  items: Array<ContentIllustrationPlanItem & { generation?: ContentIllustrationRenderReceipt }>;
   updated_at?: string;
 }
 
@@ -323,6 +324,7 @@ export interface TechnicalPlanState {
   contentGenerationSections: ContentGenerationSections;
   contentGenerationPlans: ContentGenerationPlans;
   contentIllustrationPlan?: ContentIllustrationPlanState;
+  contentIllustrationRenderReceipts?: Record<string, ContentIllustrationRenderReceipt | null>;
   contentGenerationRuntime?: ContentGenerationRuntimeState;
   outlineData: OutlineData | null;
 }

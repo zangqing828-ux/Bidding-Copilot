@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createSqliteDatabase, schemaVersion } = require('../core/sqliteDatabase.cjs');
 const { createTechnicalPlanStore } = require('../core/stores/technicalPlanStore.cjs');
+const { createTechnicalPlanStore: createElectronTechnicalPlanStore } = require('../electron/services/technicalPlanStore.cjs');
 
 const HASH = '0'.repeat(64);
 
@@ -450,6 +451,7 @@ async function runStageInvalidationMatrix() {
       '重启恢复为 execution run record 保留稳定中断错误码',
     );
 
+    const inputRevisionBeforeReopen = store.getBidAnalysisInputVersion().inputRevision;
     sqlite.close();
     sqlite = null;
 
@@ -464,8 +466,8 @@ async function runStageInvalidationMatrix() {
     );
     assert.equal(
       reopenedStore.getBidAnalysisInputVersion().inputRevision,
-      updatedInputRevision,
-      'schema23 重开后输入版本可恢复',
+      inputRevisionBeforeReopen,
+      'schema 重开后输入版本可恢复',
     );
 
     reopened.close();
@@ -480,6 +482,99 @@ async function runStageInvalidationMatrix() {
     for (const column of ['source_revision', 'analysis_revision', 'outline_revision', 'facts_revision', 'content_revision']) {
       assert.equal(stageColumns.includes(column), true, `migration 幂等后保留 ${column}`);
     }
+
+    const overLimitOutline = Array.from({ length: 1001 }, (_, index) => ({
+      id: `node-limit-${index}`,
+      title: `节点 ${index + 1}`,
+      description: '',
+    }));
+    assert.throws(
+      () => createTechnicalPlanStore({ db: remigrated.db, workspaceRoot: root }).saveOutline({
+        reason: 'replace',
+        outlineData: { outline: overLimitOutline },
+      }),
+      (error) => error?.code === 'TASK_INVALID_INPUT' && /1000/.test(error.message),
+      'Store 手工保存入口应拒绝超过 1000 个目录节点',
+    );
+
+    remigrated.db.prepare('UPDATE technical_plan_meta SET content_illustration_plan_json = ? WHERE id = 1').run(JSON.stringify({
+      plan_version: 1,
+      revision: 'legacy-revision',
+      items: [{
+        item_id: 'illustration-legacy-1',
+        kind: 'ai',
+        image_type: 'architecture',
+        title: '旧版架构图',
+        section_ids: ['node-1'],
+        placement: 'after',
+        priority: 1,
+        generation: {
+          status: 'success',
+          source_path: '/legacy/generated.png',
+          asset_url: 'yibiao-asset://legacy/generated.png',
+        },
+      }],
+    }));
+    remigrated.db.exec('DROP TABLE technical_plan_illustration_render_receipts');
+    remigrated.db.pragma('user_version = 23');
+    remigrated.close();
+    sqlite = null;
+
+    const migratedIllustrations = createSqliteDatabase({ databasePath: dbPath });
+    sqlite = migratedIllustrations;
+    assert.equal(migratedIllustrations.schemaVersion, 24, '旧配图状态应迁移到 schema v24');
+    const purePlan = JSON.parse(migratedIllustrations.db.prepare(
+      'SELECT content_illustration_plan_json FROM technical_plan_meta WHERE id = 1',
+    ).get().content_illustration_plan_json);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(purePlan.items[0], 'generation'),
+      false,
+      '迁移后的 IllustrationPlan 不再内嵌渲染凭据',
+    );
+    const receiptRow = migratedIllustrations.db.prepare(
+      'SELECT generation_json FROM technical_plan_illustration_render_receipts WHERE item_id = ?',
+    ).get('illustration-legacy-1');
+    assert.deepEqual(JSON.parse(receiptRow.generation_json), {
+      status: 'success',
+      source_path: '/legacy/generated.png',
+      asset_url: 'yibiao-asset://legacy/generated.png',
+    }, '迁移应完整保留旧 generation 渲染凭据');
+
+    const webIllustrationState = createTechnicalPlanStore({
+      db: migratedIllustrations.db,
+      workspaceRoot: root,
+    }).loadTechnicalPlan();
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(webIllustrationState.contentIllustrationPlan.items[0], 'generation'),
+      false,
+      'Web Store 只返回纯 IllustrationPlan',
+    );
+    assert.equal(
+      webIllustrationState.contentIllustrationRenderReceipts['illustration-legacy-1'].status,
+      'success',
+      'Web Store 通过独立字段返回 render receipt',
+    );
+    const electronIllustrationState = createElectronTechnicalPlanStore({
+      db: migratedIllustrations.db,
+      workspaceRoot: root,
+    }).loadTechnicalPlan();
+    assert.equal(
+      electronIllustrationState.contentIllustrationPlan.items[0].generation.status,
+      'success',
+      'Electron adapter 应重组旧版 generation 兼容视图',
+    );
+
+    migratedIllustrations.close();
+    sqlite = null;
+    const migrationIdempotencyProbe = createSqliteDatabase({ databasePath: dbPath });
+    sqlite = migrationIdempotencyProbe;
+    assert.equal(
+      migrationIdempotencyProbe.db.prepare(
+        'SELECT COUNT(*) AS count FROM technical_plan_illustration_render_receipts WHERE item_id = ?',
+      ).get('illustration-legacy-1').count,
+      1,
+      'v24 配图迁移重复打开应保持幂等',
+    );
 
     await runStageInvalidationMatrix();
     console.log('technicalPlanStore CAS tests passed.');
