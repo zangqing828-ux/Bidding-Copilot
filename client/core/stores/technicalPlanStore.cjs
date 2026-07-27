@@ -5,6 +5,11 @@ const { getBidAnalysisTasks } = require('../bidAnalysisTask.cjs');
 const { resolveWorkspacePaths } = require('../workspacePaths.cjs');
 const { deleteImportedImageBatches, clearMermaidCache } = require('../workspaceCleanup.cjs');
 const { detectBidSections } = require('../bidSectionDetector.cjs');
+const {
+  canonicalizeRunManifestV1,
+  computeRunManifestV1Hash,
+  normalizeRunManifestToImmutableProjection,
+} = require('../../shared/contracts/technical-plan/runManifest.cjs');
 
 const tenderMarkdownRelativePath = path.join('technical-plan', 'tender.md').replace(/\\/g, '/');
 const tenderOriginalMarkdownRelativePath = path.join('technical-plan', 'tender-original.md').replace(/\\/g, '/');
@@ -18,6 +23,10 @@ const defaultOutlineWordControlOptions = Object.freeze({
   sectionWords: 0,
   strictSectionWords: false,
 });
+
+function isThenable(value) {
+  return Boolean(value && (typeof value === 'object' || typeof value === 'function') && typeof value.then === 'function');
+}
 
 const initialState = {
   workflowKind: 'technical-plan',
@@ -62,6 +71,90 @@ const taskFieldTypes = {
   globalFactsTask: 'global-facts-generation',
   contentGenerationTask: 'content-generation',
 };
+
+const STAGE_REVISION_KEYS = Object.freeze([
+  'source_revision',
+  'analysis_revision',
+  'outline_revision',
+  'facts_revision',
+  'content_revision',
+]);
+
+const TASK_UPSTREAM_STAGE_KEYS = Object.freeze({
+  'bid-section-extraction': Object.freeze(['source_revision']),
+  'outline-generation': Object.freeze(['source_revision', 'analysis_revision']),
+  'global-facts-generation': Object.freeze(['source_revision', 'analysis_revision', 'outline_revision']),
+  'content-generation': Object.freeze(['source_revision', 'analysis_revision', 'outline_revision', 'facts_revision']),
+});
+
+const TASK_TARGET_STAGE_KEY = Object.freeze({
+  'bid-section-extraction': 'source_revision',
+  'outline-generation': 'outline_revision',
+  'global-facts-generation': 'facts_revision',
+  'content-generation': 'content_revision',
+});
+
+const TASK_ACCEPTANCE_INVALIDATION_RULES = Object.freeze({
+  'outline-generation': {
+    stageKey: 'outline_revision',
+    clearTasks: ['global-facts-generation', 'content-generation'],
+    clearBidItems: false,
+    clearReferenceDocs: true,
+    clearOutline: true,
+    clearGlobalFacts: true,
+    clearContentSections: true,
+    clearContentPlans: true,
+    clearTaskRuntime: true,
+    clearMermaidCache: true,
+    clearSectionRuntime: true,
+    clearOriginalOutlineRuntime: true,
+    resetStep: 'bid-analysis',
+  },
+  'global-facts-generation': {
+    stageKey: 'facts_revision',
+    clearTasks: ['content-generation'],
+    clearBidItems: false,
+    clearReferenceDocs: false,
+    clearOutline: false,
+    clearGlobalFacts: false,
+    clearContentSections: true,
+    clearContentPlans: true,
+    clearTaskRuntime: true,
+    clearMermaidCache: false,
+    clearSectionRuntime: true,
+    clearOriginalOutlineRuntime: false,
+    resetStep: 'global-facts-generation',
+  },
+  'bid-section-extraction': {
+    clearTasks: ['bid-section-extraction', 'outline-generation', 'global-facts-generation', 'content-generation'],
+    clearBidItems: true,
+    clearReferenceDocs: true,
+    clearOutline: true,
+    clearGlobalFacts: true,
+    clearContentSections: true,
+    clearContentPlans: true,
+    clearTaskRuntime: true,
+    clearMermaidCache: true,
+    clearSectionRuntime: true,
+    clearOriginalOutlineRuntime: true,
+    resetStep: 'document-analysis',
+  },
+  'content-generation': {
+    stageKey: 'content_revision',
+    clearTasks: ['content-generation'],
+    clearBidItems: false,
+    clearReferenceDocs: false,
+    clearOutline: false,
+    clearGlobalFacts: false,
+    clearContentSections: false,
+    clearContentPlans: true,
+    clearTaskRuntime: true,
+    clearMermaidCache: false,
+    clearSectionRuntime: true,
+    clearOriginalOutlineRuntime: false,
+    resetStep: 'content-generation',
+  },
+});
 
 const taskTypeFields = Object.fromEntries(Object.entries(taskFieldTypes).map(([field, type]) => [type, field]));
 
@@ -129,6 +222,58 @@ function normalizeWorkflowKind(value) {
 function normalizeNonNegativeInteger(value) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
+}
+
+function normalizeRunManifest(manifest) {
+  return normalizeRunManifestToImmutableProjection(manifest);
+}
+
+function canonicalizeRunManifest(manifest) {
+  return canonicalizeRunManifestV1(normalizeRunManifest(manifest));
+}
+
+function manifestInputChangedError(message = '写回输入已更新，请重新执行该任务') {
+  const error = new Error(message);
+  error.code = 'TASK_INPUT_CHANGED';
+  error.retryable = true;
+  return error;
+}
+
+function taskApplyFailedError(message = '任务应用失败，请重试') {
+  const error = new Error(message);
+  error.code = 'TASK_APPLY_FAILED';
+  error.retryable = false;
+  return error;
+}
+
+function stageManifestConflictError(message) {
+  const error = new Error(message || '任务执行请求与当前输入冲突');
+  error.code = 'TASK_CONFLICT';
+  error.retryable = false;
+  return error;
+}
+
+function normalizeStageRevisionVectorFromMeta(meta = {}) {
+  return {
+    source_revision: normalizeNonNegativeInteger(meta.source_revision),
+    analysis_revision: normalizeNonNegativeInteger(meta.analysis_revision),
+    outline_revision: normalizeNonNegativeInteger(meta.outline_revision),
+    facts_revision: normalizeNonNegativeInteger(meta.facts_revision),
+    content_revision: normalizeNonNegativeInteger(meta.content_revision),
+  };
+}
+
+function stageRevisionEquals(a = {}, b = {}) {
+  return STAGE_REVISION_KEYS.every((field) => normalizeNonNegativeInteger(a[field]) === normalizeNonNegativeInteger(b[field]));
+}
+
+function stageRevisionMatches(meta = {}, expected = {}, keys = STAGE_REVISION_KEYS) {
+  for (const field of keys) {
+    if (normalizeNonNegativeInteger(expected[field]) !== normalizeNonNegativeInteger(meta[field])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // 统一 Step03 当前设置和目录快照的字段语义。
@@ -370,7 +515,11 @@ function mapOutlineItems(items, mapper) {
   });
 }
 
-function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
+function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRuntimeGeneration } = {}) {
+  const hasWorkspaceRuntimeGeneration = workspaceRuntimeGeneration !== undefined;
+  const capturedWorkspaceRuntimeGeneration = hasWorkspaceRuntimeGeneration
+    ? normalizeWorkspaceRuntimeGeneration(workspaceRuntimeGeneration)
+    : null;
   const wp = resolveWorkspacePaths(workspaceRoot);
   const tenderMarkdownPath = wp.technicalPlanTenderMarkdownPath;
   const tenderOriginalMarkdownPath = wp.technicalPlanTenderOriginalMarkdownPath;
@@ -379,6 +528,46 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
   const originalOutlineRuntimePath = wp.technicalPlanOriginalOutlineRuntimePath;
   const illustrationsDir = wp.technicalPlanIllustrationsDir;
   const generatedIllustrationsDir = wp.technicalPlanGeneratedIllustrationsDir;
+
+  const runRecordByExecutionStatement = db.prepare('SELECT * FROM technical_plan_run_records WHERE execution_id = ?');
+  const insertRunRecordStatement = db.prepare(`
+    INSERT INTO technical_plan_run_records (
+      run_id,
+      execution_id,
+      task_id,
+      task_type,
+      manifest_hash,
+      manifest_json,
+      workspace_runtime_generation,
+      base_stage_vector_json,
+      target_stage_generation,
+      status,
+      checkpoint_json,
+      created_at,
+      updated_at
+    ) VALUES (
+      @run_id,
+      @execution_id,
+      @task_id,
+      @task_type,
+      @manifest_hash,
+      @manifest_json,
+      @workspace_runtime_generation,
+      @base_stage_vector_json,
+      @target_stage_generation,
+      @status,
+      @checkpoint_json,
+      @created_at,
+      @updated_at
+    )
+  `);
+  const updateRunRecordStatement = db.prepare(`
+    UPDATE technical_plan_run_records
+    SET status = @status,
+        checkpoint_json = @checkpoint_json,
+        updated_at = @updated_at
+    WHERE execution_id = @execution_id
+  `);
 
   function normalizeIllustrationFilePart(value) {
     return String(value || '').replace(/[^a-zA-Z0-9_-]/g, '_') || 'illustration';
@@ -582,11 +771,275 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     return nextRevision;
   }
 
+  function currentStageRevisions(meta = ensureMetaRow()) {
+    return normalizeStageRevisionVectorFromMeta(meta);
+  }
+
+  function bumpStageRevision(field, meta) {
+    if (!STAGE_REVISION_KEYS.includes(field)) {
+      return currentStageRevisions(meta);
+    }
+    const nextRevision = currentStageRevisions(meta);
+    const nextValue = normalizeNonNegativeInteger(nextRevision[field]) + 1;
+    nextRevision[field] = nextValue;
+    updateMeta({ [field]: nextValue });
+    return nextRevision;
+  }
+
+  function ensureStageRevisionMatch(manifestStageVector) {
+    const manifestVector = normalizeStageRevisionVectorFromMeta(manifestStageVector);
+    return stageRevisionEquals(currentStageRevisions(), manifestVector);
+  }
+
+  function normalizeWorkspaceRuntimeGeneration(value) {
+    const nextValue = Number(value);
+    if (!Number.isFinite(nextValue) || Math.floor(nextValue) !== nextValue || nextValue <= 0) {
+      const error = new Error('workspace_runtime_generation 必须为正整数');
+      error.code = 'TASK_CONFLICT';
+      error.retryable = false;
+      throw error;
+    }
+    return nextValue;
+  }
+
   function inputChangedError() {
     const error = new Error('招标文件输入已更新，请重新开始解析');
     error.code = 'TASK_INPUT_CHANGED';
     error.retryable = true;
     return error;
+  }
+
+  function getTechnicalPlanRunRecord(executionId) {
+    const row = runRecordByExecutionStatement.get(String(executionId || '').trim());
+    if (!row) return null;
+    return {
+      runId: row.run_id,
+      executionId: row.execution_id,
+      taskId: row.task_id,
+      taskType: row.task_type,
+      manifestHash: row.manifest_hash,
+      manifest: safeJsonParse(row.manifest_json, null),
+      workspaceRuntimeGeneration: Number(row.workspace_runtime_generation || 0),
+      baseStageVector: safeJsonParse(row.base_stage_vector_json, null),
+      targetStageGeneration: Number(row.target_stage_generation || 0),
+      status: row.status,
+      checkpoint: safeJsonParse(row.checkpoint_json, null),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  function validateManifestForAcceptance({ taskType, stageRevisionVector, workspaceRuntimeGeneration }) {
+    if (!hasWorkspaceRuntimeGeneration) {
+      throw stageManifestConflictError('运行时代号未绑定，请重新创建 store');
+    }
+    const normalizedWorkspaceRuntimeGeneration = normalizeWorkspaceRuntimeGeneration(workspaceRuntimeGeneration);
+    if (!TASK_TARGET_STAGE_KEY[taskType]) {
+      const error = stageManifestConflictError(`任务类型 ${taskType} 尚未配置阶段 CAS`);
+      throw error;
+    }
+    if (normalizedWorkspaceRuntimeGeneration !== capturedWorkspaceRuntimeGeneration) {
+      throw stageManifestConflictError('运行时代号已变化，请重新提交任务');
+    }
+    if (!stageRevisionEquals(stageRevisionVector, currentStageRevisions())) {
+      throw manifestInputChangedError('阶段版本已变化，请重新提交任务');
+    }
+  }
+
+  function validateWritebackAgainstRunRecord(record, { manifestHash, targetStageGeneration }) {
+    if (!record || !record.executionId || !record.manifest) {
+      throw manifestInputChangedError('任务执行记录缺失，请重新提交任务');
+    }
+    if (record.manifestHash !== manifestHash) {
+      throw stageManifestConflictError('执行 ID 与 manifest hash 不匹配');
+    }
+    if (Number(record.targetStageGeneration) !== Number(targetStageGeneration)) {
+      throw manifestInputChangedError('任务阶段代号已变化，请重新提交任务');
+    }
+    const taskType = record.taskType;
+    const targetStageKey = TASK_TARGET_STAGE_KEY[taskType];
+    const currentTargetStageGeneration = normalizeNonNegativeInteger(currentStageRevisions()[targetStageKey]);
+    if (currentTargetStageGeneration !== Number(record.targetStageGeneration)) {
+      throw manifestInputChangedError('任务阶段代号已变化，请重新提交任务');
+    }
+    const requiredKeys = TASK_UPSTREAM_STAGE_KEYS[taskType] || [];
+    if (!requiredKeys.length || !stageRevisionMatches(currentStageRevisions(), record.baseStageVector, requiredKeys)) {
+      throw manifestInputChangedError('阶段输入已变化，请重新提交任务');
+    }
+  }
+
+  function assertUpstreamStagesBeforeTarget(taskType) {
+    const required = TASK_UPSTREAM_STAGE_KEYS[taskType] || [];
+    return required;
+  }
+
+  function runAcceptanceInvalidate(taskType) {
+    const targetKey = TASK_TARGET_STAGE_KEY[taskType];
+    const clearFactsAndContent = () => {
+      db.prepare('DELETE FROM technical_plan_global_fact_groups').run();
+      db.prepare('DELETE FROM technical_plan_content_sections').run();
+      db.prepare('DELETE FROM technical_plan_content_plans').run();
+      db.prepare("DELETE FROM technical_plan_tasks WHERE type = 'content-generation'").run();
+      clearTechnicalPlanMermaidCache();
+      updateMeta({ content_generation_runtime_json: null, content_illustration_plan_json: null });
+    };
+
+    const clearContentDownstream = () => {
+      db.prepare("DELETE FROM technical_plan_tasks WHERE type = 'content-generation'").run();
+      db.prepare('DELETE FROM technical_plan_content_sections').run();
+      db.prepare('DELETE FROM technical_plan_content_plans').run();
+      clearTechnicalPlanMermaidCache();
+      updateMeta({ content_generation_runtime_json: null, content_illustration_plan_json: null });
+    };
+
+    const clearContentGenerationStateForExecution = () => {
+      db.prepare("DELETE FROM technical_plan_tasks WHERE type = 'content-generation'").run();
+      clearTechnicalPlanMermaidCache();
+      updateMeta({ content_illustration_plan_json: null });
+    };
+
+    if (taskType === 'bid-section-extraction') {
+      clearDownstreamFromBidAnalysisChange();
+      return;
+    }
+    if (taskType === 'outline-generation') {
+      db.prepare('DELETE FROM technical_plan_tasks').run();
+      clearFactsAndContent();
+      return;
+    }
+    if (taskType === 'global-facts-generation') {
+      clearFactsAndContent();
+      return;
+    }
+    if (taskType === 'content-generation') {
+      clearContentGenerationStateForExecution();
+      return;
+    }
+  }
+
+  function acceptTechnicalPlanTaskRun(manifest) {
+    const normalized = normalizeRunManifest(manifest);
+    const canonicalManifest = canonicalizeRunManifest(normalized);
+    const manifestHash = computeRunManifestV1Hash(canonicalManifest);
+    const executionId = String(normalized.execution_id || '').trim();
+    const workspaceRuntimeGeneration = normalizeWorkspaceRuntimeGeneration(normalized.workspace_runtime_generation);
+    const targetStageKey = TASK_TARGET_STAGE_KEY[normalized.task_type];
+    if (!executionId) {
+      throw stageManifestConflictError('执行 ID 缺失');
+    }
+
+    const row = db.transaction(() => {
+      const existing = getTechnicalPlanRunRecord(executionId);
+      if (existing) {
+        if (existing.manifestHash !== manifestHash) {
+          throw stageManifestConflictError('同一执行 ID 存在不同的 manifest');
+        }
+        return {
+          status: existing.status,
+          isReplay: true,
+          ...existing,
+        };
+      }
+
+      validateManifestForAcceptance({
+        taskType: normalized.task_type,
+        stageRevisionVector: canonicalManifest.stage_revision_vector,
+        workspaceRuntimeGeneration,
+      });
+
+      const targetStageGeneration = currentStageRevisions()[targetStageKey] + 1;
+      const currentMeta = ensureMetaRow();
+      const nextRevisions = bumpStageRevision(targetStageKey, currentMeta);
+      runAcceptanceInvalidate(normalized.task_type);
+
+      const timestamp = now();
+      const runId = crypto.randomUUID();
+      const runManifestJson = JSON.stringify(canonicalManifest);
+      const baseStageVectorJson = JSON.stringify(canonicalManifest.stage_revision_vector);
+      const status = 'accepted';
+      insertRunRecordStatement.run({
+        run_id: runId,
+        execution_id: executionId,
+        task_id: String(normalized.task_id),
+        task_type: String(normalized.task_type),
+        manifest_hash: manifestHash,
+        manifest_json: runManifestJson,
+        workspace_runtime_generation: Number(workspaceRuntimeGeneration),
+        base_stage_vector_json: baseStageVectorJson,
+        target_stage_generation: targetStageGeneration,
+        status,
+        checkpoint_json: null,
+        created_at: timestamp,
+        updated_at: timestamp,
+      });
+
+      return {
+        runId,
+        executionId,
+        taskId: String(normalized.task_id),
+        taskType: String(normalized.task_type),
+        manifestHash,
+        manifest: canonicalManifest,
+        workspaceRuntimeGeneration: Number(workspaceRuntimeGeneration),
+        baseStageVector: canonicalManifest.stage_revision_vector,
+        targetStageGeneration,
+        status,
+        checkpoint: null,
+        stageRevisions: nextRevisions,
+      };
+    })();
+
+    return row;
+  }
+
+  function writebackTechnicalPlanTaskRun({
+    executionId,
+    manifestHash,
+    targetStageGeneration,
+    checkpoint,
+    apply = () => {},
+  } = {}) {
+    if (!executionId) {
+      throw stageManifestConflictError('执行 ID 缺失');
+    }
+
+    return db.transaction(() => {
+      const record = getTechnicalPlanRunRecord(executionId);
+      validateWritebackAgainstRunRecord(record, {
+        manifestHash: String(manifestHash || ''),
+        targetStageGeneration,
+      });
+
+      if (typeof apply !== 'function') {
+        throw taskApplyFailedError('写回回调未定义');
+      }
+      let patch;
+      try {
+        patch = apply({
+          executionId: record.executionId,
+          taskType: record.taskType,
+          manifest: record.manifest,
+          targetStageGeneration: record.targetStageGeneration,
+        });
+      } catch (error) {
+        throw taskApplyFailedError(error?.message || '任务应用回调执行失败');
+      }
+      if (isThenable(patch)) {
+        throw taskApplyFailedError('任务应用回调返回了异步结果');
+      }
+      patch = patch || {};
+      const timestamp = now();
+      updateRunRecordStatement.run({
+        execution_id: executionId,
+        status: 'succeeded',
+        checkpoint_json: JSON.stringify(checkpoint || null),
+        updated_at: timestamp,
+      });
+      return {
+        ...getTechnicalPlanRunRecord(executionId),
+        payload: patch,
+      };
+    })();
   }
 
   function getBidAnalysisInputVersion() {
@@ -1370,8 +1823,19 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     updateMeta({ content_generation_runtime_json: null, content_illustration_plan_json: null });
   }
 
+  function clearDownstreamFromOutlineChange() {
+    db.prepare('DELETE FROM technical_plan_global_fact_groups').run();
+    clearContentGenerationState();
+  }
+
+  function clearIllustrationPlanAndRenderReceipt() {
+    updateMeta({ content_illustration_plan_json: null });
+  }
+
   function clearDownstreamFromOriginalPlan() {
-    db.prepare("DELETE FROM technical_plan_tasks WHERE type IN ('outline-generation', 'global-facts-generation', 'content-generation')").run();
+    db.prepare('DELETE FROM technical_plan_tasks').run();
+    db.prepare('DELETE FROM technical_plan_bid_items').run();
+    db.prepare('DELETE FROM technical_plan_reference_docs').run();
     db.prepare('DELETE FROM technical_plan_outline_nodes').run();
     db.prepare('DELETE FROM technical_plan_global_fact_groups').run();
     db.prepare('DELETE FROM technical_plan_content_sections').run();
@@ -1676,6 +2140,10 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     if (currentInputRevision(meta) !== Number(inputRevision)) {
       throw inputChangedError();
     }
+    if (hasOwn(partial, 'bidAnalysisTasks') || hasOwn(partial, 'projectOverview') || hasOwn(partial, 'techRequirements')) {
+      clearDownstreamFromBidAnalysisChange();
+      bumpStageRevision('analysis_revision');
+    }
     applyPartial(partial || {});
   });
 
@@ -1769,8 +2237,10 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
       }
       if (shouldChangeSectionMode) {
         clearDownstreamFromBidSectionChange();
+        bumpStageRevision('source_revision');
       } else {
         clearDownstreamFromBidAnalysisChange();
+        bumpStageRevision('analysis_revision');
       }
       bumpInputRevision();
       const nextMeta = {
@@ -1808,6 +2278,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
         || JSON.stringify(currentConfig.selectedTaskIds) !== JSON.stringify(config.selectedTaskIds);
       if (shouldChangeAnalysisConfig || retryIds.length) {
         clearDownstreamFromBidAnalysisChange();
+        bumpStageRevision('analysis_revision');
       }
       if (shouldChangeAnalysisConfig) {
         updateMeta({
@@ -1831,6 +2302,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     const transaction = db.transaction(() => {
       resetTenderWorkingCopyToOriginal();
       clearDownstreamFromBidSectionChange();
+      bumpStageRevision('source_revision');
       bumpInputRevision();
       updateMeta({
         bid_section_mode: 'multiple',
@@ -1853,7 +2325,6 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     const reverseMap = reverseIdMap(idMap);
     const affectedIds = normalizeStringSet(request?.affectedNodeIds);
     const clearAll = reason === 'replace';
-    const invalidatesContentTask = reason !== 'sort';
 
     const transaction = db.transaction(() => {
       assertOutlineMutationAllowed();
@@ -1866,12 +2337,10 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
       const rows = flattenOutlineItems(outlineToSave?.outline || []);
       const nextIds = new Set(rows.map((row) => row.node_id));
       restoreMappedContentRows({ snapshot, idMap, affectedIds, nextIds, clearAll });
-      if (invalidatesContentTask) {
-        db.prepare("DELETE FROM technical_plan_tasks WHERE type = 'content-generation'").run();
-        clearTechnicalPlanMermaidCache();
-        updateMeta({ content_generation_runtime_json: null });
-      }
-      updateMeta({ content_illustration_plan_json: null });
+      // saveOutline 是普通目录保存入口，reason=sort 无法证明为展示层纯排序。
+      // 只有单独的 display-only API 才能保留下游结果；当前 Store 未提供该 API。
+      clearDownstreamFromOutlineChange();
+      bumpStageRevision('outline_revision');
     });
     transaction();
     return loadTechnicalPlan();
@@ -1881,6 +2350,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     const transaction = db.transaction(() => {
       replaceGlobalFacts(globalFacts);
       clearContentGenerationState();
+      bumpStageRevision('facts_revision');
       const timestamp = now();
       saveTask('global-facts-generation', {
         task_id: `manual-global-facts-${Date.now()}`,
@@ -1913,7 +2383,8 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
         VALUES (?, ?, NULL, ?)
         ON CONFLICT(node_id) DO UPDATE SET status = excluded.status, error = NULL, updated_at = excluded.updated_at
       `).run(nodeId, nextContent.trim() ? 'success' : 'idle', timestamp);
-      updateMeta({ content_illustration_plan_json: null });
+      clearIllustrationPlanAndRenderReceipt();
+      bumpStageRevision('content_revision');
     });
     transaction();
     return loadTechnicalPlan();
@@ -1990,6 +2461,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
           original_plan_imported_at: timestamp,
         });
         clearDownstreamFromOriginalPlan();
+        bumpStageRevision('source_revision');
         bumpInputRevision();
       });
       transaction();
@@ -2021,6 +2493,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     const timestamp = now();
     const transaction = db.transaction(() => {
       clearDownstreamFromTender();
+      bumpStageRevision('source_revision');
       bumpInputRevision();
       updateMeta({
         tender_file_name: fileName || '未命名文件',
@@ -2061,6 +2534,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
       writeMarkdownFile(tenderMarkdownPath, workingMarkdown, 'tender');
       const transaction = db.transaction(() => {
         clearDownstreamFromBidSectionChange();
+        bumpStageRevision('source_revision');
         bumpInputRevision();
         updateMeta({
           tender_markdown_path: tenderMarkdownRelativePath,
@@ -2121,6 +2595,10 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     updateTechnicalPlan,
     updateTechnicalPlanWithoutReload,
     updateTechnicalPlanForInputRevision,
+    currentStageRevisions,
+    acceptTechnicalPlanTaskRun,
+    writebackTechnicalPlanTaskRun,
+    getTechnicalPlanRunRecord,
     getBidAnalysisInputVersion,
     recoverInterruptedTasks,
     saveContentGenerationItem,

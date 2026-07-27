@@ -3,7 +3,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 
 
-const schemaVersion = 22;
+const schemaVersion = 23;
 
 function createInitialSchema(db) {
   db.exec(`
@@ -27,6 +27,7 @@ function createInitialSchema(db) {
       original_plan_markdown_chars INTEGER NOT NULL DEFAULT 0,
       original_plan_parser_label TEXT,
       original_plan_imported_at TEXT,
+      workspace_runtime_generation INTEGER NOT NULL DEFAULT 0,
       pending_tender_markdown_path TEXT,
       pending_tender_file_name TEXT,
       pending_tender_parser_label TEXT,
@@ -36,6 +37,11 @@ function createInitialSchema(db) {
       bid_analysis_mode TEXT NOT NULL DEFAULT 'key',
       bid_analysis_selected_task_ids_json TEXT,
       input_revision INTEGER NOT NULL DEFAULT 0,
+      source_revision INTEGER NOT NULL DEFAULT 0,
+      analysis_revision INTEGER NOT NULL DEFAULT 0,
+      outline_revision INTEGER NOT NULL DEFAULT 0,
+      facts_revision INTEGER NOT NULL DEFAULT 0,
+      content_revision INTEGER NOT NULL DEFAULT 0,
       bid_section_mode TEXT NOT NULL DEFAULT 'single',
       bid_sections_json TEXT,
       bid_section_extraction_status TEXT NOT NULL DEFAULT 'idle',
@@ -187,6 +193,32 @@ function createUploadRegistrySchema(db) {
   `);
 }
 
+function createTechnicalPlanRunRecordsSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS technical_plan_run_records (
+      run_id TEXT PRIMARY KEY,
+      execution_id TEXT NOT NULL UNIQUE,
+      task_id TEXT NOT NULL,
+      task_type TEXT NOT NULL,
+      manifest_hash TEXT NOT NULL,
+      manifest_json TEXT NOT NULL,
+      workspace_runtime_generation INTEGER NOT NULL CHECK (workspace_runtime_generation > 0),
+      base_stage_vector_json TEXT NOT NULL,
+      target_stage_generation INTEGER NOT NULL CHECK (target_stage_generation >= 0),
+      status TEXT NOT NULL,
+      checkpoint_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_technical_plan_run_records_execution
+    ON technical_plan_run_records(execution_id);
+
+    CREATE INDEX IF NOT EXISTS idx_technical_plan_run_records_task_type
+    ON technical_plan_run_records(task_type);
+  `);
+}
+
 function createAgentResultApplicationsSchema(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS agent_result_applications (
@@ -217,6 +249,14 @@ function addTechnicalPlanInputVersioning(db) {
   addColumnIfMissing(db, 'technical_plan_bid_items', 'error_code', 'TEXT');
   addColumnIfMissing(db, 'technical_plan_bid_items', 'retryable', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'technical_plan_tasks', 'input_revision', 'INTEGER');
+}
+
+function addTechnicalPlanStageRevisions(db) {
+  addColumnIfMissing(db, 'technical_plan_meta', 'source_revision', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'technical_plan_meta', 'analysis_revision', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'technical_plan_meta', 'outline_revision', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'technical_plan_meta', 'facts_revision', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'technical_plan_meta', 'content_revision', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 function addTechnicalPlanBidSectionV6Compat(db) {
@@ -1036,6 +1076,11 @@ const schemaHealthTableGroups = [
     tables: ['upload_registry'],
     repair: createUploadRegistrySchema,
   },
+  {
+    version: 23,
+    tables: ['technical_plan_run_records'],
+    repair: createTechnicalPlanRunRecordsSchema,
+  },
 ];
 
 const schemaHealthColumnGroups = [
@@ -1244,6 +1289,37 @@ const schemaHealthColumnGroups = [
       applied_at: 'TEXT',
     },
   },
+  {
+    version: 23,
+    table: 'technical_plan_run_records',
+    columns: {
+      run_id: 'TEXT',
+      execution_id: 'TEXT',
+      task_id: 'TEXT',
+      task_type: 'TEXT',
+      manifest_hash: 'TEXT',
+      manifest_json: 'TEXT',
+      workspace_runtime_generation: 'INTEGER',
+      base_stage_vector_json: 'TEXT',
+      target_stage_generation: 'INTEGER',
+      status: 'TEXT',
+      checkpoint_json: 'TEXT',
+      created_at: 'TEXT',
+      updated_at: 'TEXT',
+    },
+  },
+  {
+    version: 23,
+    table: 'technical_plan_meta',
+    columns: {
+      workspace_runtime_generation: 'INTEGER NOT NULL DEFAULT 0',
+      source_revision: 'INTEGER NOT NULL DEFAULT 0',
+      analysis_revision: 'INTEGER NOT NULL DEFAULT 0',
+      outline_revision: 'INTEGER NOT NULL DEFAULT 0',
+      facts_revision: 'INTEGER NOT NULL DEFAULT 0',
+      content_revision: 'INTEGER NOT NULL DEFAULT 0',
+    },
+  },
 ];
 
 function quoteIdentifier(value) {
@@ -1417,6 +1493,14 @@ const migrations = [
     version: 22,
     description: '新增 Agent 结果幂等应用账本',
     up: createAgentResultApplicationsSchema,
+  },
+  {
+    version: 23,
+    description: '新增技术方案执行记录与阶段修订字段',
+    up: (db) => {
+      addTechnicalPlanStageRevisions(db);
+      createTechnicalPlanRunRecordsSchema(db);
+    },
   },
 ];
 
