@@ -680,32 +680,8 @@ function createWebBidAnalysisTaskService({
         return volatileState;
       };
       const commitAcceptedResult = (partial, finalTaskPatch, checkpoint) => mutationExecutor.execute(() => {
-        let currentModelSnapshot;
-        try {
-          currentModelSnapshot = captureModelSnapshot();
-        } catch {
-          throw createTaskInputChangedError('模型配置已变化，请重新执行任务');
-        }
-        const currentGenerationConfig = captureTechnicalPlanGenerationConfig(aiService);
-        const currentState = technicalPlanStore.loadTechnicalPlan() || {};
-        const currentManifest = createTechnicalPlanRunManifest({
-          type,
-          input: manifestInput,
-          taskId: runRecord.taskId,
-          executionId: runRecord.executionId,
-          workspaceRuntimeGeneration,
-          technicalPlanStore,
-          knowledgeBaseService,
-          modelSnapshot: currentModelSnapshot,
-          generationConfigSnapshot: currentGenerationConfig,
-          stageRevisionVector: runRecord.manifest.stage_revision_vector,
-          referenceDocumentIds: ['outline-generation', 'global-facts-generation', 'content-generation'].includes(type)
-            ? currentState.referenceKnowledgeDocumentIds || []
-            : [],
-        });
-        if (computeRunManifestV1Hash(currentManifest) !== runRecord.manifestHash) {
-          throw createTaskInputChangedError();
-        }
+        const frozen = assertTechnicalPlanRunStillFrozen({ runRecord, manifestInput });
+        const currentState = frozen.state;
         const activeTask = orchestrator.activeTasks.get(type);
         const finalTask = finalTaskPatch ? {
           ...(activeTask || {}),
@@ -719,6 +695,9 @@ function createWebBidAnalysisTaskService({
           executionId: runRecord.executionId,
           manifestHash: runRecord.manifestHash,
           targetStageGeneration: runRecord.targetStageGeneration,
+          validate: () => {
+            assertTechnicalPlanRunStillFrozen({ runRecord, manifestInput });
+          },
           checkpoint: checkpoint || createTechnicalPlanCheckpoint({
             type,
             input: manifestInput,
@@ -791,6 +770,9 @@ function createWebBidAnalysisTaskService({
               executionId: runRecord.executionId,
               manifestHash: runRecord.manifestHash,
               targetStageGeneration: runRecord.targetStageGeneration,
+              validate: () => {
+                assertTechnicalPlanRunStillFrozen({ runRecord, manifestInput });
+              },
               checkpoint,
               status: 'running',
               task: currentTask,
@@ -1025,6 +1007,53 @@ function createWebBidAnalysisTaskService({
     throw error;
   }
 
+  // RunManifest 中只保存模型公共投影和不可逆 hash，不保存明文 Key。
+  // 恢复/逐章写回只能在当前内存 snapshot 与旧 execution 的完整 manifest hash
+  // 一致时继续；无法恢复旧快照或任一输入投影变化时必须 fail closed。
+  function assertTechnicalPlanRunStillFrozen({ runRecord, manifestInput } = {}) {
+    if (!runRecord?.manifest || !runRecord?.manifestHash) {
+      throw createTaskInputChangedError('任务冻结快照缺失，请重新执行任务');
+    }
+    if (Number(runRecord.workspaceRuntimeGeneration) !== Number(workspaceRuntimeGeneration)) {
+      throw createTaskInputChangedError('Workspace Runtime 代号已变化，请重新执行任务');
+    }
+
+    let modelSnapshot;
+    try {
+      modelSnapshot = captureModelSnapshot();
+    } catch {
+      throw createTaskInputChangedError('模型冻结快照不可用，请重新执行任务');
+    }
+    const generationConfigSnapshot = captureTechnicalPlanGenerationConfig(aiService);
+    const state = technicalPlanStore.loadTechnicalPlan() || {};
+    const currentManifest = createTechnicalPlanRunManifest({
+      type: runRecord.taskType,
+      input: manifestInput,
+      taskId: runRecord.taskId,
+      executionId: runRecord.executionId,
+      workspaceRuntimeGeneration,
+      technicalPlanStore,
+      knowledgeBaseService,
+      modelSnapshot,
+      generationConfigSnapshot,
+      stageRevisionVector: runRecord.manifest.stage_revision_vector,
+      referenceDocumentIds: ['outline-generation', 'global-facts-generation', 'content-generation'].includes(runRecord.taskType)
+        ? state.referenceKnowledgeDocumentIds || []
+        : [],
+    });
+    const currentManifestHash = computeRunManifestV1Hash(currentManifest);
+    if (currentManifestHash !== runRecord.manifestHash) {
+      throw createTaskInputChangedError('模型、知识、提示词或生成配置已变化，请重新执行任务');
+    }
+    return {
+      state,
+      modelSnapshot,
+      generationConfigSnapshot,
+      manifest: currentManifest,
+      manifestHash: currentManifestHash,
+    };
+  }
+
   function prepareTechnicalPlanRun(type, input, initialPartial, payloadSignature, signal, { initialCheckpoint } = {}) {
     if (!Number.isInteger(workspaceRuntimeGeneration) || workspaceRuntimeGeneration <= 0) {
       return Promise.reject(createTaskConflictError());
@@ -1082,13 +1111,18 @@ function createWebBidAnalysisTaskService({
       if (!manifestInput || manifestInput.action === 'resume') {
         throw createTaskConflictError();
       }
+      // 先验证当前不可变 projection；只有 hash 与旧 execution 一致时，
+      // 才允许用当前内存中的同一 snapshot 恢复，避免静默切换到新模型。
+      const frozen = assertTechnicalPlanRunStillFrozen({ runRecord: record, manifestInput });
       const resumedRecord = technicalPlanStore.resumeTechnicalPlanTaskRun({
         executionId: record.executionId,
         manifestHash: record.manifestHash,
+        currentManifestHash: frozen.manifestHash,
         targetStageGeneration: record.targetStageGeneration,
+        validate: () => {
+          assertTechnicalPlanRunStillFrozen({ runRecord: record, manifestInput });
+        },
       });
-      const modelSnapshot = captureModelSnapshot();
-      const generationConfigSnapshot = captureTechnicalPlanGenerationConfig(aiService);
       const acceptedTask = createTask('content-generation', input, {
         taskId: record.taskId,
         executionId: record.executionId,
@@ -1098,8 +1132,10 @@ function createWebBidAnalysisTaskService({
       return {
         taskId: record.taskId,
         executionId: record.executionId,
-        modelSnapshot,
-        generationConfigSnapshot,
+        // 数据库未保存明文 Key；此处仅复用已通过完整 manifest hash 校验的
+        // 当前内存 snapshot，hash 不一致时上面的校验已 fail closed。
+        modelSnapshot: frozen.modelSnapshot,
+        generationConfigSnapshot: frozen.generationConfigSnapshot,
         acceptedTask,
         runRecord: resumedRecord,
         manifestInput,

@@ -971,6 +971,10 @@ function createTechnicalPlanStore({
     if (record.manifestHash !== manifestHash) {
       throw stageManifestConflictError('执行 ID 与 manifest hash 不匹配');
     }
+    if (hasWorkspaceRuntimeGeneration
+      && Number(record.workspaceRuntimeGeneration) !== Number(capturedWorkspaceRuntimeGeneration)) {
+      throw manifestInputChangedError('Workspace Runtime 代号已变化，请重新提交任务');
+    }
     if (Number(record.targetStageGeneration) !== Number(targetStageGeneration)) {
       throw manifestInputChangedError('任务阶段代号已变化，请重新提交任务');
     }
@@ -1131,6 +1135,7 @@ function createTechnicalPlanStore({
     manifestHash,
     targetStageGeneration,
     checkpoint,
+    validate,
     apply = () => {},
   } = {}) {
     if (!executionId) {
@@ -1144,6 +1149,18 @@ function createTechnicalPlanStore({
         manifestHash: String(manifestHash || ''),
         targetStageGeneration,
       });
+
+      if (typeof validate === 'function') {
+        let validationResult;
+        try {
+          validationResult = validate(record);
+        } catch (error) {
+          throw error?.code ? error : manifestInputChangedError(error?.message || '任务输入已变化，请重新执行');
+        }
+        if (isThenable(validationResult)) {
+          throw taskApplyFailedError('任务写回校验不得返回异步结果');
+        }
+      }
 
       if (typeof apply !== 'function') {
         throw taskApplyFailedError('写回回调未定义');
@@ -1377,7 +1394,13 @@ function createTechnicalPlanStore({
     })();
   }
 
-  function resumeTechnicalPlanTaskRun({ executionId, manifestHash, targetStageGeneration } = {}) {
+  function resumeTechnicalPlanTaskRun({
+    executionId,
+    manifestHash,
+    currentManifestHash,
+    targetStageGeneration,
+    validate,
+  } = {}) {
     if (!executionId) throw stageManifestConflictError('执行 ID 缺失');
     return db.transaction(() => {
       const record = getTechnicalPlanRunRecord(executionId);
@@ -1386,6 +1409,20 @@ function createTechnicalPlanStore({
         targetStageGeneration: targetStageGeneration ?? record?.targetStageGeneration,
         allowTerminal: true,
       });
+      if (currentManifestHash && String(currentManifestHash) !== String(record.manifestHash)) {
+        throw manifestInputChangedError('恢复任务时检测到模型、知识或生成配置已变化');
+      }
+      if (typeof validate === 'function') {
+        let validationResult;
+        try {
+          validationResult = validate(record);
+        } catch (error) {
+          throw error?.code ? error : manifestInputChangedError(error?.message || '恢复任务时检测到输入已变化');
+        }
+        if (isThenable(validationResult)) {
+          throw taskApplyFailedError('任务恢复校验不得返回异步结果');
+        }
+      }
       if (record.status === 'succeeded') {
         throw stageManifestConflictError('已完成的任务不能恢复');
       }
@@ -2018,6 +2055,7 @@ function createTechnicalPlanStore({
     manifestHash,
     targetStageGeneration,
     checkpoint,
+    validate,
     status = 'running',
     task,
     nodeId,
@@ -2036,6 +2074,17 @@ function createTechnicalPlanStore({
         manifestHash: String(manifestHash || ''),
         targetStageGeneration: targetStageGeneration ?? record?.targetStageGeneration,
       });
+      if (typeof validate === 'function') {
+        let validationResult;
+        try {
+          validationResult = validate(record);
+        } catch (error) {
+          throw error?.code ? error : manifestInputChangedError(error?.message || '章节写回前检测到输入已变化');
+        }
+        if (isThenable(validationResult)) {
+          throw taskApplyFailedError('章节 checkpoint 校验不得返回异步结果');
+        }
+      }
       if (record.taskType !== 'content-generation') {
         throw taskApplyFailedError('章节 checkpoint 只支持正文生成任务');
       }

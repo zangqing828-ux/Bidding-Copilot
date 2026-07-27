@@ -52,15 +52,17 @@ function contentOptions() {
   };
 }
 
-function createFakeAi() {
+function createFakeAi({ modelState = {} } = {}) {
+  const activeModel = {
+    provider: 'j2-test-provider',
+    baseUrl: 'https://j2-model.invalid/v1',
+    modelName: 'j2-test-model',
+    apiKey: 'secret-never-in-manifest',
+    ...modelState,
+  };
   const service = {
     captureTextModelSnapshot() {
-      return Object.freeze({
-        provider: 'j2-test-provider',
-        baseUrl: 'https://j2-model.invalid/v1',
-        modelName: 'j2-test-model',
-        apiKey: 'secret-never-in-manifest',
-      });
+      return Object.freeze({ ...activeModel });
     },
     withQueueScope() {
       return service;
@@ -73,6 +75,9 @@ function createFakeAi() {
     },
     pauseQueueScope() {},
     resumeQueueScope() {},
+    setModelSnapshot(patch) {
+      Object.assign(activeModel, patch || {});
+    },
   };
   return service;
 }
@@ -108,7 +113,7 @@ function seedTechnicalPlan(store) {
   });
 }
 
-function createRunnerSet({ pauseGate, raceGate, restartGate } = {}) {
+function createRunnerSet({ pauseGate, raceGate, restartGate, afterFirstChapter } = {}) {
   const runnerState = {
     contentRuns: [],
     globalRuns: 0,
@@ -169,6 +174,9 @@ function createRunnerSet({ pauseGate, raceGate, restartGate } = {}) {
           pending_item_ids: ids.filter((itemId) => itemId !== nodeId),
         },
       });
+      if (nodeId === 'node-1' && typeof afterFirstChapter === 'function') {
+        await afterFirstChapter({ workspaceStore, signal });
+      }
       updateTask({ status: 'running', progress: nodeId === 'node-1' ? 50 : 90 }, workspaceStore.loadTechnicalPlan());
     }
 
@@ -183,7 +191,14 @@ function createRunnerSet({ pauseGate, raceGate, restartGate } = {}) {
   return { globalFacts, content, runnerState };
 }
 
-function createContext({ root, runners, runtimeGeneration = RUNTIME_GENERATION, seed = true }) {
+function createContext({
+  root,
+  runners,
+  runtimeGeneration = RUNTIME_GENERATION,
+  seed = true,
+  aiService,
+  knowledgeBaseService,
+}) {
   const database = createSqliteDatabase({ workspaceRoot: root });
   const store = createTechnicalPlanStore({
     db: database.db,
@@ -193,13 +208,34 @@ function createContext({ root, runners, runtimeGeneration = RUNTIME_GENERATION, 
   if (seed) seedTechnicalPlan(store);
   const mutationExecutor = createWorkspaceMutationExecutor();
   const service = createWebBidAnalysisTaskService({
-    aiService: createFakeAi(),
+    aiService: aiService || createFakeAi(),
+    knowledgeBaseService,
     technicalPlanStore: store,
     mutationExecutor,
     workspaceRuntimeGeneration: runtimeGeneration,
     taskRunners: runners,
   });
   return { database, store, mutationExecutor, service };
+}
+
+function createFakeKnowledgeBase(knowledgeState) {
+  return {
+    store: {
+      getDocument(documentId) {
+        if (documentId !== 'knowledge-1') return null;
+        return {
+          document_id: documentId,
+          file_name: '知识样例.md',
+          updated_at: '2026-07-27T00:00:00.000Z',
+          status: 'success',
+        };
+      },
+      readMarkdown(documentId) {
+        if (documentId !== 'knowledge-1') return '';
+        return knowledgeState.markdown;
+      },
+    },
+  };
 }
 
 function buildManifest(store, { executionId = 'size-execution', taskId = 'size-task', refs = [] } = {}) {
@@ -287,6 +323,106 @@ async function testStartPauseResumeRetry() {
   } finally {
     await service.close();
     database.close();
+  }
+}
+
+async function testResumeRejectsChangedFrozenInputs() {
+  const modelRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wp-j2-resume-model-change-'));
+  const modelState = {};
+  const modelAi = createFakeAi({ modelState });
+  const modelPauseGate = deferred();
+  const modelContext = createContext({
+    root: modelRoot,
+    runners: createRunnerSet({ pauseGate: modelPauseGate }),
+    aiService: modelAi,
+  });
+  try {
+    const taskPromise = modelContext.service.startContentGeneration({ action: 'start', generation_options: contentOptions() });
+    await waitFor(() => modelContext.store.loadTechnicalPlan().contentGenerationSections?.['node-1']?.status === 'success', '模型冻结测试第一章节未完成');
+    const pausePromise = modelContext.service.pauseContentGeneration({});
+    modelPauseGate.resolve();
+    const pausedTask = await pausePromise;
+    await taskPromise;
+    assert.equal(JSON.stringify(modelContext.store.getTechnicalPlanRunRecord(pausedTask.execution_id)).includes('secret-never-in-manifest'), false, 'run record 不得持久化明文模型 Key');
+
+    modelAi.setModelSnapshot({ modelName: 'j2-test-model-changed' });
+    await assert.rejects(
+      modelContext.service.startContentGeneration({ action: 'resume' }),
+      (error) => error?.code === 'TASK_INPUT_CHANGED',
+      '模型快照变化时 resume 必须 fail closed',
+    );
+    assert.equal(modelContext.store.loadTechnicalPlan().contentGenerationSections['node-2'], undefined, '模型变化的 resume 不得新增旧结果');
+    assert.equal(modelContext.store.getTechnicalPlanRunRecord(pausedTask.execution_id).status, 'paused', 'resume 校验失败不得先把 run record 改为 accepted');
+
+    modelAi.setModelSnapshot({ modelName: 'j2-test-model' });
+    const resumed = await modelContext.service.startContentGeneration({ action: 'resume' });
+    await waitFor(() => modelContext.store.getTechnicalPlanRunRecord(resumed.execution_id)?.status === 'succeeded', '模型快照恢复未成功');
+    assert.equal(modelContext.store.loadTechnicalPlan().contentGenerationSections['node-2'].status, 'success', '模型快照一致后 resume 应完成剩余章节');
+  } finally {
+    await modelContext.service.close();
+    modelContext.database.close();
+  }
+
+  const knowledgeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wp-j2-resume-knowledge-change-'));
+  const knowledgeState = { markdown: '知识内容 v1' };
+  const knowledgePauseGate = deferred();
+  const knowledgeContext = createContext({
+    root: knowledgeRoot,
+    runners: createRunnerSet({ pauseGate: knowledgePauseGate }),
+    knowledgeBaseService: createFakeKnowledgeBase(knowledgeState),
+  });
+  try {
+    knowledgeContext.store.updateTechnicalPlan({ referenceKnowledgeDocumentIds: ['knowledge-1'] });
+    const taskPromise = knowledgeContext.service.startContentGeneration({ action: 'start', generation_options: contentOptions() });
+    await waitFor(() => knowledgeContext.store.loadTechnicalPlan().contentGenerationSections?.['node-1']?.status === 'success', '知识冻结测试第一章节未完成');
+    const pausePromise = knowledgeContext.service.pauseContentGeneration({});
+    knowledgePauseGate.resolve();
+    const pausedTask = await pausePromise;
+    await taskPromise;
+    assert.equal(JSON.stringify(knowledgeContext.store.getTechnicalPlanRunRecord(pausedTask.execution_id)).includes('secret-never-in-manifest'), false, '知识冻结 run record 不得持久化明文模型 Key');
+
+    knowledgeState.markdown = '知识内容 v2';
+    await assert.rejects(
+      knowledgeContext.service.startContentGeneration({ action: 'resume' }),
+      (error) => error?.code === 'TASK_INPUT_CHANGED',
+      '知识内容变化时 resume 必须 fail closed',
+    );
+    assert.equal(knowledgeContext.store.loadTechnicalPlan().contentGenerationSections['node-2'], undefined, '知识变化的 resume 不得新增旧结果');
+    assert.equal(knowledgeContext.store.getTechnicalPlanRunRecord(pausedTask.execution_id).status, 'paused', '知识校验失败不得先把 run record 改为 accepted');
+
+    knowledgeState.markdown = '知识内容 v1';
+    const resumed = await knowledgeContext.service.startContentGeneration({ action: 'resume' });
+    await waitFor(() => knowledgeContext.store.getTechnicalPlanRunRecord(resumed.execution_id)?.status === 'succeeded', '知识快照恢复未成功');
+    assert.equal(knowledgeContext.store.loadTechnicalPlan().contentGenerationSections['node-2'].status, 'success', '知识快照一致后 resume 应完成剩余章节');
+  } finally {
+    await knowledgeContext.service.close();
+    knowledgeContext.database.close();
+  }
+}
+
+async function testCheckpointRejectsChangedInputAfterFirstChapter() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wp-j2-checkpoint-frozen-input-'));
+  const ai = createFakeAi();
+  const context = createContext({
+    root,
+    aiService: ai,
+    runners: createRunnerSet({
+      afterFirstChapter: () => {
+        ai.setModelSnapshot({ modelName: 'j2-test-model-after-node-1' });
+      },
+    }),
+  });
+  try {
+    const taskPromise = context.service.startContentGeneration({ action: 'start', generation_options: contentOptions() });
+    const acceptedTask = await taskPromise;
+    await waitFor(() => context.store.getTechnicalPlanRunRecord(acceptedTask.execution_id)?.status === 'error', '第一章节后输入变化未收口');
+    const state = context.store.loadTechnicalPlan();
+    assert.equal(state.contentGenerationSections['node-1']?.status, 'success', '变化前已提交的第一章节应保留');
+    assert.equal(state.contentGenerationSections['node-2'], undefined, '第一章节后输入变化不得新增旧结果');
+    assert.equal(state.contentGenerationTask.error_code, 'TASK_INPUT_CHANGED', 'checkpoint 输入变化必须返回 TASK_INPUT_CHANGED');
+  } finally {
+    await context.service.close();
+    context.database.close();
   }
 }
 
@@ -383,6 +519,8 @@ async function testRaceAndSizeLimits() {
 async function main() {
   await testContractAndBindings();
   await testStartPauseResumeRetry();
+  await testResumeRejectsChangedFrozenInputs();
+  await testCheckpointRejectsChangedInputAfterFirstChapter();
   await testRestartRecovery();
   await testRaceAndSizeLimits();
   console.log('WP-J J2 lifecycle tests passed.');
