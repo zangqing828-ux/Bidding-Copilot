@@ -72,7 +72,7 @@ const REQUIRED_WEB_BRIDGE_META_KEYS = [
 ];
 
 const requiredMetaFields = ['status', 'owner', 'workPackage', 'transport', 'contractRef', 'input', 'output', 'errors'];
-const IMPLEMENTED_BRIDGE_RPC_COUNT = 51;
+const IMPLEMENTED_BRIDGE_RPC_COUNT = 54;
 const COMMON_IMPLEMENTED_BRIDGE_ERRORS = [
   'UNAUTHORIZED',
   'INVALID_BRIDGE_ARGUMENTS',
@@ -1531,7 +1531,7 @@ async function runBridgeBehavior(inject, context) {
   });
 
   try {
-    const wsPendingRes = await statusPayload({ namespace: 'tasks', method: 'startGlobalFactsGeneration', args: [] });
+    const wsPendingRes = await statusPayload({ namespace: 'tasks', method: 'startRejectionCheck', args: [] });
     assert(wsPendingRes.response.statusCode === 501, 'pending 能力返回 501，且不触发 workspace');
     assert(workspaceResolved === 0, 'pending 能力未初始化 workspace');
 
