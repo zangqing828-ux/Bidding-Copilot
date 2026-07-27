@@ -1,0 +1,119 @@
+{
+  "case": "j1-standard-outline",
+  "input": {
+    "projectOverview": "本项目围绕省级平台年度容量建设。",
+    "techRequirements": "技术评分关注架构设计、实施计划和运维保障能力。",
+    "bidAnalysisTasks": {
+      "projectOverview": {
+        "status": "success",
+        "content": "本项目目标为构建跨部门协同工作平台。"
+      },
+      "techRequirements": {
+        "status": "success",
+        "content": "技术评分项以平台架构与实施能力为主。"
+      },
+      "projectInfo": {
+        "status": "success",
+        "content": "项目规模为中型。"
+      },
+      "partAInfo": {
+        "status": "success",
+        "content": "招标人信息采集完成。"
+      },
+      "deliveryAndServiceRequirements": {
+        "status": "success",
+        "content": "交付周期 9 个月。"
+      }
+    },
+    "workflowKind": "technical-plan",
+    "payload": {
+      "word_control_options": {
+        "enabled": false
+      }
+    },
+    "aiCallPlan": [
+      {
+        "name": "extractRequirementGroups",
+        "label": "技术评分大类",
+        "response": {
+          "groups": [
+            {
+              "requirement_id": "REQ-01",
+              "title": "技术实现能力",
+              "description": "围绕系统架构、实施方式和验收能力展开。",
+              "detail_points": [
+                "平台架构稳定性",
+                "实施与交付能力"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "name": "generateAlignedChildrenForGroup",
+        "label": "章节",
+        "response": {
+          "children": [
+            {
+              "id": "1.1",
+              "title": "总体架构与技术路线",
+              "description": "输出可落地的架构实施路线与职责分工。",
+              "children": [
+                {
+                  "id": "1.1.1",
+                  "title": "平台架构说明",
+                  "description": "说明平台架构、模块边界和接口契约。"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "name": "finalReview",
+        "label": "最终目录审核",
+        "response": {
+          "passed": true,
+          "suggestions": []
+        }
+      }
+    ]
+  },
+  "expected": {
+    "path": "standard-plan",
+    "workflowKind": "technical-plan",
+    "outlineExpansionMode": "ai-complement",
+    "outlineGenerationTask": {
+      "status": "success",
+      "progress": 100
+    },
+    "outline": {
+      "project_overview": "本项目围绕省级平台年度容量建设。",
+      "outline": [
+        {
+          "id": "1",
+          "title": "技术实现能力",
+          "description": "围绕系统架构、实施方式和验收能力展开。",
+          "source_requirement_id": "REQ-01",
+          "source_requirement_title": "技术实现能力",
+          "children": [
+            {
+              "id": "1.1",
+              "title": "总体架构与技术路线",
+              "description": "输出可落地的架构实施路线与职责分工。",
+              "children": [
+                {
+                  "id": "1.1.1",
+                  "title": "平台架构说明",
+                  "description": "说明平台架构、模块边界和接口契约。"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "outlineMode": "aligned",
+    "leafCount": 1
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "case": "j1-multi-section-selection",
+  "input": {
+    "tenderMarkdown": "# 多标段示例招标文件\n本项目共分为2个标段。\n\n## 一标段：云平台建设\n一标段负责平台基础设施建设、系统集成。\n\n## 二标段：运维与保障\n二标段负责运维监控、SLA 管理与交付培训。",
+    "sectionExtractionResponses": [
+      {
+        "sections": [
+          {
+            "id": "section-1",
+            "index": 1,
+            "unit": "标段",
+            "title": "一标段",
+            "headLine": "一标段：云平台建设",
+            "description": "平台基础设施建设、系统集成",
+            "includeRanges": [
+              {
+                "startLine": 4,
+                "endLine": 5,
+                "reason": "一标段正文"
+              }
+            ],
+            "evidence": [
+              "一标段：云平台建设"
+            ]
+          },
+          {
+            "id": "section-2",
+            "index": 2,
+            "unit": "标段",
+            "title": "二标段",
+            "headLine": "二标段：运维与保障",
+            "description": "运维监控、SLA 与交付培训",
+            "includeRanges": [
+              {
+                "startLine": 7,
+                "endLine": 8,
+                "reason": "二标段正文"
+              }
+            ],
+            "evidence": [
+              "二标段：运维与保障"
+            ]
+          }
+        ]
+      }
+    ],
+    "selectedSectionId": "section-2",
+    "requiredBidAnalysisTasks": {
+      "projectOverview": "本项目计划建设基于云的协同平台。",
+      "techRequirements": "需要覆盖可用性、稳定性、可维护性。",
+      "projectInfo": "项目规模：中型。",
+      "partAInfo": "甲方信息已完成校对。",
+      "deliveryAndServiceRequirements": "交付周期 6 个月。"
+    }
+  },
+  "expected": {
+    "detector": {
+      "hasMultiple": true,
+      "totalDeclared": 2
+    },
+    "bidSections": [
+      {
+        "id": "section-1",
+        "index": 1,
+        "unit": "标段",
+        "title": "一标段",
+        "headLine": "一标段：云平台建设",
+        "description": "平台基础设施建设、系统集成",
+        "includeRanges": [
+          {
+            "startLine": 4,
+            "endLine": 5,
+            "reason": "一标段正文"
+          }
+        ],
+        "evidence": [
+          "一标段：云平台建设"
+        ]
+      },
+      {
+        "id": "section-2",
+        "index": 2,
+        "unit": "标段",
+        "title": "二标段",
+        "headLine": "二标段：运维与保障",
+        "description": "运维监控、SLA 与交付培训",
+        "includeRanges": [
+          {
+            "startLine": 7,
+            "endLine": 8,
+            "reason": "二标段正文"
+          }
+        ],
+        "evidence": [
+          "二标段：运维与保障"
+        ]
+      }
+    ],
+    "contextHint": "本项目为多标段，当前招标文件已按用户选择的投标范围处理。请仅关注当前选择标段和当前输入内容，不要主动扩展到其他标段。\n当前选择标段：二标段\nAI 识别标题行：二标段：运维与保障\nAI 识别描述：运维监控、SLA 与交付培训\nAI 识别依据：二标段：运维与保障",
+    "selection": {
+      "selectedSectionId": "section-2",
+      "selectedSectionTitle": "二标段",
+      "selectedMarkdownBySection": {
+        "section-1": "# 多标段示例招标文件\n本项目共分为2个标段。\n\n## 一标段：云平台建设\n一标段负责平台基础设施建设、系统集成。",
+        "section-2": "# 多标段示例招标文件\n本项目共分为2个标段。\n\n\n## 二标段：运维与保障\n二标段负责运维监控、SLA 管理与交付培训。"
+      },
+      "selectedMarkdown": "# 多标段示例招标文件\n本项目共分为2个标段。\n\n\n## 二标段：运维与保障\n二标段负责运维监控、SLA 管理与交付培训。"
+    },
+    "task": {
+      "bidSectionExtractionStatus": "success",
+      "bidSectionExtractionError": null
+    }
+  }
+}

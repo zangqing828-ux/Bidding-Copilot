@@ -1,0 +1,142 @@
+{
+  "case": "j1-existing-outline",
+  "input": {
+    "projectOverview": "本项目以既有方案改造为主，补齐投标响应。",
+    "techRequirements": "技术评分关注实施能力、风险控制和可交付能力。",
+    "bidAnalysisTasks": {
+      "projectOverview": {
+        "status": "success",
+        "content": "项目已进入实施准备阶段。"
+      },
+      "techRequirements": {
+        "status": "success",
+        "content": "评分项包含响应能力和落地方案要求。"
+      },
+      "projectInfo": {
+        "status": "success",
+        "content": "项目类型为既有方案扩展。"
+      },
+      "partAInfo": {
+        "status": "success",
+        "content": "甲方资料与联系方式完整。"
+      },
+      "deliveryAndServiceRequirements": {
+        "status": "success",
+        "content": "交付与服务要求为 6 个月。"
+      }
+    },
+    "workflowKind": "existing-plan-expansion",
+    "payload": {
+      "outline_expansion_mode": "ai-complement",
+      "word_control_options": {
+        "enabled": false
+      }
+    },
+    "originalPlanMarkdown": "原方案目录\n1. 既有方案实施框架\n2. 系统边界说明",
+    "aiCallPlan": [
+      {
+        "name": "extractOriginalOutline",
+        "label": "旧方案目录提取",
+        "response": {
+          "outline": [
+            {
+              "id": "1",
+              "title": "既有方案实施框架",
+              "description": "既有方案的一级目录。",
+              "children": []
+            }
+          ]
+        }
+      },
+      {
+        "name": "extractOriginalOutlineAdditions",
+        "label": "旧方案目录缺漏",
+        "response": {
+          "additions": []
+        }
+      },
+      {
+        "name": "generateExpansionTopLevelPlan",
+        "label": "原方案一级目录补充计划",
+        "response": {
+          "groups": [
+            {
+              "requirement_id": "REQ-01",
+              "title": "既有实施与服务",
+              "description": "保持既有一级目录框架并补充响应细项。",
+              "detail_points": [
+                "实施组织",
+                "风险控制",
+                "验收交付"
+              ],
+              "existing_root_id": "1"
+            }
+          ]
+        }
+      },
+      {
+        "name": "generateExpansionChildrenForRoot",
+        "label": "章节",
+        "response": {
+          "children": [
+            {
+              "id": "1.1",
+              "title": "实施组织与计划",
+              "description": "保留既有结构并补齐二三级。",
+              "children": [
+                {
+                  "id": "1.1.1",
+                  "title": "组织分工说明",
+                  "description": "说明项目组织职责与协同机制。"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "name": "finalReview",
+        "label": "最终目录审核",
+        "response": {
+          "passed": true,
+          "suggestions": []
+        }
+      }
+    ]
+  },
+  "expected": {
+    "path": "existing-plan",
+    "workflowKind": "existing-plan-expansion",
+    "outlineExpansionMode": "ai-complement",
+    "outlineGenerationTask": {
+      "status": "success",
+      "progress": 100
+    },
+    "outline": {
+      "project_overview": "本项目以既有方案改造为主，补齐投标响应。",
+      "outline": [
+        {
+          "id": "1",
+          "title": "既有方案实施框架",
+          "description": "既有方案的一级目录。",
+          "children": [
+            {
+              "id": "1.1",
+              "title": "实施组织与计划",
+              "description": "保留既有结构并补齐二三级。",
+              "children": [
+                {
+                  "id": "1.1.1",
+                  "title": "组织分工说明",
+                  "description": "说明项目组织职责与协同机制。"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "outlineMode": "aligned",
+    "leafCount": 1
+  }
+}
