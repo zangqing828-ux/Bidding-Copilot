@@ -6,6 +6,7 @@ const path = require('node:path');
 const { methods: bridgeMethods } = require('../shared/bridgeContract.cjs');
 const bridgeRouter = require('../server/routes/bridge.cjs');
 const { validateStartContentGenerationInput } = require('../shared/contracts/technical-plan/taskContracts.cjs');
+const { stringifyRunManifestV1 } = require('../shared/contracts/technical-plan/runManifest.cjs');
 const { createSqliteDatabase } = require('../core/sqliteDatabase.cjs');
 const { createTechnicalPlanStore } = require('../core/stores/technicalPlanStore.cjs');
 const { createWorkspaceMutationExecutor } = require('../server/workspace/workspaceMutationExecutor.cjs');
@@ -52,7 +53,7 @@ function contentOptions() {
   };
 }
 
-function createFakeAi({ modelState = {} } = {}) {
+function createFakeAi({ modelState = {}, configState = {} } = {}) {
   const activeModel = {
     provider: 'j2-test-provider',
     baseUrl: 'https://j2-model.invalid/v1',
@@ -68,7 +69,11 @@ function createFakeAi({ modelState = {} } = {}) {
       return service;
     },
     getConfig() {
-      return { context_length_limit: 400000, agent_mode_scenarios: {} };
+      return {
+        context_length_limit: 400000,
+        agent_mode_scenarios: {},
+        ...configState,
+      };
     },
     getCapabilities() {
       return {};
@@ -77,6 +82,9 @@ function createFakeAi({ modelState = {} } = {}) {
     resumeQueueScope() {},
     setModelSnapshot(patch) {
       Object.assign(activeModel, patch || {});
+    },
+    setConfig(patch) {
+      Object.assign(configState, patch || {});
     },
   };
   return service;
@@ -266,6 +274,64 @@ function buildManifest(store, { executionId = 'size-execution', taskId = 'size-t
   };
 }
 
+function buildExactSizeCheckpoint(targetBytes) {
+  const empty = { payload: '' };
+  const overhead = Buffer.byteLength(JSON.stringify(empty), 'utf8');
+  return { payload: 'x'.repeat(targetBytes - overhead) };
+}
+
+function buildExactSizeManifest(store, targetBytes) {
+  const refs = [];
+  const fullReference = (index) => ({
+    document_id: `reference-${index}-${'d'.repeat(240)}`,
+    content_hash: '0'.repeat(64),
+    parse_version: 'v'.repeat(256),
+    source_record_hash: '0'.repeat(64),
+  });
+  let manifest = buildManifest(store, {
+    executionId: 'exact-size-execution',
+    taskId: 'exact-size-task',
+    refs,
+  });
+  while (true) {
+    const candidateRefs = [...refs, fullReference(refs.length)];
+    const candidate = buildManifest(store, {
+      executionId: 'exact-size-execution',
+      taskId: 'exact-size-task',
+      refs: candidateRefs,
+    });
+    if (Buffer.byteLength(stringifyRunManifestV1(candidate), 'utf8') > targetBytes) break;
+    refs.push(candidateRefs[candidateRefs.length - 1]);
+    manifest = candidate;
+  }
+  const currentBytes = Buffer.byteLength(stringifyRunManifestV1(manifest), 'utf8');
+  const minimalRef = {
+    document_id: 'd',
+    content_hash: '0'.repeat(64),
+    parse_version: 'v',
+    source_record_hash: '0'.repeat(64),
+  };
+  const minimalCandidate = buildManifest(store, {
+    executionId: 'exact-size-execution',
+    taskId: 'exact-size-task',
+    refs: [...refs, minimalRef],
+  });
+  const minimumIncrement = Buffer.byteLength(stringifyRunManifestV1(minimalCandidate), 'utf8') - currentBytes;
+  const variableBytes = targetBytes - currentBytes - minimumIncrement;
+  assert.ok(variableBytes >= 0 && variableBytes <= 510, 'manifest 边界 fixture 必须可在单条引用内精确补齐');
+  const documentExtra = Math.min(variableBytes, 255);
+  const parseExtra = variableBytes - documentExtra;
+  return buildManifest(store, {
+    executionId: 'exact-size-execution',
+    taskId: 'exact-size-task',
+    refs: [...refs, {
+      ...minimalRef,
+      document_id: `d${'x'.repeat(documentExtra)}`,
+      parse_version: `v${'x'.repeat(parseExtra)}`,
+    }],
+  });
+}
+
 async function testContractAndBindings() {
   for (const method of ['startGlobalFactsGeneration', 'startContentGeneration', 'pauseContentGeneration']) {
     assert.equal(bridgeMethods.tasks[method].status, 'implemented', `${method} 必须 implemented`);
@@ -277,6 +343,30 @@ async function testContractAndBindings() {
     (error) => error.code === 'TASK_INVALID_INPUT',
     'canonical content DTO 禁止混入非契约字段',
   );
+}
+
+async function testAgentQualityFailsClosedWhenUnavailable() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wp-j2-agent-disabled-'));
+  const { database, store, service } = createContext({
+    root,
+    runners: createRunnerSet(),
+  });
+  const options = {
+    ...contentOptions(),
+    enableConsistencyAudit: true,
+    consistencyRepairMode: 'agent',
+  };
+  try {
+    assert.throws(
+      () => service.startContentGeneration({ action: 'start', generation_options: options }),
+      (error) => error?.code === 'AGENT_QUALITY_DISABLED' && error?.retryable === false,
+      'J-Core 未装配 Agent Quality 时必须在受理前 fail closed',
+    );
+    assert.equal(store.loadTechnicalPlan().contentGenerationTask, undefined, 'Agent Quality 受理失败不得创建任务');
+  } finally {
+    await service.close();
+    database.close();
+  }
 }
 
 async function testStartPauseResumeRetry() {
@@ -398,6 +488,36 @@ async function testResumeRejectsChangedFrozenInputs() {
     await knowledgeContext.service.close();
     knowledgeContext.database.close();
   }
+
+  const configRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wp-j2-resume-config-change-'));
+  const configState = {};
+  const configAi = createFakeAi({ configState });
+  const configPauseGate = deferred();
+  const configContext = createContext({
+    root: configRoot,
+    runners: createRunnerSet({ pauseGate: configPauseGate }),
+    aiService: configAi,
+  });
+  try {
+    const taskPromise = configContext.service.startContentGeneration({ action: 'start', generation_options: contentOptions() });
+    await waitFor(() => configContext.store.loadTechnicalPlan().contentGenerationSections?.['node-1']?.status === 'success', '生成配置冻结测试第一章节未完成');
+    const pausePromise = configContext.service.pauseContentGeneration({});
+    configPauseGate.resolve();
+    const pausedTask = await pausePromise;
+    await taskPromise;
+
+    configAi.setConfig({ context_length_limit: 200000 });
+    await assert.rejects(
+      configContext.service.startContentGeneration({ action: 'resume' }),
+      (error) => error?.code === 'TASK_INPUT_CHANGED',
+      '生成配置变化时 resume 必须 fail closed',
+    );
+    assert.equal(configContext.store.loadTechnicalPlan().contentGenerationSections['node-2'], undefined, '生成配置变化的 resume 不得新增旧结果');
+    assert.equal(configContext.store.getTechnicalPlanRunRecord(pausedTask.execution_id).status, 'paused', '生成配置校验失败不得先改变 run record');
+  } finally {
+    await configContext.service.close();
+    configContext.database.close();
+  }
 }
 
 async function testCheckpointRejectsChangedInputAfterFirstChapter() {
@@ -423,6 +543,31 @@ async function testCheckpointRejectsChangedInputAfterFirstChapter() {
   } finally {
     await context.service.close();
     context.database.close();
+  }
+
+  const configRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wp-j2-checkpoint-config-change-'));
+  const configState = {};
+  const configAi = createFakeAi({ configState });
+  const configContext = createContext({
+    root: configRoot,
+    aiService: configAi,
+    runners: createRunnerSet({
+      afterFirstChapter: () => {
+        configAi.setConfig({ context_length_limit: 200000 });
+      },
+    }),
+  });
+  try {
+    const taskPromise = configContext.service.startContentGeneration({ action: 'start', generation_options: contentOptions() });
+    const acceptedTask = await taskPromise;
+    await waitFor(() => configContext.store.getTechnicalPlanRunRecord(acceptedTask.execution_id)?.status === 'error', '第一章节后生成配置变化未收口');
+    const state = configContext.store.loadTechnicalPlan();
+    assert.equal(state.contentGenerationSections['node-1']?.status, 'success', '生成配置变化前已提交的第一章节应保留');
+    assert.equal(state.contentGenerationSections['node-2'], undefined, '第一章节后生成配置变化不得新增旧结果');
+    assert.equal(state.contentGenerationTask.error_code, 'TASK_INPUT_CHANGED', 'checkpoint 生成配置变化必须返回 TASK_INPUT_CHANGED');
+  } finally {
+    await configContext.service.close();
+    configContext.database.close();
   }
 }
 
@@ -465,6 +610,10 @@ async function testRaceAndSizeLimits() {
   const runners = createRunnerSet({ raceGate });
   const { database, store, service } = createContext({ root, runners });
   try {
+    const exactManifest = buildExactSizeManifest(store, 256 * 1024);
+    assert.equal(Buffer.byteLength(stringifyRunManifestV1(exactManifest), 'utf8'), 256 * 1024, 'manifest fixture 必须恰好等于 256KiB');
+    store.acceptTechnicalPlanTaskRun(exactManifest, { initialCheckpoint: {} });
+
     const task = await service.startContentGeneration({ action: 'start', generation_options: contentOptions() });
     await waitFor(() => store.loadTechnicalPlan().contentGenerationTask?.status === 'running', 'race 场景任务未启动');
     store.saveGlobalFacts([{ id: 'fact-race', title: '竞态事实', content: '输入已经变化' }]);
@@ -498,6 +647,16 @@ async function testRaceAndSizeLimits() {
     workspaceRuntimeGeneration: RUNTIME_GENERATION,
   });
   try {
+    const exactCheckpoint = buildExactSizeCheckpoint(2 * 1024 * 1024);
+    assert.equal(Buffer.byteLength(JSON.stringify(exactCheckpoint), 'utf8'), 2 * 1024 * 1024, 'checkpoint fixture 必须恰好等于 2MiB');
+    checkpointStore.acceptTechnicalPlanTaskRun(
+      buildManifest(checkpointStore, {
+        executionId: 'exact-checkpoint-execution',
+        taskId: 'exact-checkpoint-task',
+      }),
+      { initialCheckpoint: exactCheckpoint },
+    );
+
     const accepted = checkpointStore.acceptTechnicalPlanTaskRun(buildManifest(checkpointStore), { initialCheckpoint: {} });
     assert.throws(
       () => checkpointStore.writebackTechnicalPlanTaskCheckpoint({
@@ -518,6 +677,7 @@ async function testRaceAndSizeLimits() {
 
 async function main() {
   await testContractAndBindings();
+  await testAgentQualityFailsClosedWhenUnavailable();
   await testStartPauseResumeRetry();
   await testResumeRejectsChangedFrozenInputs();
   await testCheckpointRejectsChangedInputAfterFirstChapter();

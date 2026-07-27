@@ -222,7 +222,6 @@ test('J2 真实 Chromium 完成标准链、暂停继续、局部重试、刷新�
 
   await page.getByRole('button', { name: '生成正文', exact: true }).click();
   const contentDialog = page.getByRole('dialog', { name: '正文生成配置' });
-  await contentDialog.locator('select').nth(1).selectOption('normal');
   await contentDialog.getByRole('switch', { name: '是否使用 Mermaid 生图' }).click();
   await contentDialog.getByRole('switch', { name: '是否生成 HTML 图片' }).click();
   await contentDialog.getByRole('button', { name: '开始生成', exact: true }).click();

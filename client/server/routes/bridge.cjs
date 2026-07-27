@@ -557,11 +557,16 @@ router.post('/bridge', (req, res) => {
         });
     }
     if (typeof err?.code === 'string' && err.code.startsWith('AGENT_')) {
-      const unavailable = err.code === 'AGENT_RUNTIME_UNAVAILABLE' || err.code === 'AGENT_CLOSING';
+      const unavailable = err.code === 'AGENT_RUNTIME_UNAVAILABLE'
+        || err.code === 'AGENT_CLOSING'
+        || err.code === 'AGENT_QUALITY_DISABLED'
+        || err.code === 'AGENT_SANDBOX_UNAVAILABLE';
       return res.status(unavailable ? 503 : 400).json({
         code: err.code,
         message: err.message || 'Agent Runtime 请求失败',
-        retryable: unavailable || err.code === 'AGENT_TIMEOUT',
+        retryable: err.code === 'AGENT_QUALITY_DISABLED'
+          ? false
+          : unavailable || err.code === 'AGENT_TIMEOUT',
       });
     }
     if (typeof err?.code === 'string' && err.code.startsWith('UPLOAD_FILE_')) {

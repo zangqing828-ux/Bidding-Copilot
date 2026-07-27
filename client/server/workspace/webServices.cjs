@@ -472,6 +472,13 @@ function createTaskRunnerUnavailableError(type) {
   return error;
 }
 
+function createAgentQualityDisabledError() {
+  const error = new Error('Agent 审校能力当前未启用，请选择普通修复后重试');
+  error.code = 'AGENT_QUALITY_DISABLED';
+  error.retryable = false;
+  return error;
+}
+
 function createPayloadSignature(input) {
   const selection = normalizeBidAnalysisSelection(input.mode, input.selected_task_ids);
   const requested = new Set(Array.isArray(input.task_ids) ? input.task_ids : []);
@@ -1054,6 +1061,27 @@ function createWebBidAnalysisTaskService({
     };
   }
 
+  function assertContentAgentQualityAvailable(input) {
+    if (boundAgentService?.runTask) return;
+    let generationOptions = input?.generation_options;
+    if (!generationOptions) {
+      const state = technicalPlanStore.loadTechnicalPlan() || {};
+      generationOptions = state.contentGenerationOptions;
+      const executionId = state.contentGenerationTask?.execution_id;
+      const record = executionId
+        ? technicalPlanStore.getTechnicalPlanRunRecord(executionId)
+        : null;
+      generationOptions = record?.checkpoint?.input?.generation_options || generationOptions;
+    }
+    const consistencyRequiresAgent = generationOptions?.enableConsistencyAudit === true
+      && generationOptions?.consistencyRepairMode === 'agent';
+    const originalCoverageRequiresAgent = generationOptions?.enableOriginalPlanCoverageAudit === true
+      && generationOptions?.originalPlanCoverageRepairMode === 'agent';
+    if (consistencyRequiresAgent || originalCoverageRequiresAgent) {
+      throw createAgentQualityDisabledError();
+    }
+  }
+
   function prepareTechnicalPlanRun(type, input, initialPartial, payloadSignature, signal, { initialCheckpoint } = {}) {
     if (!Number.isInteger(workspaceRuntimeGeneration) || workspaceRuntimeGeneration <= 0) {
       return Promise.reject(createTaskConflictError());
@@ -1284,6 +1312,7 @@ function createWebBidAnalysisTaskService({
     },
     startContentGeneration(payload, { signal } = {}) {
       const input = validateStartContentGenerationInput(payload);
+      assertContentAgentQualityAvailable(input);
       const payloadSignature = stableHash(input);
       if (input.action === 'resume') {
         return startManagedTask({

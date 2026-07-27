@@ -106,9 +106,9 @@ const defaultContentGenerationOptions: ContentGenerationOptions = {
   htmlImageTypes: DEFAULT_HTML_IMAGE_TYPES,
   tableRequirement: 'heavy',
   enableConsistencyAudit: true,
-  consistencyRepairMode: 'agent',
+  consistencyRepairMode: 'normal',
   enableOriginalPlanCoverageAudit: false,
-  originalPlanCoverageRepairMode: 'agent',
+  originalPlanCoverageRepairMode: 'normal',
 };
 
 function isContentTableRequirement(value: unknown): value is ContentTableRequirement {

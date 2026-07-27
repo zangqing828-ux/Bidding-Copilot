@@ -349,8 +349,21 @@ jobs:
       - name: Install dependencies
         run: npm ci && npm rebuild better-sqlite3 --runtime=node
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
       - name: Run WP-J J-2 content gate
         run: npm run wp-j:gate:j2
+
+      - name: Upload J-2 Chromium and quality evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: technical-plan-content-evidence
+          path: |
+            client/playwright-report
+            client/test-results
+          if-no-files-found: warn
 
   agent_foundation:
     name: Agent Foundation
