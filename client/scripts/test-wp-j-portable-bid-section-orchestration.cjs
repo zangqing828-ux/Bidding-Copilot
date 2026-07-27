@@ -206,6 +206,7 @@ async function main() {
       '预先中断应返回 TASK_ACCEPTANCE_ABORTED',
     );
     assert.equal(aiService.calls(), 0, '预中断应不触发 AI 调用');
+    assert.equal(harness.store.getState().bidSectionExtractionStatus, 'idle', '预中断应不产生 Store 写入');
   }
 
   {

@@ -258,6 +258,7 @@ async function runBidSectionExtractionTask({
   signal,
 }) {
   validateStartBidSectionExtractionInput(payload);
+  throwIfAborted(signal);
 
   const originalMarkdown = workspaceStore.readOriginalTenderMarkdown?.() || workspaceStore.readTenderMarkdown();
   const cleanMarkdown = String(originalMarkdown || '').trim();
@@ -314,6 +315,7 @@ async function runBidSectionExtractionTask({
       : segmentResults[0];
     const merged = normalizeSectionsResponse(mergedRaw, totalLines);
     validateSectionsResponse(merged);
+    throwIfAborted(signal);
 
     const finalState = workspaceStore.updateTechnicalPlan({
       bidSectionMode: normalizeBidSectionMode(merged.sections.length),

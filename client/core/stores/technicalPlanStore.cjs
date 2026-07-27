@@ -1824,6 +1824,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
   }
 
   function clearDownstreamFromOutlineChange() {
+    db.prepare("DELETE FROM technical_plan_tasks WHERE type IN ('global-facts-generation', 'content-generation')").run();
     db.prepare('DELETE FROM technical_plan_global_fact_groups').run();
     clearContentGenerationState();
   }

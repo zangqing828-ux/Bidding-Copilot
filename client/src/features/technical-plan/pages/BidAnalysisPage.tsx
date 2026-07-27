@@ -212,7 +212,6 @@ function BidAnalysisPage({
   onProgressChange,
   onConfigSaved,
 }: BidAnalysisPageProps) {
-  const isWeb = window.yibiao?.platform === 'web';
   const [running, setRunning] = useState(false);
   const [fullRerunLocked, setFullRerunLocked] = useState(false);
   const [fullRerunSeenRunning, setFullRerunSeenRunning] = useState(false);
@@ -293,14 +292,14 @@ function BidAnalysisPage({
   }, [fullRerunLocked, fullRerunSeenRunning, task?.status]);
 
   useEffect(() => {
-    setDraftBidSectionMode(isWeb ? 'single' : bidSectionMode);
-  }, [bidSectionMode, isWeb]);
+    setDraftBidSectionMode(bidSectionMode);
+  }, [bidSectionMode]);
 
   useEffect(() => {
-    if (!isWeb && bidSectionMode === 'multiple' && bidSectionExtractionStatus === 'success' && bidSections.length >= 2 && !selectedSectionTitle && !sectionTaskRunning) {
+    if (bidSectionMode === 'multiple' && bidSectionExtractionStatus === 'success' && bidSections.length >= 2 && !selectedSectionTitle && !sectionTaskRunning) {
       setSectionSelectorOpen(true);
     }
-  }, [isWeb, bidSectionMode, bidSectionExtractionStatus, bidSections.length, selectedSectionTitle, sectionTaskRunning]);
+  }, [bidSectionMode, bidSectionExtractionStatus, bidSections.length, selectedSectionTitle, sectionTaskRunning]);
 
   useEffect(() => {
     if (pendingAnalysisAfterSection && bidSectionExtractionStatus === 'error') {
@@ -315,8 +314,8 @@ function BidAnalysisPage({
     }
 
     setDraftSelectedTaskIds(effectiveSelectedTaskIds);
-    setDraftBidSectionMode(isWeb ? 'single' : bidSectionMode);
-  }, [bidSectionMode, effectiveSelectedTaskIds, isWeb, settingsOpen]);
+    setDraftBidSectionMode(bidSectionMode);
+  }, [bidSectionMode, effectiveSelectedTaskIds, settingsOpen]);
 
   const openSettingsDialog = () => {
     if (taskRunning) {
@@ -324,7 +323,7 @@ function BidAnalysisPage({
       return;
     }
     setDraftSelectedTaskIds(effectiveSelectedTaskIds);
-    setDraftBidSectionMode(isWeb ? 'single' : bidSectionMode);
+    setDraftBidSectionMode(bidSectionMode);
     setSettingsOpen(true);
   };
 
@@ -383,19 +382,30 @@ function BidAnalysisPage({
     }
   };
 
+  useEffect(() => {
+    if (!pendingAnalysisAfterSection || sectionTaskRunning || bidSectionExtractionStatus !== 'success') {
+      return;
+    }
+    if (bidSections.length >= 2) {
+      setSectionSelectorOpen(true);
+      return;
+    }
+    const pending = pendingAnalysisAfterSection;
+    setPendingAnalysisAfterSection(null);
+    setDraftBidSectionMode('single');
+    void startBidAnalysisOnly(pending.taskIds, pending.nextTaskIds, 'single');
+  }, [bidSectionExtractionStatus, bidSections.length, pendingAnalysisAfterSection, sectionTaskRunning]);
+
   const startAnalysis = async (taskIds?: string[], nextTaskIds = draftSelectedTaskIds, options: { skipCheck?: boolean; overrideMode?: BidSectionMode } = {}) => {
     if (!hasTenderFile) {
       showToast('请先上传招标文件', 'info');
       return;
     }
 
-    const nextBidSectionMode = isWeb ? 'single' : options.overrideMode || draftBidSectionMode;
+    const nextBidSectionMode = options.overrideMode || draftBidSectionMode;
     const normalizedTaskIds = normalizeSelectedTaskIds(nextTaskIds);
-    if (isWeb && bidSectionMode === 'multiple') {
-      showToast('浏览器暂仅支持单标段解析，已切换为单标段继续。', 'info');
-    }
 
-    if (!options.skipCheck && !isWeb) {
+    if (!options.skipCheck) {
       try {
         const detection = await window.yibiao?.technicalPlan.checkBidSections();
         if (nextBidSectionMode === 'single' && detection?.hasMultiple) {
@@ -568,7 +578,7 @@ function BidAnalysisPage({
       ? selectedSectionTitle ? '更换' : '选择标段'
       : bidSectionExtractionStatus === 'error' ? '重新识别标段' : '识别标段';
   const webBidAnalysisPending = false;
-  const webMultiSectionPending = isWeb;
+  const webMultiSectionPending = false;
 
   return (
     <div className="plan-step-body bid-analysis-page">
