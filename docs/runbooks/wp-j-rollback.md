@@ -52,6 +52,34 @@ docker compose --profile j-agent stop agent-runner
 docker compose up -d web
 ```
 
+## 真实回滚 Smoke
+
+回滚顺序固定为：
+
+1. 关闭 `AGENT_QUALITY_ENABLED`；
+2. 重启或切换 Web 版本；
+3. 执行 `npm run wp-j:rollback-smoke`；
+4. 确认 J-Core 可用后，再停止 `j-agent` Runner。
+
+Smoke 使用临时 SQLite/runtime fixture，不连接生产数据，不修改仓库中的 Compose、CI 或 Sidecar 配置。它会创建并重新打开一个账号 Workspace，验证：
+
+- technical-plan、uploads 等已有目录和上传资产仍在；
+- 招标输入、原方案、目录、全局事实和已提交正文仍可读取；
+- stage revisions、run manifest、run receipt 和 checkpoint 仍可读取；
+- `AGENT_QUALITY_ENABLED=0` 时，J-Core 可以继续写入正文；
+- Agent Task Spec 在开关关闭或 Runner 未就绪时均保持 fail closed；
+- smoke 输出不包含密钥或临时绝对路径。
+
+本地执行：
+
+```bash
+cd client
+npm run wp-j:rollback-smoke
+git diff --check
+```
+
+输出中的 `rollback_smoke` 必须为 `ok`，四项检查均必须为 `ok`。如果 smoke 失败，保留 J-Core 数据并停止回滚流程；不要删除 SQLite、manifest、receipt 或正文来恢复启动。
+
 ## 完成判定
 
 - Web health/readiness 正常。
