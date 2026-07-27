@@ -1,0 +1,187 @@
+{
+  "valid": [
+    {
+      "name": "首次生成",
+      "input": {
+        "generationOptions": {
+          "useAiImages": true,
+          "maxAiImages": 4,
+          "useMermaidImages": true,
+          "maxMermaidImages": 2,
+          "useHtmlImages": false,
+          "maxHtmlImages": 0,
+          "htmlImageTypes": "图表",
+          "tableRequirement": "moderate",
+          "enableConsistencyAudit": true,
+          "consistencyRepairMode": "agent",
+          "enableOriginalPlanCoverageAudit": false,
+          "originalPlanCoverageRepairMode": "agent"
+        }
+      },
+      "expected": {
+        "action": "start",
+        "generation_options": {
+          "useAiImages": true,
+          "maxAiImages": 4,
+          "useMermaidImages": true,
+          "maxMermaidImages": 2,
+          "useHtmlImages": false,
+          "maxHtmlImages": 0,
+          "htmlImageTypes": "图表",
+          "tableRequirement": "moderate",
+          "enableConsistencyAudit": true,
+          "consistencyRepairMode": "agent",
+          "enableOriginalPlanCoverageAudit": false,
+          "originalPlanCoverageRepairMode": "agent"
+        }
+      }
+    },
+    {
+      "name": "重新生成",
+      "input": {
+        "regenerate": true,
+        "generationOptions": {
+          "useAiImages": false,
+          "maxAiImages": 0,
+          "useMermaidImages": false,
+          "maxMermaidImages": 0,
+          "useHtmlImages": true,
+          "maxHtmlImages": 1,
+          "htmlImageTypes": "流程图,表格",
+          "tableRequirement": "light",
+          "enableConsistencyAudit": false,
+          "consistencyRepairMode": "normal",
+          "enableOriginalPlanCoverageAudit": false,
+          "originalPlanCoverageRepairMode": "normal"
+        }
+      },
+      "expected": {
+        "action": "regenerate-all",
+        "generation_options": {
+          "useAiImages": false,
+          "maxAiImages": 0,
+          "useMermaidImages": false,
+          "maxMermaidImages": 0,
+          "useHtmlImages": true,
+          "maxHtmlImages": 1,
+          "htmlImageTypes": "流程图,表格",
+          "tableRequirement": "light",
+          "enableConsistencyAudit": false,
+          "consistencyRepairMode": "normal",
+          "enableOriginalPlanCoverageAudit": false,
+          "originalPlanCoverageRepairMode": "normal"
+        }
+      }
+    },
+    {
+      "name": "局部重试",
+      "input": {
+        "targetItemId": "sec-2",
+        "requirement": "财务条款",
+        "generationOptions": {
+          "useAiImages": true,
+          "maxAiImages": 1,
+          "useMermaidImages": true,
+          "maxMermaidImages": 1,
+          "useHtmlImages": false,
+          "maxHtmlImages": 0,
+          "htmlImageTypes": "时序图",
+          "tableRequirement": "heavy",
+          "enableConsistencyAudit": true,
+          "consistencyRepairMode": "normal",
+          "enableOriginalPlanCoverageAudit": true,
+          "originalPlanCoverageRepairMode": "normal"
+        }
+      },
+      "expected": {
+        "action": "regenerate-section",
+        "target_item_id": "sec-2",
+        "requirement": "财务条款",
+        "generation_options": {
+          "useAiImages": true,
+          "maxAiImages": 1,
+          "useMermaidImages": true,
+          "maxMermaidImages": 1,
+          "useHtmlImages": false,
+          "maxHtmlImages": 0,
+          "htmlImageTypes": "时序图",
+          "tableRequirement": "heavy",
+          "enableConsistencyAudit": true,
+          "consistencyRepairMode": "normal",
+          "enableOriginalPlanCoverageAudit": true,
+          "originalPlanCoverageRepairMode": "normal"
+        }
+      }
+    },
+    {
+      "name": "继续",
+      "input": {
+        "resume": true
+      },
+      "expected": {
+        "action": "resume"
+      }
+    },
+    {
+      "name": "重试校验",
+      "input": {
+        "retryContentCorrection": true
+      },
+      "expected": {
+        "action": "retry-correction"
+      }
+    },
+    {
+      "name": "重跑配图",
+      "input": {
+        "rerunIllustrations": true
+      },
+      "expected": {
+        "action": "rerun-illustration-plan"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "混合动作",
+      "input": {
+        "resume": true,
+        "retryContentCorrection": true,
+        "generationOptions": {
+          "useAiImages": true,
+          "maxAiImages": 1,
+          "useMermaidImages": true,
+          "maxMermaidImages": 1,
+          "useHtmlImages": true,
+          "maxHtmlImages": 1,
+          "htmlImageTypes": "图表",
+          "tableRequirement": "none",
+          "enableConsistencyAudit": false,
+          "consistencyRepairMode": "normal",
+          "enableOriginalPlanCoverageAudit": false,
+          "originalPlanCoverageRepairMode": "normal"
+        }
+      }
+    },
+    {
+      "name": "局部重试缺少目标",
+      "input": {
+        "requirement": "财务条款",
+        "generationOptions": {
+          "useAiImages": true,
+          "maxAiImages": 1,
+          "useMermaidImages": true,
+          "maxMermaidImages": 1,
+          "useHtmlImages": true,
+          "maxHtmlImages": 1,
+          "htmlImageTypes": "图表",
+          "tableRequirement": "heavy",
+          "enableConsistencyAudit": true,
+          "consistencyRepairMode": "normal",
+          "enableOriginalPlanCoverageAudit": false,
+          "originalPlanCoverageRepairMode": "normal"
+        }
+      }
+    }
+  ]
+}

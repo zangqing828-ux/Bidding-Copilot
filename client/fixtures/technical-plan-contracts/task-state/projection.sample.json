@@ -1,0 +1,16 @@
+{
+  "cases": [
+    { "internal_status": "idle", "renderer": null },
+    { "internal_status": "accepted", "renderer": { "status": "running", "stats": { "phase": "accepted" }, "groupLocked": true } },
+    { "internal_status": "queued", "renderer": { "status": "running", "stats": { "phase": "queued" }, "groupLocked": true } },
+    { "internal_status": "running", "renderer": { "status": "running", "groupLocked": true } },
+    { "internal_status": "pausing", "renderer": { "status": "pausing", "groupLocked": true } },
+    { "internal_status": "paused", "renderer": { "status": "paused", "groupLocked": true } },
+    { "internal_status": "validating", "renderer": { "status": "running", "stats": { "phase": "validating" }, "groupLocked": true } },
+    { "internal_status": "committing", "renderer": { "status": "running", "stats": { "phase": "committing" }, "groupLocked": true } },
+    { "internal_status": "success", "renderer": { "status": "success" } },
+    { "internal_status": "error", "renderer": { "status": "error" } },
+    { "internal_status": "cancelled", "renderer": { "status": "error" } },
+    { "internal_status": "interrupted", "renderer": { "status": "error" } }
+  ]
+}

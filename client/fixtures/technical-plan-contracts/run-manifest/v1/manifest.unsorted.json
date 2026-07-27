@@ -1,0 +1,50 @@
+{
+  "task_id": "task-7f3e-a1",
+  "upstream_result_hashes": {
+    "global_facts_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+    "outline_hash": null,
+    "content_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+    "bid_analysis_hash": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "manifest_version": 1,
+  "normalized_input_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "source_hashes": {
+    "reference_documents": [
+      {
+        "document_id": "doc-b",
+        "source_record_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "parse_version": "parser-v1-Δ",
+        "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "content_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parse_version": "parser-v1-Σ",
+        "source_record_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+        "document_id": "doc-a"
+      },
+      {
+        "parse_version": "parser-v1-§",
+        "source_record_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+        "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "document_id": "doc-c"
+      }
+    ],
+    "original_plan_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+    "tender_document_hash": null
+  },
+  "workspace_runtime_generation": 7,
+  "task_type": "content-generation",
+  "selected_bid_section": null,
+  "prompt_template_version": "tmpl-中文-v1-✓",
+  "stage_revision_vector": {
+    "content_revision": 4,
+    "analysis_revision": 1,
+    "outline_revision": 2,
+    "facts_revision": 3,
+    "source_revision": 0
+  },
+  "model_snapshot_ref": "model-snapshot-v1-α",
+  "execution_id": "execution-9f8e-b2",
+  "generation_config_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "output_schema_version": "schema/v1"
+}
