@@ -3809,6 +3809,10 @@ async function runOutlineGenerationTask({
   if (wordControlOptions.enabled && (wordControl.minimumLeafCount !== null || wordControl.maximumLeafCount !== null)) {
     const initialDistance = getLeafCountDistance(outlineStats.current_leaf_count, wordControl.minimumLeafCount, wordControl.maximumLeafCount);
     if (initialDistance > 0) {
+      assertAgentRecoveryAvailable(
+        agentService,
+        '当前目录不满足字数控制范围，J-Core 无法执行 Agent 字数调整',
+      );
       const adjusted = await adjustOutlineForWordControl({
         aiService,
         agentService,

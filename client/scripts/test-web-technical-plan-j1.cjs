@@ -248,6 +248,18 @@ async function main() {
       { name: '评分项对齐目录无效', options: { failAlignedChildren: true }, expectedCode: 'TASK_OUTPUT_INVALID' },
       { name: '技术评分大类无效', options: { failRequirementGroups: true }, expectedCode: 'TASK_OUTPUT_INVALID' },
       { name: '模型返回 1001 个目录节点', options: { oversizedAlignedChildren: true }, expectedCode: 'TASK_INVALID_INPUT' },
+      {
+        name: '字数控制需要 Agent 调整',
+        options: {},
+        expectedCode: 'TASK_OUTPUT_INVALID',
+        wordControlOptions: {
+          enabled: true,
+          minimumWords: 6000,
+          maximumWords: 9000,
+          sectionWords: 3000,
+          strictSectionWords: false,
+        },
+      },
     ]) {
       const coreOnlyAi = createFakeAi(scenario.options);
       const coreOnlyService = createWebBidAnalysisTaskService({
@@ -257,7 +269,10 @@ async function main() {
         mutationExecutor,
         workspaceRuntimeGeneration: WORKSPACE_RUNTIME_GENERATION,
       });
-      const task = await coreOnlyService.startOutlineGeneration(outlineInput);
+      const task = await coreOnlyService.startOutlineGeneration({
+        ...outlineInput,
+        word_control_options: scenario.wordControlOptions || outlineInput.word_control_options,
+      });
       coreOnlyAi.releaseOutline();
       await waitFor(() => ['success', 'error'].includes(store.loadTechnicalPlan().outlineGenerationTask?.status), `${scenario.name} 未结束`);
       assert.equal(store.loadTechnicalPlan().outlineGenerationTask?.error_code, scenario.expectedCode, `${scenario.name} 应返回稳定 ${scenario.expectedCode}`);

@@ -121,14 +121,24 @@ function validateDepth(nodes, depth = 1, path = 'outline') {
 }
 
 function countOutlineNodes(nodes) {
-  const stack = [...(Array.isArray(nodes) ? nodes : [])];
+  const source = Array.isArray(nodes) ? nodes : [];
+  if (source.length > MAX_OUTLINE_NODES) return MAX_OUTLINE_NODES + 1;
+  const stack = [];
+  for (let index = 0; index < source.length; index += 1) {
+    stack.push(source[index]);
+  }
   let count = 0;
   while (stack.length) {
     const node = stack.pop();
     count += 1;
     if (count > MAX_OUTLINE_NODES) return count;
     if (Array.isArray(node?.children) && node.children.length) {
-      stack.push(...node.children);
+      if (count + stack.length + node.children.length > MAX_OUTLINE_NODES) {
+        return MAX_OUTLINE_NODES + 1;
+      }
+      for (let index = 0; index < node.children.length; index += 1) {
+        stack.push(node.children[index]);
+      }
     }
   }
   return count;

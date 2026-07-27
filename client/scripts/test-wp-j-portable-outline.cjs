@@ -139,6 +139,14 @@ function runHardConstraintCases() {
     '目录节点数量不能超过 1000',
     '一万层恶意目录应在迭代计数阶段 fail-closed',
   );
+  const wideOutline = Array.from({ length: 120_000 }, (_, index) => ({
+    title: `宽目录 ${index}`,
+  }));
+  assertThrowsMessage(
+    () => assertOutlineNodeLimit(wideOutline),
+    '目录节点数量不能超过 1000',
+    '十二万个超宽目录不得触发参数栈溢出',
+  );
 }
 
 function runWordControlChecks() {
