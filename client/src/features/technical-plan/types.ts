@@ -9,6 +9,12 @@ export interface StartBidAnalysisInput {
   task_ids?: string[];
   force_rerun?: boolean;
 }
+export type StartBidSectionExtractionInput = Record<string, never>;
+export interface StartOutlineGenerationInput {
+  referenceKnowledgeDocumentIds: string[];
+  outlineExpansionMode: OutlineExpansionMode;
+  wordControlOptions: OutlineWordControlOptions;
+}
 export type BidAnalysisTaskStatus = 'idle' | 'running' | 'success' | 'error';
 export type BidSectionMode = 'single' | 'multiple';
 export type BidSectionExtractionStatus = 'idle' | 'running' | 'success' | 'error';

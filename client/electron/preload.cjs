@@ -1,4 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
+const {
+  canonicalizeRendererStartOutlineGenerationInput,
+  validateStartBidSectionExtractionInput,
+} = require('../shared/contracts/technical-plan/taskContracts.cjs');
 
 const bridge = {
   appName: '易标投标工具箱',
@@ -157,9 +161,15 @@ const bridge = {
     delete: (templateId) => ipcRenderer.invoke('templates:delete', templateId),
   },
   tasks: {
-    startBidSectionExtraction: (payload) => ipcRenderer.invoke('tasks:start-bid-section-extraction', payload),
+    startBidSectionExtraction: (payload = {}) => ipcRenderer.invoke(
+      'tasks:start-bid-section-extraction',
+      validateStartBidSectionExtractionInput(payload),
+    ),
     startBidAnalysis: (payload) => ipcRenderer.invoke('tasks:start-bid-analysis', payload),
-    startOutlineGeneration: (payload) => ipcRenderer.invoke('tasks:start-outline-generation', payload),
+    startOutlineGeneration: (payload) => ipcRenderer.invoke(
+      'tasks:start-outline-generation',
+      canonicalizeRendererStartOutlineGenerationInput(payload),
+    ),
     startGlobalFactsGeneration: (payload) => ipcRenderer.invoke('tasks:start-global-facts-generation', payload),
     startContentGeneration: (payload) => ipcRenderer.invoke('tasks:start-content-generation', payload),
     pauseContentGeneration: () => ipcRenderer.invoke('tasks:pause-content-generation'),

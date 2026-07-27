@@ -761,7 +761,14 @@ const rawMethods = {
     }),
   },
   tasks: {
-    startBidSectionExtraction: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startBidSectionExtraction' }),
+    startBidSectionExtraction: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-J1',
+      contractRef: 'tasks.startBidSectionExtraction',
+      input: [contractArg('payload', 'StartBidSectionExtractionInput', { properties: {} })],
+      output: 'BackgroundTaskState',
+      errors: ['TASK_INVALID_INPUT', 'TASK_CONFLICT', 'TASK_INPUT_CHANGED', 'TASK_ACCEPTANCE_ABORTED'],
+    }),
     startBidAnalysis: implementedBridgeContract({
       owner: 'workflow',
       workPackage: 'WP-I',
@@ -777,7 +784,30 @@ const rawMethods = {
       output: 'BackgroundTaskState',
       errors: ['TASK_INVALID_INPUT', 'TASK_ITEM_NOT_FOUND', 'TASK_INPUT_CHANGED', 'TASK_CONFLICT'],
     }),
-    startOutlineGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startOutlineGeneration' }),
+    startOutlineGeneration: implementedBridgeContract({
+      owner: 'technical-plan',
+      workPackage: 'WP-J1',
+      contractRef: 'tasks.startOutlineGeneration',
+      input: [contractArg('payload', 'StartOutlineGenerationInput', {
+        properties: {
+          referenceKnowledgeDocumentIds: { type: 'string[]', required: true },
+          outlineExpansionMode: { type: 'OutlineExpansionMode', required: true, enum: contractEnums.OutlineExpansionMode },
+          wordControlOptions: {
+            type: 'object',
+            required: true,
+            properties: {
+              enabled: { type: 'boolean', required: true },
+              minimumWords: { type: 'number', required: true },
+              maximumWords: { type: 'number', required: true },
+              sectionWords: { type: 'number', required: true },
+              strictSectionWords: { type: 'boolean', required: true },
+            },
+          },
+        },
+      })],
+      output: 'BackgroundTaskState',
+      errors: ['TASK_INVALID_INPUT', 'TASK_CONFLICT', 'TASK_ITEM_NOT_FOUND', 'TASK_INPUT_CHANGED', 'TASK_ACCEPTANCE_ABORTED'],
+    }),
     startGlobalFactsGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startGlobalFactsGeneration' }),
     startContentGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startContentGeneration' }),
     pauseContentGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.pauseContentGeneration' }),

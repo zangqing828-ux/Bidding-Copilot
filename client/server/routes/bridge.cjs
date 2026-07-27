@@ -4,6 +4,10 @@
 const express = require('express');
 const { getWorkspaceContext } = require('../workspace/workspaceRegistry.cjs');
 const { methods: bridgeMethods = {} } = require('../../shared/bridgeContract.cjs');
+const {
+  canonicalizeRendererStartOutlineGenerationInput,
+  validateStartBidSectionExtractionInput,
+} = require('../../shared/contracts/technical-plan/taskContracts.cjs');
 
 const router = express.Router();
 const FORBIDDEN_IDENTIFIERS = new Set([
@@ -177,7 +181,21 @@ const bridgeBindingMetadata = Object.freeze({
 
   tasks: Object.freeze({
     getActiveTasks: createDirectBinding((ctx) => ctx.taskService.getActiveTasks(), 'tasks.getActiveTasks'),
+    startBidSectionExtraction: createDirectBinding(
+      (ctx, args, options) => ctx.taskService.startBidSectionExtraction(
+        validateStartBidSectionExtractionInput(args[0]),
+        options,
+      ),
+      'tasks.startBidSectionExtraction',
+    ),
     startBidAnalysis: createDirectBinding((ctx, args, options) => ctx.taskService.startBidAnalysis(args[0], options), 'tasks.startBidAnalysis'),
+    startOutlineGeneration: createDirectBinding(
+      (ctx, args, options) => ctx.taskService.startOutlineGeneration(
+        canonicalizeRendererStartOutlineGenerationInput(args[0]),
+        options,
+      ),
+      'tasks.startOutlineGeneration',
+    ),
   }),
 
   export: Object.freeze({

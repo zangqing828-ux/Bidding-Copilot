@@ -309,8 +309,6 @@ function OutlineEditPage({
   const [draftSectionWords, setDraftSectionWords] = useState(String(outlineWordControlOptions.sectionWords));
   const [draftStrictSectionWords, setDraftStrictSectionWords] = useState(outlineWordControlOptions.strictSectionWords);
   const [savingOutlineConfig, setSavingOutlineConfig] = useState(false);
-  const [developerMode, setDeveloperMode] = useState(false);
-  const [draftForceOutlineAgentRepair, setDraftForceOutlineAgentRepair] = useState(false);
   const [knowledgeSearch, setKnowledgeSearch] = useState('');
   const [expandedKnowledgeFolderIds, setExpandedKnowledgeFolderIds] = useState<Set<string>>(new Set());
   const [knowledgeIndex, setKnowledgeIndex] = useState<KnowledgeBaseIndex>(emptyKnowledgeIndex);
@@ -378,10 +376,6 @@ function OutlineEditPage({
     let cancelled = false;
     window.yibiao?.config.load().then((cfg) => {
       if (cancelled) return;
-      setDeveloperMode(Boolean(cfg?.developer_mode));
-      if (!cfg?.developer_mode) {
-        setDraftForceOutlineAgentRepair(false);
-      }
       if (cfg?.export_format) {
         setExportFormat(cfg.export_format);
       }
@@ -436,7 +430,6 @@ function OutlineEditPage({
     setDraftOutlineExpansionMode(isExpansionWorkflow ? outlineExpansionMode : 'ai-complement');
     setDraftKnowledgeDocumentIds(referenceKnowledgeDocumentIds);
     initializeWordControlDraft();
-    setDraftForceOutlineAgentRepair(false);
     setKnowledgeSearch('');
     void loadKnowledgeIndex();
   }, [generationDialogOpen, isExpansionWorkflow, outlineExpansionMode, outlineWordControlOptions, referenceKnowledgeDocumentIds]);
@@ -537,10 +530,9 @@ function OutlineEditPage({
       });
       setGenerationDialogOpen(false);
       await window.yibiao?.tasks.startOutlineGeneration({
-        reference_knowledge_document_ids: draftKnowledgeDocumentIds,
-        outline_expansion_mode: nextOutlineExpansionMode,
-        word_control_options: wordControlOptions,
-        debug_force_outline_agent_repair: developerMode && draftForceOutlineAgentRepair,
+        referenceKnowledgeDocumentIds: draftKnowledgeDocumentIds,
+        outlineExpansionMode: nextOutlineExpansionMode,
+        wordControlOptions,
       });
       trackConfigUsage({
         outline_mode: isExpansionWorkflow ? nextOutlineExpansionMode : 'aligned',
@@ -1243,28 +1235,8 @@ function OutlineEditPage({
             <Dialog.Title className="sr-only">{outlineData ? '重新生成目录' : '生成目录'}</Dialog.Title>
             <Dialog.Description className="sr-only">选择本次目录生成方式、字数控制和参考知识库。</Dialog.Description>
 
-            <div className={`outline-generation-config-body${isExpansionWorkflow ? ' has-expansion-mode' : ''}${developerMode ? ' has-dev-tools' : ''}`}>
+            <div className={`outline-generation-config-body${isExpansionWorkflow ? ' has-expansion-mode' : ''}`}>
               {renderOutlineExpansionModePicker()}
-              {developerMode && (
-                <section className="outline-generation-config-section outline-agent-debug-section">
-                  <label className="outline-agent-debug-option">
-                    <span>
-                      <strong>强制 Agent 修复目录</strong>
-                      <small>本次目录生成会在最终保存前强制进入智能体修复链路，用于验证 Agent workspace、结果 JSON 和程序校验。</small>
-                    </span>
-                    <span className="yb-switch-control">
-                      <input
-                        type="checkbox"
-                        checked={draftForceOutlineAgentRepair}
-                        onChange={(event) => setDraftForceOutlineAgentRepair(event.target.checked)}
-                      />
-                      <span className="yb-switch-track" aria-hidden="true">
-                        <span className="yb-switch-thumb" />
-                      </span>
-                    </span>
-                  </label>
-                </section>
-              )}
               <section className="outline-generation-config-section outline-word-control-section">
                 <div className="content-generation-config-row">
                   <span>

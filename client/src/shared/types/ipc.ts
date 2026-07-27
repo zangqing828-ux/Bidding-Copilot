@@ -3,7 +3,7 @@ import type { DuplicateCheckSaveFilesRequest, DuplicateCheckWorkspaceState, File
 import type { ClientConfig, ConfigSaveResult, ImageModelTestResult, ModelListConfig, ModelListResult, UpdateChannel } from './config';
 import type { KnowledgeAnalysisSnapshot, KnowledgeBaseEvent, KnowledgeBaseIndex, KnowledgeBaseIndexMutationResult, KnowledgeBaseMigrationResult, KnowledgeBaseMigrationStatus, KnowledgeBaseMutationResult, KnowledgeBaseRetryDocumentResult, KnowledgeBaseStartMatchingResult, KnowledgeBaseUploadResult, KnowledgeDocument, KnowledgeFolder, KnowledgeItem } from '../../features/knowledge-base/types';
 import type { RejectionCheckWorkspaceState, RejectionDocumentRole } from '../../features/rejection-check/types';
-import type { BackgroundTaskState, BidAnalysisMode, BidAnalysisTaskState, BidSectionMode, ContentGenerationOptions, ContentGenerationPlanState, ContentGenerationRuntimeState, ContentGenerationSectionState, DetectedBidSection, GlobalFactGroupState, SaveOutlineRequest, StartBidAnalysisInput, TechnicalPlanImportResult, TechnicalPlanState, TechnicalPlanStep, TechnicalPlanWorkflowKind } from '../../features/technical-plan/types';
+import type { BackgroundTaskState, BidAnalysisMode, BidAnalysisTaskState, BidSectionMode, ContentGenerationOptions, ContentGenerationPlanState, ContentGenerationRuntimeState, ContentGenerationSectionState, DetectedBidSection, GlobalFactGroupState, SaveOutlineRequest, StartBidAnalysisInput, StartBidSectionExtractionInput, StartOutlineGenerationInput, TechnicalPlanImportResult, TechnicalPlanState, TechnicalPlanStep, TechnicalPlanWorkflowKind } from '../../features/technical-plan/types';
 import type { ExportFormatConfig, ExportTemplateRecord } from './exportFormat';
 import type { OutlineData, OutlineExpansionMode, OutlineWordControlOptions } from './outline';
 
@@ -487,9 +487,9 @@ export interface YibiaoBridge {
     delete: (templateId: string) => Promise<{ success: boolean; message: string }>;
   };
   tasks: {
-    startBidSectionExtraction: (payload?: unknown) => Promise<unknown>;
+    startBidSectionExtraction: (payload: StartBidSectionExtractionInput) => Promise<BackgroundTaskState>;
     startBidAnalysis: (payload: StartBidAnalysisInput) => Promise<BackgroundTaskState>;
-    startOutlineGeneration: (payload: unknown) => Promise<unknown>;
+    startOutlineGeneration: (payload: StartOutlineGenerationInput) => Promise<BackgroundTaskState>;
     startGlobalFactsGeneration: (payload: unknown) => Promise<unknown>;
     startContentGeneration: (payload: unknown) => Promise<unknown>;
     pauseContentGeneration: () => Promise<unknown>;
