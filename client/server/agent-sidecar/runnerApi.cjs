@@ -1,4 +1,6 @@
 const http = require('node:http');
+const { getRunnerPolicyEvidence } = require('../../agent-runner/securityPolicy.cjs');
+const { redactSidecarMessage } = require('./errorPolicy.cjs');
 
 const {
   PROTOCOL_NAME,
@@ -44,7 +46,7 @@ function decodeExecutionIdFromPath(path) {
   return executionId;
 }
 
-function createRunnerApi({ coordinator }) {
+function createRunnerApi({ coordinator, tokenManager = null, policyEvidence = getRunnerPolicyEvidence() }) {
   if (!coordinator || typeof coordinator.createExecution !== 'function' || typeof coordinator.cancelExecution !== 'function') {
     throw new TypeError('Runner API 需要 Sidecar coordinator');
   }
@@ -56,8 +58,36 @@ function createRunnerApi({ coordinator }) {
     if (normalizedMethod === PROTOCOL_METHODS.GET && normalizedPath === PROTOCOL_ROUTES.RUNNER_HEALTH) {
       return {
         statusCode: 200,
-        body: { protocol: PROTOCOL_NAME, version: PROTOCOL_VERSION, ready: true, activeLimit: 1 },
+        body: {
+          protocol: PROTOCOL_NAME,
+          version: PROTOCOL_VERSION,
+          ready: true,
+          activeLimit: 1,
+          policyHash: policyEvidence.policyHash,
+        },
       };
+    }
+
+    if (normalizedMethod === PROTOCOL_METHODS.GET) {
+      let parsed;
+      try { parsed = new URL(normalizedPath, 'http://runner.internal'); } catch { parsed = null; }
+      if (parsed?.pathname === PROTOCOL_ROUTES.RUNNER_HANDSHAKE) {
+        const challenge = parsed.searchParams.get('challenge') || '';
+        if (!tokenManager || typeof tokenManager.issueHandshakeToken !== 'function' || challenge.length < 16) {
+          throw createSidecarError('Runner handshake 未配置或 challenge 无效', SIDE_CAR_ERROR_CODES.HANDSHAKE_FAILED, { statusCode: 503, retryable: true });
+        }
+        const handshakeToken = tokenManager.issueHandshakeToken({ challenge, policyHash: policyEvidence.policyHash });
+        return {
+          statusCode: 200,
+          body: {
+            protocol: PROTOCOL_NAME,
+            version: PROTOCOL_VERSION,
+            ready: true,
+            handshake: { challenge, token: handshakeToken, policyHash: policyEvidence.policyHash },
+            policy: policyEvidence,
+          },
+        };
+      }
     }
 
     if (normalizedMethod === PROTOCOL_METHODS.POST && normalizedPath === buildRunnerCreatePath()) {
@@ -66,6 +96,17 @@ function createRunnerApi({ coordinator }) {
         statusCode: 201,
         body: coordinator.createExecution(body, dispatchToken),
       };
+    }
+
+    if (normalizedMethod === PROTOCOL_METHODS.GET) {
+      const executionId = decodeExecutionIdFromPath(normalizedPath);
+      if (executionId && typeof coordinator.getExecutionResult === 'function') {
+        const statusToken = requireBearer(headers);
+        return {
+          statusCode: 200,
+          body: coordinator.getExecutionResult(executionId, statusToken),
+        };
+      }
     }
 
     if (normalizedMethod === PROTOCOL_METHODS.DELETE) {
@@ -97,7 +138,7 @@ function errorBody(error) {
   return {
     error: {
       code: error?.code || 'INTERNAL_ERROR',
-      message: String(error?.message || 'Sidecar request failed').slice(0, 500),
+      message: redactSidecarMessage(error?.message || 'Sidecar request failed'),
       retryable: Boolean(error?.retryable),
     },
   };

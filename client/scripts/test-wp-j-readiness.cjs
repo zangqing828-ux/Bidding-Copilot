@@ -4,12 +4,15 @@ const http = require('node:http');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { createTokenManager } = require('../server/agent-sidecar/tokenService.cjs');
+const { getRunnerPolicyEvidence } = require('../agent-runner/securityPolicy.cjs');
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bidmaster-wp-j-readiness-'));
 process.env.NODE_ENV = 'test';
 process.env.OAUTH_MODE = 'mock';
 process.env.YIBIAO_DATA_DIR = dataDir;
 process.env.AGENT_QUALITY_ENABLED = '0';
+process.env.YIBIAO_SIDECAR_SECRET = 'wp-j-readiness-test-secret';
 
 const readinessRouter = require('../server/routes/readiness.cjs');
 assert.equal(typeof readinessRouter, 'function', 'readiness 必须默认导出 Express router');
@@ -35,10 +38,34 @@ async function startApp() {
 }
 
 async function startHealthySidecar() {
-  const server = http.createServer((_req, response) => {
+  const tokenManager = createTokenManager({ secret: process.env.YIBIAO_SIDECAR_SECRET });
+  const policy = getRunnerPolicyEvidence();
+  const server = http.createServer((request, response) => {
     response.setHeader('content-type', 'application/json');
-    response.end(JSON.stringify({ protocol: 'SidecarProtocolV1', version: 1, ready: true }));
+    const url = new URL(request.url, 'http://sidecar.test');
+    if (url.pathname.endsWith('/handshake')) {
+      const challenge = url.searchParams.get('challenge');
+      response.end(JSON.stringify({
+        protocol: 'SidecarProtocolV1',
+        version: 1,
+        ready: true,
+        handshake: {
+          challenge,
+          token: tokenManager.issueHandshakeToken({ challenge, policyHash: policy.policyHash }),
+          policyHash: policy.policyHash,
+        },
+        policy,
+      }));
+      return;
+    }
+    response.end(JSON.stringify({
+      protocol: 'SidecarProtocolV1',
+      version: 1,
+      ready: true,
+      policyHash: policy.policyHash,
+    }));
   });
+  server.on('close', () => tokenManager.close());
   server.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   return server;

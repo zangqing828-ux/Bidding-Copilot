@@ -9,15 +9,23 @@ const {
   PROTOCOL_ROUTES,
   SIDE_CAR_ERROR_CODES,
   SIDE_CAR_LIMITS,
+  MAX_CALLS_DEFAULT,
   createSidecarError,
   normalizeDispatchTokenClaims,
   normalizeProxyTokenClaims,
+  normalizeHandshakeClaims,
   buildRunnerCancelPath,
+  buildRunnerStatusPath,
   buildCapabilityPath,
   buildChatPath,
 } = require('../../shared/contracts/agent-sidecar/sidecarProtocolV1.cjs');
 
 const DEFAULT_SECRET = 'change-me-before-production';
+
+function isDefaultSecret(value) {
+  const secret = String(value || '').trim();
+  return !secret || secret === DEFAULT_SECRET;
+}
 
 function nowMs() {
   return Date.now();
@@ -50,7 +58,7 @@ function assertKnownProxyBinding({ method, path, executionId }) {
   const expectedPath = method === PROTOCOL_METHODS.POST
     ? buildChatPath()
     : method === PROTOCOL_METHODS.GET
-      ? buildCapabilityPath(executionId)
+      ? [buildCapabilityPath(executionId), buildRunnerStatusPath(executionId)].includes(path) ? path : null
       : method === PROTOCOL_METHODS.DELETE
         ? buildRunnerCancelPath(executionId)
         : null;
@@ -112,11 +120,38 @@ function createManagerState() {
   };
 }
 
+function createReplayLedger({ clock = nowMs, replayWindowMs = SIDE_CAR_LIMITS.TOKEN_REPLAY_WINDOW_MS } = {}) {
+  const entries = new Map();
+
+  function sweep() {
+    const now = clock();
+    for (const [jti, entry] of entries.entries()) {
+      if (entry.expiresAt + replayWindowMs <= now) entries.delete(jti);
+    }
+  }
+
+  function consume(jti, expiresAt) {
+    sweep();
+    if (entries.has(jti)) return false;
+    entries.set(jti, { consumedAt: clock(), expiresAt });
+    return true;
+  }
+
+  return Object.freeze({
+    consume,
+    sweep,
+    size: () => entries.size,
+  });
+}
+
 function createTokenManager({
   secret = process.env.YIBIAO_SIDECAR_SECRET || DEFAULT_SECRET,
   clock = nowMs,
   replayWindowMs = SIDE_CAR_LIMITS.TOKEN_REPLAY_WINDOW_MS,
   cleanupEveryMs = 60 * 1000,
+  statelessDispatch = false,
+  statelessProxy = false,
+  replayLedger = createReplayLedger({ clock, replayWindowMs }),
 } = {}) {
   const state = createManagerState();
   let cleanupTimer = null;
@@ -298,9 +333,15 @@ function createTokenManager({
   }
 
   function revokeExecutionTokens(executionId) {
+    revokeExecutionTokensExcept(executionId);
+  }
+
+  function revokeExecutionTokensExcept(executionId, keepJtis = []) {
     const tokenSet = state.executionTokens.get(executionId);
     if (!tokenSet) return;
+    const keep = new Set(Array.isArray(keepJtis) ? keepJtis : [keepJtis]);
     for (const jti of tokenSet) {
+      if (keep.has(jti)) continue;
       revokeJti(jti);
     }
   }
@@ -368,7 +409,16 @@ function createTokenManager({
     if (tokenType === TOKEN_TYPES.DISPATCH) {
       const stateEntry = state.dispatchStates.get(claims.jti);
       if (!stateEntry) {
-        throw createSidecarError('token 未注册或已过期', SIDE_CAR_ERROR_CODES.INVALID_TOKEN, { statusCode: 401 });
+        if (!statelessDispatch) {
+          throw createSidecarError('token 未注册或已过期', SIDE_CAR_ERROR_CODES.INVALID_TOKEN, { statusCode: 401 });
+        }
+        if (!replayLedger.consume(claims.jti, claims.expiresAt)) {
+          throw createSidecarError('token 可能被重放', SIDE_CAR_ERROR_CODES.TOKEN_REPLAY, { statusCode: 401 });
+        }
+        if (claims.singleUse !== true) {
+          throw createSidecarError('dispatch token 的 singleUse 非法', SIDE_CAR_ERROR_CODES.INVALID_TOKEN, { statusCode: 401 });
+        }
+        return { claims, stateEntry: { used: true, consumedAt: now(), expiresAt: claims.expiresAt, stateless: true } };
       }
       if (stateEntry.used) {
         const replayWindowExpired = stateEntry.consumedAt + replayWindowMs < now();
@@ -386,7 +436,17 @@ function createTokenManager({
 
     const proxyStateEntry = state.proxyStates.get(claims.jti);
     if (!proxyStateEntry) {
-      throw createSidecarError('token 未注册或已过期', SIDE_CAR_ERROR_CODES.INVALID_TOKEN, { statusCode: 401 });
+      if (!statelessProxy) {
+        throw createSidecarError('token 未注册或已过期', SIDE_CAR_ERROR_CODES.INVALID_TOKEN, { statusCode: 401 });
+      }
+      return {
+        claims,
+        stateEntry: {
+          remainingCalls: claims.remainingCalls,
+          expiresAt: claims.expiresAt,
+          stateless: true,
+        },
+      };
     }
     return { claims, stateEntry: proxyStateEntry };
   }
@@ -417,6 +477,37 @@ function createTokenManager({
     return result.claims;
   }
 
+  function issueHandshakeToken({ challenge, policyHash, ttlMs = 30 * 1000 } = {}) {
+    const normalizedChallenge = assertBindingString(challenge, 'handshake challenge');
+    const normalizedPolicyHash = assertBindingString(policyHash, 'handshake policy hash');
+    const issuedAt = now();
+    const claims = normalizeHandshakeClaims({
+      protocol: PROTOCOL_NAME,
+      version: PROTOCOL_VERSION,
+      tokenType: TOKEN_TYPES.HANDSHAKE,
+      aud: TOKEN_AUDIENCE.WEB,
+      jti: randomTokenId(),
+      issuedAt,
+      expiresAt: issuedAt + Math.max(1_000, Math.min(Number(ttlMs) || 30_000, 60_000)),
+      challenge: normalizedChallenge,
+      policyHash: normalizedPolicyHash,
+    });
+    return createToken(claims, secret);
+  }
+
+  function verifyHandshakeToken(rawToken, { challenge, policyHash } = {}) {
+    const parsed = parseToken(rawToken, secret);
+    const claims = normalizeHandshakeClaims(parsed);
+    ensureNotExpired(claims);
+    if (challenge !== undefined && claims.challenge !== String(challenge)) {
+      throw createSidecarError('handshake challenge 不匹配', SIDE_CAR_ERROR_CODES.HANDSHAKE_FAILED, { statusCode: 401 });
+    }
+    if (policyHash !== undefined && claims.policyHash !== String(policyHash)) {
+      throw createSidecarError('handshake policy 不匹配', SIDE_CAR_ERROR_CODES.HANDSHAKE_FAILED, { statusCode: 401 });
+    }
+    return claims;
+  }
+
   function verifyRevokedProxyToken(rawToken, options = {}) {
     if (!options.expectedMethod || !options.expectedPath) {
       throw createSidecarError('proxy token 校验必须提供精确 method/path', SIDE_CAR_ERROR_CODES.INVALID_INPUT, { statusCode: 400 });
@@ -439,6 +530,9 @@ function createTokenManager({
     const parsed = parseToken(rawToken, secret);
     const result = verifyBinding({ claims: parsed, tokenType: TOKEN_TYPES.PROXY, ...options, maxReplayMs: replayWindowMs });
     const stateEntry = state.proxyStates.get(result.claims.jti);
+    if (!stateEntry && statelessProxy) {
+      throw createSidecarError('stateless proxy token 不允许在 Runner 进程消费调用额度', SIDE_CAR_ERROR_CODES.ROUTE_NOT_ALLOWED, { statusCode: 403 });
+    }
     if (stateEntry.remainingCalls <= 0) {
       throw createSidecarError('token 调用已用尽', SIDE_CAR_ERROR_CODES.LIMIT_EXCEEDED, { statusCode: 429 });
     }
@@ -471,17 +565,28 @@ function createTokenManager({
     issueProxyToken,
     verifyDispatchToken,
     verifyProxyToken,
+    issueHandshakeToken,
+    verifyHandshakeToken,
     verifyRevokedProxyToken,
     consumeProxyCall,
     remainingCalls,
     revokeToken,
     revokeExecutionTokens,
+    revokeExecutionTokensExcept,
     getIssuedTokens,
     sweepExpired,
     close,
+    parseToken: (rawToken) => parseToken(rawToken, secret),
+    createToken: (payload) => createToken(payload, secret),
+    isStatelessDispatch: statelessDispatch,
+    isStatelessProxy: statelessProxy,
+    replayLedger,
   };
 }
 
 module.exports = {
   createTokenManager,
+  createReplayLedger,
+  DEFAULT_SECRET,
+  isDefaultSecret,
 };

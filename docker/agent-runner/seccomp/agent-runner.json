@@ -19,6 +19,7 @@
         "clock_gettime",
         "clone",
         "close",
+        "connect",
         "dup",
         "dup2",
         "dup3",

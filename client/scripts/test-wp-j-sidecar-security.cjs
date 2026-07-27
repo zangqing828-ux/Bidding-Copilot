@@ -11,7 +11,7 @@ const {
 } = require('../shared/contracts/agent-sidecar/sidecarProtocolV1.cjs');
 const { createSidecarCoordinator } = require('../server/agent-sidecar/sidecarCoordinator.cjs');
 const { createTokenManager } = require('../server/agent-sidecar/tokenService.cjs');
-const { RUNNER_SECURITY_POLICY, validateRunnerSecurityPolicy } = require('../agent-runner/securityPolicy.cjs');
+const { RUNNER_SECURITY_POLICY, validateRunnerSecurityPolicy, getRunnerPolicyEvidence } = require('../agent-runner/securityPolicy.cjs');
 
 function decodeClaims(rawToken) {
   const payload = String(rawToken || '').split('.')[0];
@@ -70,8 +70,14 @@ function main() {
   const seccomp = JSON.parse(fs.readFileSync(path.join(__dirname, '../../docker/agent-runner/seccomp/agent-runner.json'), 'utf8'));
   const seccompNames = seccomp.syscalls.flatMap((entry) => entry.names || []);
   assert.equal(seccomp.defaultAction, 'SCMP_ACT_ERRNO', 'seccomp 默认必须拒绝');
-  assert.equal(seccompNames.includes('connect'), false, 'Runner seccomp 不得允许主动 connect');
+  assert.equal(seccompNames.includes('connect'), true, 'Runner seccomp 必须允许连接内部 Proxy 网络');
   assert.equal(seccompNames.includes('ptrace'), false, 'Runner seccomp 不得允许 ptrace');
+  const policyEvidence = getRunnerPolicyEvidence();
+  assert.equal(policyEvidence.network.mode, 'internal-proxy-only');
+  assert.equal(policyEvidence.network.egress, 'deny');
+  assert.equal(policyEvidence.seccomp.defaultAction, 'SCMP_ACT_ERRNO');
+  assert.equal(policyEvidence.seccomp.connect, 'agent-internal-network-only');
+  assert.match(policyEvidence.seccomp.sha256, /^[a-f0-9]{64}$/);
 
   const tokenManager = createTokenManager({ secret: 'security-test-secret' });
   const coordinator = createSidecarCoordinator({ tokenManager, executionTtlMs: 2 * 60 * 1000 });

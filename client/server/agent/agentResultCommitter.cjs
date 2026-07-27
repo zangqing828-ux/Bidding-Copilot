@@ -50,6 +50,11 @@ function normalizeResultLocator(value) {
 function receiptFromRow(row) {
   return Object.freeze({
     executionId: row.execution_id,
+    runId: row.run_id,
+    taskSpecId: row.task_spec_id,
+    taskSpecVersion: Number(row.task_spec_version),
+    inputRevision: Number(row.input_revision),
+    inputHash: row.input_sha256,
     outputSha256: row.output_sha256,
     appliedAt: row.applied_at,
     resultLocator: JSON.parse(row.result_locator_json),
@@ -212,7 +217,7 @@ function createAgentResultCommitter({ db, mutationExecutor, readInputRevision, o
           appliedAt,
         });
         return Object.freeze({
-          executionId: normalizedEnvelope.executionId,
+          ...normalizedEnvelope,
           outputSha256: String(outputSha256).toLowerCase(),
           appliedAt,
           resultLocator: JSON.parse(resultLocatorJson),

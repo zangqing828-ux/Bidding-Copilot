@@ -268,12 +268,17 @@ function makeInput(specId, snapshot) {
   return deepFreeze(input);
 }
 
-function makePrompt(specId, instruction) {
+function makePrompt(specId, instruction, snapshot = null) {
+  const request = snapshot?.request && typeof snapshot.request === 'object' ? snapshot.request : {};
+  const requestPrompt = String(request.prompt || '').trim();
+  const outputFile = String(request.output_file || 'result.json').trim();
   const prompt = [
     `Task Spec: ${specId}`,
     'Protocol: technical-plan-agent-prompt.v1',
     instruction,
-    '只输出 result.json 对应的 JSON 对象；不得输出 Markdown 围栏、额外字段、路径、Token 或模型凭据。',
+    `请读取 input/request.json 了解本次受控业务请求和输入文件；最终只使用 write 工具写入 ${outputFile}，文件内容必须是符合 Task Spec schema 的纯 JSON 对象。`,
+    requestPrompt ? `业务请求补充说明：\n${requestPrompt}` : '',
+    '不得输出 Markdown 围栏、额外字段、路径、Token 或模型凭据。',
   ].join('\n');
   if (Buffer.byteLength(prompt, 'utf8') > MAX_PROMPT_BYTES) throw createAgentTaskSpecError('Agent prompt 超过限制');
   return prompt;
@@ -517,7 +522,7 @@ function createTechnicalPlanAgentTaskSpecs() {
     commitOperationId: definition.operationId,
     captureSnapshot,
     buildInput: (snapshot) => makeInput(definition.id, snapshot),
-    buildPrompt: () => makePrompt(definition.id, definition.instruction),
+    buildPrompt: (snapshot) => makePrompt(definition.id, definition.instruction, snapshot),
     validateOutput: definition.validateOutput,
     applyResult: createApplyResult(definition.operationId),
     testOnly: false,
@@ -528,9 +533,13 @@ function isSidecarReady(sidecarReadiness) {
   return sidecarReadiness === true || sidecarReadiness?.status === 'ready';
 }
 
+function isEnabled(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
+
 function createTechnicalPlanAgentTaskRegistry({ env = process.env, sidecarReadiness = false } = {}) {
   const specs = createTechnicalPlanAgentTaskSpecs();
-  const enabled = String(env.AGENT_QUALITY_ENABLED || '').toLowerCase() === 'true';
+  const enabled = isEnabled(env.AGENT_QUALITY_ENABLED);
   if (env.NODE_ENV !== 'test' && (!enabled || !isSidecarReady(sidecarReadiness))) {
     return createBusinessAgentTaskRegistry({ specs: [], env });
   }

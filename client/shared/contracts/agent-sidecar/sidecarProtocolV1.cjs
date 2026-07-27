@@ -11,10 +11,13 @@ const MAX_EXECUTION_TOKEN_LENGTH = 64;
 const PROTOCOL_ROUTES = Object.freeze({
   RUNNER_CREATE: '/internal/runner/v1/executions',
   RUNNER_CANCEL: '/internal/runner/v1/executions/{executionId}',
+  RUNNER_STATUS: '/internal/runner/v1/executions/{executionId}',
   RUNNER_HEALTH: '/internal/runner/v1/health',
+  RUNNER_HANDSHAKE: '/internal/runner/v1/handshake',
   AGENT_LISTENER_HEALTH: '/internal/agent/v1/health',
   AGENT_CAPABILITY: '/internal/agent/v1/executions/{executionId}/capability',
   AGENT_CHAT: '/internal/agent/v1/chat/completions',
+  AGENT_RESPONSES: '/internal/agent/v1/responses',
 });
 
 const PROTOCOL_METHODS = Object.freeze({
@@ -26,11 +29,13 @@ const PROTOCOL_METHODS = Object.freeze({
 const TOKEN_TYPES = Object.freeze({
   DISPATCH: 'agent_sidecar_dispatch_v1',
   PROXY: 'agent_sidecar_proxy_v1',
+  HANDSHAKE: 'agent_sidecar_handshake_v1',
 });
 
 const TOKEN_AUDIENCE = Object.freeze({
   RUNNER: 'agent-runner',
   LISTENER: 'agent-listener',
+  WEB: 'agent-web',
 });
 
 const SIDE_CAR_ERROR_CODES = Object.freeze({
@@ -48,6 +53,8 @@ const SIDE_CAR_ERROR_CODES = Object.freeze({
   EXECUTION_EXISTS: 'SIDE_CAR_EXECUTION_EXISTS',
   ROUTE_NOT_ALLOWED: 'SIDE_CAR_ROUTE_NOT_ALLOWED',
   LIMIT_EXCEEDED: 'SIDE_CAR_LIMIT_EXCEEDED',
+  PROTOCOL_UNSUPPORTED: 'AGENT_PROTOCOL_UNSUPPORTED',
+  HANDSHAKE_FAILED: 'AGENT_HANDSHAKE_FAILED',
   INTERNAL: 'SIDE_CAR_INTERNAL_ERROR',
 });
 
@@ -304,6 +311,44 @@ function normalizeProxyTokenClaims(value) {
   return claims;
 }
 
+function normalizeHandshakeClaims(value) {
+  const payload = assertPlainObject(value, 'handshake claims');
+  assertAllowedFields(payload, 'handshake claims', new Set([
+    'protocol',
+    'tokenType',
+    'version',
+    'aud',
+    'jti',
+    'issuedAt',
+    'expiresAt',
+    'challenge',
+    'policyHash',
+  ]));
+  const version = assertNumber(payload.version, 'handshake claims.version', { min: 1, max: PROTOCOL_VERSION });
+  const protocol = assertString(payload.protocol, 'handshake claims.protocol', { maxLength: 64 });
+  const tokenType = normalizeTokenType(payload.tokenType, 'handshake claims', TOKEN_TYPES.HANDSHAKE);
+  const aud = normalizeTokenAudience(payload.aud, 'handshake claims', TOKEN_AUDIENCE.WEB);
+  const issuedAt = assertNumber(payload.issuedAt, 'handshake claims.issuedAt', { min: 1, max: Number.MAX_SAFE_INTEGER });
+  const expiresAt = assertNumber(payload.expiresAt, 'handshake claims.expiresAt', { min: 1, max: Number.MAX_SAFE_INTEGER });
+  if (expiresAt <= issuedAt) {
+    throw createSidecarError('handshake claims.expiresAt 必须晚于 issuedAt', SIDE_CAR_ERROR_CODES.INVALID_TOKEN, { statusCode: 401 });
+  }
+  if (protocol !== PROTOCOL_NAME || version !== PROTOCOL_VERSION) {
+    throw createSidecarError('handshake protocol 不匹配', SIDE_CAR_ERROR_CODES.INVALID_TOKEN, { statusCode: 401 });
+  }
+  return Object.freeze({
+    protocol,
+    tokenType,
+    version,
+    aud,
+    jti: normalizeTokenId(payload.jti, 'handshake claims.jti'),
+    issuedAt,
+    expiresAt,
+    challenge: assertString(payload.challenge, 'handshake claims.challenge', { maxLength: 256 }),
+    policyHash: assertString(payload.policyHash, 'handshake claims.policyHash', { maxLength: 128 }),
+  });
+}
+
 function normalizeExecutionEnvelope(value) {
   const envelope = assertPlainObject(value, 'execution envelope');
   assertAllowedFields(envelope, 'execution envelope', new Set([
@@ -318,6 +363,14 @@ function normalizeExecutionEnvelope(value) {
     'resultMaxBytes',
     'proxyMaxCalls',
     'callback',
+    'agentListenerUrl',
+    'proxyToken',
+    'capabilityToken',
+    'cancelToken',
+    'statusToken',
+    'inputFiles',
+    'prompt',
+    'timeoutMs',
     'inputChecksum',
     'inputSizeBytes',
     'expiresAt',
@@ -361,6 +414,51 @@ function normalizeExecutionEnvelope(value) {
     maxLength: 80,
   });
 
+  let agentListenerUrl = '';
+  if (envelope.agentListenerUrl !== undefined) {
+    let parsed;
+    try {
+      parsed = new URL(assertString(envelope.agentListenerUrl, 'execution envelope.agentListenerUrl', { maxLength: 256 }));
+    } catch {
+      throw createSidecarError('execution envelope.agentListenerUrl 必须是合法 URL', SIDE_CAR_ERROR_CODES.INVALID_INPUT, { statusCode: 400 });
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+      throw createSidecarError('execution envelope.agentListenerUrl 只允许无凭据的 HTTP(S) URL', SIDE_CAR_ERROR_CODES.INVALID_INPUT, { statusCode: 400 });
+    }
+    agentListenerUrl = `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`;
+  }
+
+  const normalizeOptionalToken = (value, label) => value === undefined
+    ? ''
+    : assertString(value, label, { minLength: 32, maxLength: 4096 });
+
+  const proxyToken = normalizeOptionalToken(envelope.proxyToken, 'execution envelope.proxyToken');
+  const capabilityToken = normalizeOptionalToken(envelope.capabilityToken, 'execution envelope.capabilityToken');
+  const cancelToken = normalizeOptionalToken(envelope.cancelToken, 'execution envelope.cancelToken');
+  const statusToken = normalizeOptionalToken(envelope.statusToken, 'execution envelope.statusToken');
+
+  let inputFiles = {};
+  if (envelope.inputFiles !== undefined) {
+    if (!isObject(envelope.inputFiles)) {
+      throw createSidecarError('execution envelope.inputFiles 必须为对象', SIDE_CAR_ERROR_CODES.INVALID_INPUT, { statusCode: 400 });
+    }
+    inputFiles = {};
+    for (const [relativePath, content] of Object.entries(envelope.inputFiles)) {
+      if (typeof content !== 'string' && !Buffer.isBuffer(content)) {
+        throw createSidecarError(`execution envelope.inputFiles.${relativePath} 必须为文本`, SIDE_CAR_ERROR_CODES.INVALID_INPUT, { statusCode: 400 });
+      }
+      inputFiles[relativePath] = Buffer.isBuffer(content) ? content.toString('utf8') : content;
+    }
+  }
+
+  const prompt = envelope.prompt === undefined
+    ? ''
+    : assertString(envelope.prompt, 'execution envelope.prompt', { maxLength: 32 * 1024 });
+  const timeoutMs = assertNumber(envelope.timeoutMs === undefined ? 10 * 60 * 1000 : envelope.timeoutMs, 'execution envelope.timeoutMs', {
+    min: 1_000,
+    max: 10 * 60 * 1000,
+  });
+
   const resultFileName = assertString(envelope.resultFileName || 'result.json', 'execution envelope.resultFileName', {
     minLength: 5,
     maxLength: 120,
@@ -386,6 +484,14 @@ function normalizeExecutionEnvelope(value) {
     resultMaxBytes,
     proxyMaxCalls,
     callback: { event: callbackEvent, retries: callbackRetries },
+    ...(agentListenerUrl ? { agentListenerUrl } : {}),
+    ...(proxyToken ? { proxyToken } : {}),
+    ...(capabilityToken ? { capabilityToken } : {}),
+    ...(cancelToken ? { cancelToken } : {}),
+    ...(statusToken ? { statusToken } : {}),
+    inputFiles,
+    prompt,
+    timeoutMs,
     input,
     inputSizeBytes,
     inputChecksum: crypto.createHash('sha256').update(canonicalInput).digest('hex'),
@@ -410,6 +516,14 @@ function normalizeCreateExecutionRequest(value) {
     'resultMaxBytes',
     'proxyMaxCalls',
     'callback',
+    'agentListenerUrl',
+    'proxyToken',
+    'capabilityToken',
+    'cancelToken',
+    'statusToken',
+    'inputFiles',
+    'prompt',
+    'timeoutMs',
     'expiresAt',
   ]));
   return normalizeExecutionEnvelope(request);
@@ -447,10 +561,24 @@ function normalizeChatRequest(value) {
 
   const normalizedMessages = messages.map((message, index) => {
     const normalizedMessage = assertPlainObject(message, `agent chat request.messages[${index}]`);
-    assertAllowedFields(normalizedMessage, `agent chat message[${index}]`, new Set(['role', 'content']));
+    assertAllowedFields(normalizedMessage, `agent chat message[${index}]`, new Set(['role', 'content', 'tool_calls', 'tool_call_id', 'name']));
     const role = assertString(normalizedMessage.role, `agent chat message[${index}].role`, { maxLength: 16, minLength: 1 });
-    const content = assertMessageContent(assertString(normalizedMessage.content || '', `agent chat message[${index}].content`, { maxLength: 8192 }));
-    return { role, content };
+    const content = normalizedMessage.content === null
+      ? null
+      : assertMessageContent(assertString(normalizedMessage.content || '', `agent chat message[${index}].content`, { maxLength: 8192 }));
+    const toolCalls = normalizedMessage.tool_calls === undefined ? undefined : (() => {
+      if (!Array.isArray(normalizedMessage.tool_calls) || normalizedMessage.tool_calls.length > 32) {
+        throw createSidecarError(`agent chat message[${index}].tool_calls 数量非法`, SIDE_CAR_ERROR_CODES.INVALID_INPUT, { statusCode: 400 });
+      }
+      return normalizedMessage.tool_calls;
+    })();
+    return {
+      role,
+      content,
+      ...(toolCalls === undefined ? {} : { tool_calls: toolCalls }),
+      ...(normalizedMessage.tool_call_id === undefined ? {} : { tool_call_id: assertString(normalizedMessage.tool_call_id, `agent chat message[${index}].tool_call_id`, { maxLength: 128 }) }),
+      ...(normalizedMessage.name === undefined ? {} : { name: assertString(normalizedMessage.name, `agent chat message[${index}].name`, { maxLength: 128 }) }),
+    };
   });
 
   const model = assertString(request.model || '', 'agent chat request.model', { allowEmpty: true, maxLength: 80 });
@@ -502,12 +630,20 @@ function buildRunnerCancelPath(executionId) {
   return `/internal/runner/v1/executions/${encodeURIComponent(String(executionId || '').trim())}`;
 }
 
+function buildRunnerStatusPath(executionId) {
+  return `/internal/runner/v1/executions/${encodeURIComponent(String(executionId || '').trim())}`;
+}
+
 function buildCapabilityPath(executionId) {
   return `/internal/agent/v1/executions/${encodeURIComponent(String(executionId || '').trim())}/capability`;
 }
 
 function buildChatPath() {
   return PROTOCOL_ROUTES.AGENT_CHAT;
+}
+
+function buildResponsesPath() {
+  return PROTOCOL_ROUTES.AGENT_RESPONSES;
 }
 
 function parseExecutionTokenBinding(claims) {
@@ -557,6 +693,7 @@ module.exports = {
   normalizeTokenClaims,
   normalizeDispatchTokenClaims,
   normalizeProxyTokenClaims,
+  normalizeHandshakeClaims,
   normalizeExecutionEnvelope,
   normalizeCreateExecutionRequest,
   normalizeCancelExecutionRequest,
@@ -564,8 +701,10 @@ module.exports = {
   normalizeBearerToken,
   buildRunnerCreatePath,
   buildRunnerCancelPath,
+  buildRunnerStatusPath,
   buildCapabilityPath,
   buildChatPath,
+  buildResponsesPath,
   validateExecutionIdentity,
   parseExecutionTokenBinding,
   MAX_CALLS_DEFAULT,

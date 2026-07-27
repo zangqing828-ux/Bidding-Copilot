@@ -98,7 +98,7 @@ function createWebOpenCodeRunner({ env = process.env } = {}) {
     return { prlimit, available: isExecutable(prlimit) };
   }
 
-  function run({ binary, taskWorkspace, proxyToken, prompt, timeoutMs, signal, onChild, limits = DEFAULT_LIMITS }) {
+  function run({ binary, taskWorkspace, proxyToken, prompt, timeoutMs, signal, onChild, executionId, limits = DEFAULT_LIMITS }) {
     const prlimit = getPrlimitBinary(env);
     if (!isExecutable(binary)) return Promise.reject(createRunnerError('OpenCode Linux binary 未部署', 'AGENT_RUNTIME_UNAVAILABLE'));
     if (!isExecutable(prlimit)) return Promise.reject(createRunnerError('prlimit 未部署，拒绝启动 Agent', 'AGENT_PRLIMIT_UNAVAILABLE'));
@@ -144,6 +144,8 @@ function createWebOpenCodeRunner({ env = process.env } = {}) {
           OPENCODE_DISABLE_AUTOUPDATE: 'true',
           OPENCODE_DISABLE_DEFAULT_PLUGINS: 'true',
           YIBIAO_WEB_AGENT_PROXY_TOKEN: proxyToken,
+          YIBIAO_AGENT_PROXY_TOKEN: proxyToken,
+          ...(executionId ? { YIBIAO_AGENT_EXECUTION_ID: String(executionId) } : {}),
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       });

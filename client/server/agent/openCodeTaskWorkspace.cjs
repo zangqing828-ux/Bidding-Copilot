@@ -5,6 +5,8 @@ const crypto = require('node:crypto');
 const OUTPUT_FILE = 'result.json';
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
+const MAX_TASK_DIRECTORIES = 4;
+const STALE_TASK_TTL_MS = 60 * 60 * 1000;
 
 function createWorkspaceError(message, code) {
   const error = new Error(message);
@@ -141,6 +143,40 @@ function cleanupTaskDirectory(taskDir) {
   }
 }
 
+function sweepOrphanTaskDirectories(workspaceRoot, {
+  maxTaskDirectories = MAX_TASK_DIRECTORIES,
+  staleTtlMs = STALE_TASK_TTL_MS,
+  now = Date.now,
+} = {}) {
+  const taskRoot = ensureInsideRoot(workspaceRoot, path.join(workspaceRoot, '.agent-tasks'));
+  if (!fs.existsSync(taskRoot)) return { removed: 0, remaining: 0 };
+  const entries = fs.readdirSync(taskRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      const target = path.join(taskRoot, entry.name);
+      return { target, mtimeMs: fs.statSync(target).mtimeMs };
+    })
+    .sort((left, right) => left.mtimeMs - right.mtimeMs);
+  const cutoff = Number(now()) - Math.max(0, Number(staleTtlMs) || STALE_TASK_TTL_MS);
+  let removed = 0;
+  const candidates = entries.filter((entry) => entry.mtimeMs <= cutoff);
+  for (const entry of candidates) {
+    cleanupTaskDirectory(entry.target);
+    removed += 1;
+  }
+  const remainingEntries = entries.filter((entry) => fs.existsSync(entry.target));
+  if (remainingEntries.length > maxTaskDirectories) {
+    for (const entry of remainingEntries.slice(0, remainingEntries.length - maxTaskDirectories)) {
+      cleanupTaskDirectory(entry.target);
+      removed += 1;
+    }
+  }
+  const remaining = fs.existsSync(taskRoot)
+    ? fs.readdirSync(taskRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory()).length
+    : 0;
+  return { removed, remaining };
+}
+
 function createOpenCodeTaskWorkspace({ workspaceRoot, runId, inputs = {}, maxInputBytes = MAX_INPUT_BYTES }) {
   const normalizedRunId = String(runId || '').trim();
   if (!workspaceRoot || !normalizedRunId) throw new Error('createOpenCodeTaskWorkspace 缺少 workspaceRoot 或 runId');
@@ -203,4 +239,7 @@ module.exports = {
   ensureInsideRoot,
   readSafeOutput,
   safeRelativePath,
+  MAX_TASK_DIRECTORIES,
+  STALE_TASK_TTL_MS,
+  sweepOrphanTaskDirectories,
 };

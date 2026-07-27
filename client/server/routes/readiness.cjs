@@ -1,7 +1,9 @@
 // Readiness 检查：J-Core 与 Agent Quality 分离，Sidecar 故障不拖垮 Web 主链路。
 const express = require('express');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const config = require('../config.cjs');
+const { createTokenManager, isDefaultSecret } = require('../agent-sidecar/tokenService.cjs');
 
 const router = express.Router();
 
@@ -35,6 +37,10 @@ async function checkAgentSidecar() {
   }
 
   try {
+    const secret = String(process.env.YIBIAO_SIDECAR_SECRET || '').trim();
+    if (isDefaultSecret(secret)) {
+      return { name: 'agent_sidecar', status: 'blocked', code: 'AGENT_HANDSHAKE_FAILED', message: 'Sidecar secret 未通过非默认校验' };
+    }
     const baseUrl = normalizeSidecarUrl(process.env.AGENT_SIDECAR_URL || 'http://agent-runner:7101');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 2500);
@@ -55,7 +61,49 @@ async function checkAgentSidecar() {
     if (body?.protocol !== 'SidecarProtocolV1' || body?.ready !== true) {
       return { name: 'agent_sidecar', status: 'blocked', code: 'AGENT_SANDBOX_UNAVAILABLE', message: 'Sidecar 协议或状态不匹配' };
     }
-    return { name: 'agent_sidecar', status: 'ready', protocol: body.protocol, version: body.version };
+    const challenge = crypto.randomUUID();
+    const handshakeResponse = await fetch(`${baseUrl}/internal/runner/v1/handshake?challenge=${encodeURIComponent(challenge)}`, {
+      signal: controller.signal,
+      headers: { accept: 'application/json' },
+    });
+    const handshake = await handshakeResponse.json();
+    if (!handshakeResponse.ok || handshake?.ready !== true || !handshake?.handshake?.token || !handshake?.policy) {
+      return { name: 'agent_sidecar', status: 'blocked', code: 'AGENT_HANDSHAKE_FAILED', message: 'Sidecar 签名握手或策略证据缺失' };
+    }
+    const verifier = createTokenManager({ secret });
+    try {
+      verifier.verifyHandshakeToken(handshake.handshake.token, {
+        challenge,
+        policyHash: handshake.policy.policyHash,
+      });
+    } finally {
+      verifier.close();
+    }
+    const policy = handshake.policy;
+    const policyValid = policy.network?.mode === 'internal-proxy-only'
+      && policy.network?.publicNetwork === false
+      && policy.network?.egress === 'deny'
+      && policy.network?.metadataEndpoint === 'deny'
+      && policy.tools?.bash === 'deny'
+      && policy.tools?.webfetch === 'deny'
+      && policy.tools?.websearch === 'deny'
+      && policy.tools?.task === 'deny'
+      && policy.tools?.skill === 'deny'
+      && policy.seccomp?.defaultAction === 'SCMP_ACT_ERRNO'
+      && policy.seccomp?.connect === 'agent-internal-network-only'
+      && /^[a-f0-9]{64}$/i.test(String(policy.seccomp?.sha256 || ''));
+    if (!policyValid || body.policyHash !== policy.policyHash || handshake.handshake.policyHash !== policy.policyHash) {
+      return { name: 'agent_sidecar', status: 'blocked', code: 'AGENT_HANDSHAKE_FAILED', message: 'Sidecar 策略证据不满足内部 Proxy 隔离要求' };
+    }
+    return {
+      name: 'agent_sidecar',
+      status: 'ready',
+      protocol: body.protocol,
+      version: body.version,
+      handshake: 'verified',
+      policyHash: policy.policyHash,
+      seccompPolicyHash: policy.seccomp.sha256,
+    };
   } catch {
     return { name: 'agent_sidecar', status: 'blocked', code: 'AGENT_SANDBOX_UNAVAILABLE', message: 'Sidecar 暂不可达' };
   }

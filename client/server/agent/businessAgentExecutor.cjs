@@ -1,7 +1,7 @@
 const crypto = require('node:crypto');
 const { createAgentError } = require('./agentCoordinator.cjs');
 
-function createHandle({ executionId, runId, reservation, events, ownerCancellationToken: ownerToken }) {
+function createHandle({ executionId, runId, reservation, events, ownerCancellationToken: ownerToken, outputPromise }) {
   return Object.freeze({
     executionId,
     runId,
@@ -18,6 +18,7 @@ function createHandle({ executionId, runId, reservation, events, ownerCancellati
       return reservation.cancel(reason);
     },
     result: reservation.completion,
+    output: outputPromise,
   });
 }
 
@@ -100,6 +101,7 @@ function createBusinessAgentExecutor({
       ? Number(executionRequest.deadlineAt)
       : now() + spec.limits.timeoutMs;
     let reservation = null;
+    let removeAbortListener = () => {};
     try {
       reservation = coordinator.reserve({
         workspaceId,
@@ -108,8 +110,24 @@ function createBusinessAgentExecutor({
         envelope: provisionalEnvelope,
         deadlineAt,
       });
+      const executionSignal = executionRequest.signal;
+      const abortExecution = () => reservation.cancel(
+        executionSignal?.reason || createAgentError('Agent 执行已取消', 'AGENT_CANCELLED', { retryable: true }),
+      );
+      if (executionSignal?.aborted) abortExecution();
+      else if (executionSignal?.addEventListener) {
+        executionSignal.addEventListener('abort', abortExecution, { once: true });
+        removeAbortListener = () => executionSignal.removeEventListener('abort', abortExecution);
+      }
       const ownerCancellationToken = executionRequest.ownerCancellationToken;
       const events = new Set();
+      let resolveOutput;
+      let rejectOutput;
+      const outputPromise = new Promise((resolve, reject) => {
+        resolveOutput = resolve;
+        rejectOutput = reject;
+      });
+      void outputPromise.catch(() => undefined);
       let runId = null;
       const publish = (event) => {
         outer.projectAgentStage?.(event);
@@ -154,36 +172,43 @@ function createBusinessAgentExecutor({
       reservation.assertActive();
       publish({ phase: 'accepted', executionId, runId: envelope.runId });
       reservation.admit(async ({ signal, setPhase }) => {
-        publish({ phase: 'running', executionId, runId: envelope.runId });
-        const runResult = await runner.run({
-          taskSpec: spec,
-          executionId,
-          runId: envelope.runId,
-          input,
-          prompt,
-          modelSnapshot,
-          signal,
-        });
-        setPhase('validating');
-        publish({ phase: 'validating', executionId, runId: envelope.runId });
-        const validated = await spec.validateOutput(runResult.output, { executionId, runId: envelope.runId });
-        const receipt = await committer.commit({
-          envelope,
-          taskSpec: spec,
-          validatedOutput: validated,
-          outputSha256: runResult.outputSha256,
-          signal,
-          onLinearized() {
-            setPhase('applying');
-            publish({ phase: 'applying', executionId, runId: envelope.runId });
-          },
-        });
-        await outer.reconcileAppliedExecution(receipt);
-        publish({ phase: 'succeeded', executionId, runId: envelope.runId });
-        return receipt;
+        try {
+          publish({ phase: 'running', executionId, runId: envelope.runId });
+          const runResult = await runner.run({
+            taskSpec: spec,
+            executionId,
+            runId: envelope.runId,
+            input,
+            prompt,
+            modelSnapshot,
+            signal,
+          });
+          setPhase('validating');
+          publish({ phase: 'validating', executionId, runId: envelope.runId });
+          const validated = await spec.validateOutput(runResult.output, { executionId, runId: envelope.runId });
+          resolveOutput(validated);
+          const receipt = await committer.commit({
+            envelope,
+            taskSpec: spec,
+            validatedOutput: validated,
+            outputSha256: runResult.outputSha256,
+            signal,
+            onLinearized() {
+              setPhase('applying');
+              publish({ phase: 'applying', executionId, runId: envelope.runId });
+            },
+          });
+          await outer.reconcileAppliedExecution(receipt);
+          publish({ phase: 'succeeded', executionId, runId: envelope.runId });
+          return receipt;
+        } catch (error) {
+          rejectOutput(error);
+          throw error;
+        }
       });
-      const handle = createHandle({ executionId, runId, reservation, events, ownerCancellationToken });
+      const handle = createHandle({ executionId, runId, reservation, events, ownerCancellationToken, outputPromise });
       void handle.result.finally(() => {
+        removeAbortListener();
         if (inFlightExecutions.get(executionKey)?.handlePromise === handlePromise) {
           inFlightExecutions.delete(executionKey);
         }
@@ -191,6 +216,7 @@ function createBusinessAgentExecutor({
       resolveHandle(handle);
       return handle;
     } catch (error) {
+      removeAbortListener();
       reservation?.cancel(error);
       if (inFlightExecutions.get(executionKey)?.handlePromise === handlePromise) {
         inFlightExecutions.delete(executionKey);

@@ -12,21 +12,17 @@ async function main() {
     printResult({ status: 'disabled', checks: [{ name: 'agent_sidecar', status: 'disabled', feature: 'j-agent' }] });
     return;
   }
-  const baseUrl = String(process.env.AGENT_SIDECAR_URL || 'http://agent-runner:7101').replace(/\/+$/, '');
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3000);
-  timer.unref?.();
   try {
-    const response = await fetch(`${baseUrl}/internal/runner/v1/health`, { signal: controller.signal, headers: { accept: 'application/json' } });
-    const body = await response.json();
-    const ready = response.ok && body?.protocol === 'SidecarProtocolV1' && body?.ready === true;
+    const readinessRouter = require('../server/routes/readiness.cjs');
+    const result = await readinessRouter.checkAgentSidecar();
+    const ready = result.status === 'ready';
     printResult({
       status: ready ? 'ready' : 'not_ready',
       checks: [{
         ...(ready
-          ? { name: 'agent_sidecar', status: 'ok', protocol: body.protocol, version: body.version }
-          : check('agent_sidecar', 'fail', 'Sidecar health 返回异常', {
-            code: 'AGENT_SANDBOX_UNAVAILABLE',
+          ? { ...result, status: 'ok' }
+          : check('agent_sidecar', 'fail', result.message || 'Sidecar readiness 返回异常', {
+            code: result.code || 'AGENT_SANDBOX_UNAVAILABLE',
             component: 'agent-sidecar',
             run_id: 'wp-j-readiness',
             retryable: true,
@@ -49,8 +45,6 @@ async function main() {
       })],
     });
     process.exitCode = 1;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
