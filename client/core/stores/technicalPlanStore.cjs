@@ -29,6 +29,23 @@ function isThenable(value) {
   return Boolean(value && (typeof value === 'object' || typeof value === 'function') && typeof value.then === 'function');
 }
 
+function jsonByteLength(value) {
+  return Buffer.byteLength(JSON.stringify(value === undefined ? null : value), 'utf8');
+}
+
+function taskSizeError(label, maxBytes, actualBytes) {
+  const error = new Error(`${label} 超过 ${maxBytes} 字节限制（当前 ${actualBytes} 字节）`);
+  error.code = 'TASK_INVALID_INPUT';
+  error.retryable = false;
+  return error;
+}
+
+function assertJsonSize(value, maxBytes, label) {
+  const actualBytes = jsonByteLength(value);
+  if (actualBytes > maxBytes) throw taskSizeError(label, maxBytes, actualBytes);
+  return actualBytes;
+}
+
 const initialState = {
   workflowKind: 'technical-plan',
   step: 'document-analysis',
@@ -95,6 +112,19 @@ const TASK_TARGET_STAGE_KEY = Object.freeze({
   'global-facts-generation': 'facts_revision',
   'content-generation': 'content_revision',
 });
+
+const MAX_RUN_MANIFEST_BYTES = 256 * 1024;
+const MAX_TASK_CHECKPOINT_BYTES = 2 * 1024 * 1024;
+const RUN_RECORD_ACTIVE_STATUSES = Object.freeze([
+  'accepted',
+  'queued',
+  'running',
+  'pausing',
+  'paused',
+  'validating',
+  'committing',
+]);
+const RUN_RECORD_TERMINAL_STATUSES = Object.freeze(['succeeded', 'error', 'cancelled', 'interrupted']);
 
 const TASK_ACCEPTANCE_INVALIDATION_RULES = Object.freeze({
   'outline-generation': {
@@ -538,6 +568,7 @@ function createTechnicalPlanStore({
   const generatedIllustrationsDir = wp.technicalPlanGeneratedIllustrationsDir;
 
   const runRecordByExecutionStatement = db.prepare('SELECT * FROM technical_plan_run_records WHERE execution_id = ?');
+  const runRecordByTaskStatement = db.prepare('SELECT * FROM technical_plan_run_records WHERE task_id = ? ORDER BY created_at DESC LIMIT 1');
   const insertRunRecordStatement = db.prepare(`
     INSERT INTO technical_plan_run_records (
       run_id,
@@ -886,8 +917,7 @@ function createTechnicalPlanStore({
     return error;
   }
 
-  function getTechnicalPlanRunRecord(executionId) {
-    const row = runRecordByExecutionStatement.get(String(executionId || '').trim());
+  function mapTechnicalPlanRunRecord(row) {
     if (!row) return null;
     return {
       runId: row.run_id,
@@ -904,6 +934,14 @@ function createTechnicalPlanStore({
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
+  }
+
+  function getTechnicalPlanRunRecord(executionId) {
+    return mapTechnicalPlanRunRecord(runRecordByExecutionStatement.get(String(executionId || '').trim()));
+  }
+
+  function getTechnicalPlanRunRecordByTaskId(taskId) {
+    return mapTechnicalPlanRunRecord(runRecordByTaskStatement.get(String(taskId || '').trim()));
   }
 
   function validateManifestForAcceptance({ taskType, stageRevisionVector, workspaceRuntimeGeneration }) {
@@ -923,9 +961,12 @@ function createTechnicalPlanStore({
     }
   }
 
-  function validateWritebackAgainstRunRecord(record, { manifestHash, targetStageGeneration }) {
+  function validateWritebackAgainstRunRecord(record, { manifestHash, targetStageGeneration, allowTerminal = false }) {
     if (!record || !record.executionId || !record.manifest) {
       throw manifestInputChangedError('任务执行记录缺失，请重新提交任务');
+    }
+    if (!allowTerminal && RUN_RECORD_TERMINAL_STATUSES.includes(record.status)) {
+      throw manifestInputChangedError('任务已进入终态，不能继续写回');
     }
     if (record.manifestHash !== manifestHash) {
       throw stageManifestConflictError('执行 ID 与 manifest hash 不匹配');
@@ -1004,10 +1045,12 @@ function createTechnicalPlanStore({
     }
   }
 
-  function acceptTechnicalPlanTaskRun(manifest, { initialPartial } = {}) {
+  function acceptTechnicalPlanTaskRun(manifest, { initialPartial, initialCheckpoint } = {}) {
     const normalized = normalizeRunManifest(manifest);
     const canonicalManifest = canonicalizeRunManifest(normalized);
     const manifestHash = computeRunManifestV1Hash(canonicalManifest);
+    assertJsonSize(canonicalManifest, MAX_RUN_MANIFEST_BYTES, '任务 manifest');
+    assertJsonSize(initialCheckpoint ?? null, MAX_TASK_CHECKPOINT_BYTES, '任务 checkpoint');
     const executionId = String(normalized.execution_id || '').trim();
     const workspaceRuntimeGeneration = normalizeWorkspaceRuntimeGeneration(normalized.workspace_runtime_generation);
     const targetStageKey = TASK_TARGET_STAGE_KEY[normalized.task_type];
@@ -1046,6 +1089,7 @@ function createTechnicalPlanStore({
       const runId = crypto.randomUUID();
       const runManifestJson = JSON.stringify(canonicalManifest);
       const baseStageVectorJson = JSON.stringify(canonicalManifest.stage_revision_vector);
+      const checkpointJson = JSON.stringify(initialCheckpoint ?? null);
       const status = 'accepted';
       insertRunRecordStatement.run({
         run_id: runId,
@@ -1058,7 +1102,7 @@ function createTechnicalPlanStore({
         base_stage_vector_json: baseStageVectorJson,
         target_stage_generation: targetStageGeneration,
         status,
-        checkpoint_json: null,
+        checkpoint_json: checkpointJson,
         created_at: timestamp,
         updated_at: timestamp,
       });
@@ -1074,7 +1118,7 @@ function createTechnicalPlanStore({
         baseStageVector: canonicalManifest.stage_revision_vector,
         targetStageGeneration,
         status,
-        checkpoint: null,
+        checkpoint: initialCheckpoint ?? null,
         stageRevisions: nextRevisions,
       };
     })();
@@ -1092,6 +1136,7 @@ function createTechnicalPlanStore({
     if (!executionId) {
       throw stageManifestConflictError('执行 ID 缺失');
     }
+    assertJsonSize(checkpoint ?? null, MAX_TASK_CHECKPOINT_BYTES, '任务 checkpoint');
 
     return db.transaction(() => {
       const record = getTechnicalPlanRunRecord(executionId);
@@ -1153,10 +1198,12 @@ function createTechnicalPlanStore({
         throw stageManifestConflictError('已成功写回的任务不能改写为失败');
       }
       const checkpoint = {
+        ...(record.checkpoint && typeof record.checkpoint === 'object' ? record.checkpoint : {}),
         error_code: String(errorCode || 'TASK_EXECUTION_FAILED'),
         message: String(message || '任务执行失败'),
         retryable: retryable === true,
       };
+      assertJsonSize(checkpoint, MAX_TASK_CHECKPOINT_BYTES, '任务 checkpoint');
       updateRunRecordStatement.run({
         execution_id: executionId,
         status: 'error',
@@ -1292,7 +1339,74 @@ function createTechnicalPlanStore({
       parserLabel: source?.parser_label || undefined,
       importedAt: now(),
       updatedAt: now(),
-    };
+      };
+  }
+
+  function updateTechnicalPlanTaskRunStatus({
+    executionId,
+    manifestHash,
+    targetStageGeneration,
+    status,
+    checkpoint,
+    task,
+  } = {}) {
+    if (!executionId) throw stageManifestConflictError('执行 ID 缺失');
+    if (!RUN_RECORD_ACTIVE_STATUSES.includes(status) && !RUN_RECORD_TERMINAL_STATUSES.includes(status)) {
+      throw taskApplyFailedError(`任务状态 ${status} 不允许写入`);
+    }
+    assertJsonSize(checkpoint ?? null, MAX_TASK_CHECKPOINT_BYTES, '任务 checkpoint');
+
+    return db.transaction(() => {
+      const record = getTechnicalPlanRunRecord(executionId);
+      validateWritebackAgainstRunRecord(record, {
+        manifestHash: String(manifestHash || ''),
+        targetStageGeneration: targetStageGeneration ?? record?.targetStageGeneration,
+        allowTerminal: status === 'error' || status === 'cancelled' || status === 'interrupted',
+      });
+      if (record.status === 'succeeded' && status !== 'succeeded') {
+        throw manifestInputChangedError('已成功写回的任务不能改变状态');
+      }
+      updateRunRecordStatement.run({
+        execution_id: executionId,
+        status,
+        checkpoint_json: JSON.stringify(checkpoint ?? null),
+        updated_at: now(),
+      });
+      if (task) saveTask(record.taskType, task);
+      return getTechnicalPlanRunRecord(executionId);
+    })();
+  }
+
+  function resumeTechnicalPlanTaskRun({ executionId, manifestHash, targetStageGeneration } = {}) {
+    if (!executionId) throw stageManifestConflictError('执行 ID 缺失');
+    return db.transaction(() => {
+      const record = getTechnicalPlanRunRecord(executionId);
+      validateWritebackAgainstRunRecord(record, {
+        manifestHash: String(manifestHash || ''),
+        targetStageGeneration: targetStageGeneration ?? record?.targetStageGeneration,
+        allowTerminal: true,
+      });
+      if (record.status === 'succeeded') {
+        throw stageManifestConflictError('已完成的任务不能恢复');
+      }
+      if (!['paused', 'error'].includes(record.status)) {
+        throw stageManifestConflictError('当前任务不处于可恢复状态');
+      }
+      if (record.status === 'error' && !['TASK_INTERRUPTED_BY_RESTART', 'TASK_PAUSE_TIMEOUT'].includes(record.checkpoint?.error_code)) {
+        throw manifestInputChangedError('任务失败原因不支持直接恢复，请重新开始');
+      }
+      const checkpoint = record.checkpoint && typeof record.checkpoint === 'object'
+        ? { ...record.checkpoint, resumed_at: now() }
+        : { resumed_at: now() };
+      assertJsonSize(checkpoint, MAX_TASK_CHECKPOINT_BYTES, '任务 checkpoint');
+      updateRunRecordStatement.run({
+        execution_id: executionId,
+        status: 'accepted',
+        checkpoint_json: JSON.stringify(checkpoint),
+        updated_at: now(),
+      });
+      return getTechnicalPlanRunRecord(executionId);
+    })();
   }
 
   function clearTenderSourceFiles() {
@@ -1352,10 +1466,13 @@ function createTechnicalPlanStore({
 
   function taskFromRow(row) {
     if (!row) return undefined;
+    const runRecord = getTechnicalPlanRunRecordByTaskId(row.task_id);
     return {
       task_id: row.task_id,
       type: row.type,
-      status: normalizeStatus(row.status, ['running', 'pausing', 'paused', 'success', 'error'], 'running'),
+      execution_id: runRecord?.executionId,
+      manifest_hash: runRecord?.manifestHash,
+      status: normalizeStatus(row.status, ['accepted', 'queued', 'running', 'pausing', 'paused', 'validating', 'committing', 'success', 'error', 'cancelled', 'interrupted'], 'running'),
       progress: Number(row.progress || 0),
       logs: safeJsonParse(row.logs_json, []),
       started_at: row.started_at,
@@ -1429,7 +1546,7 @@ function createTechnicalPlanStore({
 
   function recoverInterruptedTasks() {
     const interrupted = db.prepare(
-      "SELECT * FROM technical_plan_tasks WHERE status IN ('running', 'pausing')",
+      "SELECT * FROM technical_plan_tasks WHERE status IN ('accepted', 'queued', 'running', 'pausing', 'validating', 'committing')",
     ).all();
     const timestamp = now();
     const transaction = db.transaction(() => {
@@ -1462,18 +1579,27 @@ function createTechnicalPlanStore({
             updated_at = ?
         WHERE status = 'running'
       `).run(timestamp);
-      const interruptedRunCheckpoint = JSON.stringify({
-        error_code: 'TASK_INTERRUPTED_BY_RESTART',
-        message: '服务重启导致任务中断，请重新执行',
-        retryable: true,
-      });
-      const recoveredRuns = db.prepare(`
-        UPDATE technical_plan_run_records
-        SET status = 'error',
-            checkpoint_json = ?,
-            updated_at = ?
-        WHERE status IN ('accepted', 'queued', 'running', 'pausing', 'validating')
-      `).run(interruptedRunCheckpoint, timestamp).changes;
+      const activeRuns = db.prepare(`
+        SELECT execution_id, checkpoint_json
+        FROM technical_plan_run_records
+        WHERE status IN ('accepted', 'queued', 'running', 'pausing', 'validating', 'committing')
+      `).all();
+      for (const run of activeRuns) {
+        const previousCheckpoint = safeJsonParse(run.checkpoint_json, null);
+        const interruptedCheckpoint = {
+          ...(previousCheckpoint && typeof previousCheckpoint === 'object' ? previousCheckpoint : {}),
+          error_code: 'TASK_INTERRUPTED_BY_RESTART',
+          message: '服务重启导致任务中断，请重新执行',
+          retryable: true,
+        };
+        updateRunRecordStatement.run({
+          execution_id: run.execution_id,
+          status: 'error',
+          checkpoint_json: JSON.stringify(interruptedCheckpoint),
+          updated_at: timestamp,
+        });
+      }
+      const recoveredRuns = activeRuns.length;
       return recoveredRuns;
     });
     const recoveredRuns = transaction();
@@ -1851,12 +1977,12 @@ function createTechnicalPlanStore({
       plan_json = excluded.plan_json,
       updated_at = excluded.updated_at
   `);
-  const saveContentGenerationItemTransaction = db.transaction(({ nodeId, section, storedPlan, runtime }) => {
+  function applyContentGenerationItem({ nodeId, section, storedPlan, runtime }) {
     const timestamp = now();
     if (section) {
-      updateGeneratedContent.run(String(section.content || ''), timestamp, nodeId);
+      updateGeneratedContent.run(String(section.content || ''), timestamp, String(nodeId || section.id || ''));
       upsertGeneratedSection.run({
-        node_id: nodeId,
+        node_id: String(nodeId || section.id || ''),
         status: normalizeStatus(section.status, ['idle', 'running', 'success', 'error'], 'idle'),
         error: section.error ? String(section.error) : null,
         updated_at: section.updated_at || timestamp,
@@ -1864,7 +1990,7 @@ function createTechnicalPlanStore({
     }
     if (storedPlan) {
       upsertGeneratedPlan.run({
-        node_id: nodeId,
+        node_id: String(nodeId || storedPlan.node_id || ''),
         plan_json: JSON.stringify({
           plan_version: Number(storedPlan.plan_version),
           plan: storedPlan.plan,
@@ -1876,11 +2002,53 @@ function createTechnicalPlanStore({
     if (runtime !== undefined) {
       updateMeta({ content_generation_runtime_json: jsonOrNull(runtime) });
     }
+  }
+
+  const saveContentGenerationItemTransaction = db.transaction((partial) => {
+    applyContentGenerationItem(partial || {});
   });
 
   // 定向保存正文任务中的单个小节、对应编排计划和运行状态。
   function saveContentGenerationItem(partial = {}) {
     saveContentGenerationItemTransaction(partial);
+  }
+
+  function writebackTechnicalPlanTaskCheckpoint({
+    executionId,
+    manifestHash,
+    targetStageGeneration,
+    checkpoint,
+    status = 'running',
+    task,
+    nodeId,
+    section,
+    storedPlan,
+    runtime,
+  } = {}) {
+    if (!executionId) throw stageManifestConflictError('执行 ID 缺失');
+    if (!RUN_RECORD_ACTIVE_STATUSES.includes(status) && !RUN_RECORD_TERMINAL_STATUSES.includes(status)) {
+      throw taskApplyFailedError(`任务状态 ${status} 不允许写入`);
+    }
+    assertJsonSize(checkpoint ?? null, MAX_TASK_CHECKPOINT_BYTES, '任务 checkpoint');
+    return db.transaction(() => {
+      const record = getTechnicalPlanRunRecord(executionId);
+      validateWritebackAgainstRunRecord(record, {
+        manifestHash: String(manifestHash || ''),
+        targetStageGeneration: targetStageGeneration ?? record?.targetStageGeneration,
+      });
+      if (record.taskType !== 'content-generation') {
+        throw taskApplyFailedError('章节 checkpoint 只支持正文生成任务');
+      }
+      applyContentGenerationItem({ nodeId, section, storedPlan, runtime });
+      updateRunRecordStatement.run({
+        execution_id: executionId,
+        status,
+        checkpoint_json: JSON.stringify(checkpoint ?? null),
+        updated_at: now(),
+      });
+      if (task) saveTask(record.taskType, task);
+      return getTechnicalPlanRunRecord(executionId);
+    })();
   }
 
   function clearDownstreamFromTender() {
@@ -2763,8 +2931,12 @@ function createTechnicalPlanStore({
     currentStageRevisions,
     acceptTechnicalPlanTaskRun,
     writebackTechnicalPlanTaskRun,
+    writebackTechnicalPlanTaskCheckpoint,
+    updateTechnicalPlanTaskRunStatus,
+    resumeTechnicalPlanTaskRun,
     failTechnicalPlanTaskRun,
     getTechnicalPlanRunRecord,
+    getTechnicalPlanRunRecordByTaskId,
     getBidAnalysisInputVersion,
     recoverInterruptedTasks,
     saveContentGenerationItem,

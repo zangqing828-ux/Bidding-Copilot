@@ -6,7 +6,10 @@ const { getWorkspaceContext } = require('../workspace/workspaceRegistry.cjs');
 const { methods: bridgeMethods = {} } = require('../../shared/bridgeContract.cjs');
 const {
   canonicalizeRendererStartOutlineGenerationInput,
+  canonicalizeRendererStartContentGenerationInput,
   validateStartBidSectionExtractionInput,
+  validateStartGlobalFactsGenerationInput,
+  validatePauseContentGenerationInput,
 } = require('../../shared/contracts/technical-plan/taskContracts.cjs');
 
 const router = express.Router();
@@ -195,6 +198,27 @@ const bridgeBindingMetadata = Object.freeze({
         options,
       ),
       'tasks.startOutlineGeneration',
+    ),
+    startGlobalFactsGeneration: createDirectBinding(
+      (ctx, args, options) => ctx.taskService.startGlobalFactsGeneration(
+        validateStartGlobalFactsGenerationInput(args[0]),
+        options,
+      ),
+      'tasks.startGlobalFactsGeneration',
+    ),
+    startContentGeneration: createDirectBinding(
+      (ctx, args, options) => ctx.taskService.startContentGeneration(
+        canonicalizeRendererStartContentGenerationInput(args[0]),
+        options,
+      ),
+      'tasks.startContentGeneration',
+    ),
+    pauseContentGeneration: createDirectBinding(
+      (ctx, args, options) => ctx.taskService.pauseContentGeneration(
+        validatePauseContentGenerationInput(args[0] || {}),
+        options,
+      ),
+      'tasks.pauseContentGeneration',
     ),
   }),
 
@@ -506,6 +530,20 @@ router.post('/bridge', (req, res) => {
       return res.status(409).json({
         code: err.code,
         message: err.message || '当前技术方案任务仍在执行',
+        retryable: true,
+      });
+    }
+    if (err?.code === 'TASK_PAUSE_TIMEOUT' || err?.code === 'TASK_INTERRUPTED_BY_RESTART') {
+      return res.status(409).json({
+        code: err.code,
+        message: err.message || '任务生命周期状态已变化，请重试',
+        retryable: true,
+      });
+    }
+    if (err?.code === 'TASK_RUNTIME_UNAVAILABLE') {
+      return res.status(503).json({
+        code: err.code,
+        message: err.message || '任务运行器暂不可用',
         retryable: true,
       });
     }

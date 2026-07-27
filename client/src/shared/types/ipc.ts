@@ -7,6 +7,17 @@ import type { BackgroundTaskState, BidAnalysisMode, BidAnalysisTaskState, BidSec
 import type { ExportFormatConfig, ExportTemplateRecord } from './exportFormat';
 import type { OutlineData, OutlineExpansionMode, OutlineWordControlOptions } from './outline';
 
+export type StartGlobalFactsGenerationInput = Record<string, never>;
+type RendererContentGenerationOptions = Omit<ContentGenerationOptions, 'originalPlanCoverageRepairMode'> & {
+  originalPlanCoverageRepairMode?: ContentGenerationOptions['originalPlanCoverageRepairMode'];
+};
+export type StartContentGenerationInput =
+  | { resume: true }
+  | { retryContentCorrection: true }
+  | { rerunIllustrations: true }
+  | { regenerate: boolean; generationOptions: RendererContentGenerationOptions; targetItemId?: string; requirement?: string }
+  | { generationOptions: RendererContentGenerationOptions };
+
 export interface TaskEvent<TState = unknown, TRejectionCheckState = unknown, TDuplicateCheckState = unknown> {
   task: unknown;
   technicalPlan?: TState;
@@ -490,9 +501,9 @@ export interface YibiaoBridge {
     startBidSectionExtraction: (payload: StartBidSectionExtractionInput) => Promise<BackgroundTaskState>;
     startBidAnalysis: (payload: StartBidAnalysisInput) => Promise<BackgroundTaskState>;
     startOutlineGeneration: (payload: StartOutlineGenerationInput) => Promise<BackgroundTaskState>;
-    startGlobalFactsGeneration: (payload: unknown) => Promise<unknown>;
-    startContentGeneration: (payload: unknown) => Promise<unknown>;
-    pauseContentGeneration: () => Promise<unknown>;
+    startGlobalFactsGeneration: (payload: StartGlobalFactsGenerationInput) => Promise<BackgroundTaskState>;
+    startContentGeneration: (payload: StartContentGenerationInput) => Promise<BackgroundTaskState>;
+    pauseContentGeneration: () => Promise<BackgroundTaskState>;
     startRejectionItemsExtraction: (payload: unknown) => Promise<unknown>;
     startRejectionCheck: (payload: unknown) => Promise<unknown>;
     startDuplicateAnalysis: (payload: unknown) => Promise<unknown>;

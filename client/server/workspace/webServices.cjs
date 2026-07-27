@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const { createRequire } = require('node:module');
 const { createTaskOrchestrator } = require('../../core/taskOrchestrator.cjs');
 const { runBidAnalysisTask } = require('../../core/bidAnalysisTask.cjs');
 const { runBidSectionExtractionTask } = require('../../core/technical-plan/orchestration/bidSectionExtractionTask.cjs');
@@ -7,6 +8,9 @@ const { bidAnalysisDefinitions, normalizeBidAnalysisSelection, validateStartBidA
 const {
   validateStartBidSectionExtractionInput,
   validateStartOutlineGenerationInput,
+  validateStartGlobalFactsGenerationInput,
+  validateStartContentGenerationInput,
+  validatePauseContentGenerationInput,
 } = require('../../shared/contracts/technical-plan/taskContracts.cjs');
 const { computeRunManifestV1Hash } = require('../../shared/contracts/technical-plan/runManifest.cjs');
 
@@ -38,7 +42,45 @@ const TECHNICAL_PLAN_TASK_DEFINITIONS = Object.freeze({
     stateKey: 'technicalPlan',
     field: 'outlineGenerationTask',
   }),
+  'global-facts-generation': Object.freeze({
+    label: '全局事实设定',
+    group: 'technical-plan',
+    groupLabel: '技术方案',
+    step: 4,
+    lockPolicy: 'group-exclusive',
+    stateKey: 'technicalPlan',
+    field: 'globalFactsTask',
+  }),
+  'content-generation': Object.freeze({
+    label: '正文生成',
+    group: 'technical-plan',
+    groupLabel: '技术方案',
+    step: 5,
+    lockPolicy: 'group-exclusive',
+    stateKey: 'technicalPlan',
+    field: 'contentGenerationTask',
+  }),
 });
+
+const portableRuntimeRequire = createRequire(__filename);
+
+function resolvePortableTaskRunner(type, injectedRunner) {
+  if (typeof injectedRunner === 'function') return injectedRunner;
+  const modulePath = type === 'global-facts-generation'
+    ? '../../core/technical-plan/content/globalFactsTask.cjs'
+    : type === 'content-generation'
+      ? '../../core/technical-plan/content/contentGenerationTask.cjs'
+      : null;
+  const exportName = type === 'global-facts-generation' ? 'runGlobalFactsTask' : 'runContentGenerationTask';
+  if (!modulePath) return null;
+  try {
+    const loaded = portableRuntimeRequire(modulePath);
+    return typeof loaded?.[exportName] === 'function' ? loaded[exportName] : null;
+  } catch (error) {
+    if (error?.code === 'MODULE_NOT_FOUND' && String(error.message || '').includes(modulePath)) return null;
+    throw error;
+  }
+}
 
 function stableHash(value) {
   const normalized = typeof value === 'string' ? value : JSON.stringify(value);
@@ -48,6 +90,17 @@ function stableHash(value) {
 function hashNullableText(value) {
   const text = String(value || '').trim();
   return text ? stableHash(text) : null;
+}
+
+function projectOutlineStructure(items) {
+  return (Array.isArray(items) ? items : []).map((item) => ({
+    id: String(item?.id || ''),
+    title: String(item?.title || ''),
+    description: String(item?.description || ''),
+    ...(Array.isArray(item?.children) && item.children.length
+      ? { children: projectOutlineStructure(item.children) }
+      : {}),
+  }));
 }
 
 function copyPatchFields(target, source, fields) {
@@ -167,7 +220,9 @@ function createTechnicalPlanRunManifest({
   const state = technicalPlanStore.loadTechnicalPlan() || {};
   const selectedReferenceDocumentIds = type === 'outline-generation'
     ? (referenceDocumentIds || input.reference_knowledge_document_ids)
-    : [];
+    : (['global-facts-generation', 'content-generation'].includes(type)
+      ? (referenceDocumentIds || state.referenceKnowledgeDocumentIds || [])
+      : []);
   const referenceDocuments = createReferenceDocumentManifest(knowledgeBaseService, selectedReferenceDocumentIds);
   const tenderMarkdown = type === 'bid-section-extraction'
     ? technicalPlanStore.readOriginalTenderMarkdown?.() || technicalPlanStore.readTenderMarkdown?.() || ''
@@ -180,9 +235,22 @@ function createTechnicalPlanRunManifest({
     projectOverview: state.projectOverview || '',
     techRequirements: state.techRequirements || '',
   }));
-  const promptVersion = type === 'bid-section-extraction'
-    ? 'technical-plan.bid-section-extraction.v1'
-    : 'technical-plan.outline-generation.v1';
+  const outlineHash = hashNullableText(JSON.stringify({
+    project_name: state.outlineData?.project_name || '',
+    project_overview: state.outlineData?.project_overview || '',
+    outline: projectOutlineStructure(state.outlineData?.outline || []),
+  }));
+  const globalFactsHash = hashNullableText(JSON.stringify(state.globalFacts || []));
+  const contentHash = hashNullableText(JSON.stringify({
+    contentGenerationSections: state.contentGenerationSections || {},
+    contentGenerationPlans: state.contentGenerationPlans || {},
+  }));
+  const promptVersion = {
+    'bid-section-extraction': 'technical-plan.bid-section-extraction.v1',
+    'outline-generation': 'technical-plan.outline-generation.v1',
+    'global-facts-generation': 'technical-plan.global-facts-generation.v1',
+    'content-generation': 'technical-plan.content-generation.v1',
+  }[type] || 'technical-plan.unknown.v1';
 
   return {
     manifest_version: 1,
@@ -202,9 +270,9 @@ function createTechnicalPlanRunManifest({
       content_hash: stableHash(tenderMarkdown),
     } : null,
     upstream_result_hashes: {
-      bid_analysis_hash: type === 'outline-generation' ? bidAnalysisHash : null,
-      outline_hash: null,
-      global_facts_hash: null,
+      bid_analysis_hash: ['outline-generation', 'global-facts-generation', 'content-generation'].includes(type) ? bidAnalysisHash : null,
+      outline_hash: ['global-facts-generation', 'content-generation'].includes(type) ? outlineHash : null,
+      global_facts_hash: type === 'content-generation' ? globalFactsHash : null,
       content_hash: null,
     },
     generation_config_hash: stableHash({
@@ -215,7 +283,12 @@ function createTechnicalPlanRunManifest({
     }),
     prompt_template_version: promptVersion,
     model_snapshot_ref: modelSnapshotRef,
-    output_schema_version: type === 'bid-section-extraction' ? 'bid-sections.v1' : 'outline-data.v1',
+    output_schema_version: {
+      'bid-section-extraction': 'bid-sections.v1',
+      'outline-generation': 'outline-data.v1',
+      'global-facts-generation': 'global-facts.v1',
+      'content-generation': 'content-generation.v1',
+    }[type] || 'technical-plan.unknown.v1',
   };
 }
 
@@ -300,6 +373,70 @@ function createTask(type, payload, taskMetadata = {}) {
   };
 }
 
+function collectLeafNodeIds(items, result = []) {
+  for (const item of Array.isArray(items) ? items : []) {
+    if (Array.isArray(item?.children) && item.children.length) {
+      collectLeafNodeIds(item.children, result);
+    } else if (item?.id) {
+      result.push(String(item.id));
+    }
+  }
+  return result;
+}
+
+function createTechnicalPlanCheckpoint({ type, input, state, runRecord, status, error } = {}) {
+  const sections = state?.contentGenerationSections && typeof state.contentGenerationSections === 'object'
+    ? state.contentGenerationSections
+    : {};
+  const leafIds = collectLeafNodeIds(state?.outlineData?.outline || []);
+  const completedItemIds = Object.entries(sections)
+    .filter(([, section]) => section?.status === 'success')
+    .map(([itemId]) => String(itemId));
+  const pendingItemIds = leafIds.filter((itemId) => !completedItemIds.includes(itemId));
+  return {
+    schema_version: 1,
+    task_type: type,
+    execution_id: runRecord?.executionId,
+    manifest_hash: runRecord?.manifestHash,
+    target_stage_generation: runRecord?.targetStageGeneration,
+    input: input || {},
+    action: input?.action,
+    status,
+    completed_item_ids: completedItemIds,
+    pending_item_ids: pendingItemIds,
+    global_fact_group_ids: Array.isArray(state?.globalFacts) ? state.globalFacts.map((item) => String(item.id || '')).filter(Boolean) : [],
+    content_generation_runtime: state?.contentGenerationRuntime || null,
+    ...(error ? {
+      error_code: error.code || 'TASK_EXECUTION_FAILED',
+      message: error.message || String(error),
+      retryable: error.retryable === true,
+    } : {}),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function toPortableContentRunnerPayload(input = {}) {
+  switch (input.action) {
+    case 'resume':
+      return { resume: true };
+    case 'retry-correction':
+      return { retryContentCorrection: true };
+    case 'rerun-illustration-plan':
+      return { rerunIllustrations: true };
+    case 'regenerate-all':
+      return { regenerate: true, generationOptions: input.generation_options };
+    case 'regenerate-section':
+      return {
+        targetItemId: input.target_item_id,
+        requirement: input.requirement,
+        generationOptions: input.generation_options,
+      };
+    case 'start':
+    default:
+      return { generationOptions: input.generation_options };
+  }
+}
+
 function createTaskConflictError() {
   const error = new Error('当前技术方案任务仍在执行，请等待完成后再提交新的解析请求');
   error.code = 'TASK_CONFLICT';
@@ -317,6 +454,20 @@ function createTaskInterruptedError() {
 function createAcceptanceAbortError() {
   const error = new Error('请求在任务受理前已断开');
   error.code = 'TASK_ACCEPTANCE_ABORTED';
+  error.retryable = true;
+  return error;
+}
+
+function createPauseTimeoutError() {
+  const error = new Error('任务暂停未能在期限内收敛，请稍后重试');
+  error.code = 'TASK_PAUSE_TIMEOUT';
+  error.retryable = true;
+  return error;
+}
+
+function createTaskRunnerUnavailableError(type) {
+  const error = new Error(`${type} portable runner 尚未装配`);
+  error.code = 'TASK_RUNTIME_UNAVAILABLE';
   error.retryable = true;
   return error;
 }
@@ -342,17 +493,37 @@ function createWebBidAnalysisTaskService({
   technicalPlanStore,
   mutationExecutor,
   workspaceRuntimeGeneration,
+  taskRunners = {},
 }) {
   if (!aiService || !technicalPlanStore || !mutationExecutor) {
     throw new Error('Web 招标解析任务服务缺少运行时依赖');
   }
   // WP-J J-1 固定走 J-Core；生产 Agent 修复链在 J-3 Sidecar Gate 前保持关闭。
   const boundAgentService = null;
+  const globalFactsRunner = resolvePortableTaskRunner('global-facts-generation', taskRunners.globalFacts);
+  const contentRunner = resolvePortableTaskRunner('content-generation', taskRunners.content);
 
   const definitions = TECHNICAL_PLAN_TASK_DEFINITIONS;
+  const acceptedStartLeases = new Set();
   const stateAdapter = {
     load: () => technicalPlanStore.loadTechnicalPlan(),
     persist(_definition, partial) {
+      const task = partial?.[_definition.field];
+      if (task?.execution_id && task?.manifest_hash && typeof technicalPlanStore.updateTechnicalPlanTaskRunStatus === 'function') {
+        const status = task.status;
+        if (status && status !== 'running' && status !== 'success') {
+          return mutationExecutor.execute(() => {
+            technicalPlanStore.updateTechnicalPlanTaskRunStatus({
+              executionId: task.execution_id,
+              manifestHash: task.manifest_hash,
+              status,
+              checkpoint: task.checkpoint,
+              task,
+            });
+            return technicalPlanStore.loadTechnicalPlan();
+          });
+        }
+      }
       const inputRevision = partial?.bidAnalysisTask?.input_revision;
       if (Number.isInteger(inputRevision)) {
         return mutationExecutor.execute(() => technicalPlanStore.updateTechnicalPlanForInputRevision(inputRevision, partial));
@@ -374,6 +545,23 @@ function createWebBidAnalysisTaskService({
         }
         return technicalPlanStore.updateTechnicalPlan({ [definition.field]: failedTask });
       });
+    },
+    assertCanStart(type, payload) {
+      if (acceptedStartLeases.has(type)) return;
+      const state = technicalPlanStore.loadTechnicalPlan() || {};
+      const resumeContent = type === 'content-generation' && payload?.action === 'resume';
+      for (const [field, taskType] of Object.entries({
+        bidSectionExtractionTask: 'bid-section-extraction',
+        bidAnalysisTask: 'bid-analysis',
+        outlineGenerationTask: 'outline-generation',
+        globalFactsTask: 'global-facts-generation',
+        contentGenerationTask: 'content-generation',
+      })) {
+        const task = state[field];
+        if (!task || ['success', 'error', 'cancelled', 'interrupted'].includes(task.status)) continue;
+        if (resumeContent && taskType === 'content-generation' && ['paused', 'pausing'].includes(task.status)) continue;
+        throw createTaskConflictError();
+      }
     },
     snapshot(definition, state, task, eventPatch = {}) {
       const patch = { ...(eventPatch.technicalPlanPatch || {}) };
@@ -440,6 +628,31 @@ function createWebBidAnalysisTaskService({
           'contentIllustrationPlan',
           'contentGenerationRuntime',
         ]);
+      } else if (task.type === 'global-facts-generation') {
+        copyPatchFields(patch, state, [
+          'globalFacts',
+          'globalFactsTask',
+          'contentGenerationTask',
+          'contentGenerationSections',
+          'contentGenerationPlans',
+          'contentIllustrationPlan',
+          'contentGenerationRuntime',
+          'outlineData',
+          'outlineWordControlSnapshot',
+          'referenceKnowledgeDocumentIds',
+        ]);
+      } else if (task.type === 'content-generation') {
+        copyPatchFields(patch, state, [
+          'outlineData',
+          'outlineWordControlSnapshot',
+          'globalFacts',
+          'globalFactsTask',
+          'contentGenerationTask',
+          'contentGenerationSections',
+          'contentGenerationPlans',
+          'contentIllustrationPlan',
+          'contentGenerationRuntime',
+        ]);
       }
       return {
         technicalPlanPatch: patch,
@@ -456,16 +669,17 @@ function createWebBidAnalysisTaskService({
     getScopeId: () => '',
     getPayloadSignature: (_type, payload) => payloadSignatures.get(payload),
     stateAdapter,
-    createRunnerContext({ type, payload, queueScopeId, updateTask, emitTask, taskControl, signal, taskMetadata = {} }) {
+    createRunnerContext({ type, payload, queueScopeId, updateTask, emitTask, taskControl, signal, previousState, taskMetadata = {} }) {
       const inputRevision = payload.input_revision;
       const runRecord = taskMetadata.runRecord;
+      const manifestInput = taskMetadata.manifestInput || payload;
       let volatileState = technicalPlanStore.loadTechnicalPlan() || {};
       let volatileOriginalOutlineRuntime = technicalPlanStore.readOriginalOutlineRuntime?.() || null;
       const updateVolatileState = (partial) => {
         volatileState = { ...volatileState, ...(partial || {}) };
         return volatileState;
       };
-      const commitAcceptedResult = (partial, finalTaskPatch) => mutationExecutor.execute(() => {
+      const commitAcceptedResult = (partial, finalTaskPatch, checkpoint) => mutationExecutor.execute(() => {
         let currentModelSnapshot;
         try {
           currentModelSnapshot = captureModelSnapshot();
@@ -476,7 +690,7 @@ function createWebBidAnalysisTaskService({
         const currentState = technicalPlanStore.loadTechnicalPlan() || {};
         const currentManifest = createTechnicalPlanRunManifest({
           type,
-          input: payload,
+          input: manifestInput,
           taskId: runRecord.taskId,
           executionId: runRecord.executionId,
           workspaceRuntimeGeneration,
@@ -485,7 +699,7 @@ function createWebBidAnalysisTaskService({
           modelSnapshot: currentModelSnapshot,
           generationConfigSnapshot: currentGenerationConfig,
           stageRevisionVector: runRecord.manifest.stage_revision_vector,
-          referenceDocumentIds: type === 'outline-generation'
+          referenceDocumentIds: ['outline-generation', 'global-facts-generation', 'content-generation'].includes(type)
             ? currentState.referenceKnowledgeDocumentIds || []
             : [],
         });
@@ -505,6 +719,13 @@ function createWebBidAnalysisTaskService({
           executionId: runRecord.executionId,
           manifestHash: runRecord.manifestHash,
           targetStageGeneration: runRecord.targetStageGeneration,
+          checkpoint: checkpoint || createTechnicalPlanCheckpoint({
+            type,
+            input: manifestInput,
+            state: currentState,
+            runRecord,
+            status: finalTaskPatch?.status || 'success',
+          }),
           apply: () => technicalPlanStore.updateTechnicalPlan(committedPartial),
         });
         return writeback.payload;
@@ -516,6 +737,9 @@ function createWebBidAnalysisTaskService({
         updateTechnicalPlan: (partial) => runRecord
           ? updateVolatileState(partial)
           : technicalPlanStore.updateTechnicalPlan(partial),
+        updateTechnicalPlanWithoutReload: (partial) => runRecord
+          ? updateVolatileState(partial)
+          : technicalPlanStore.updateTechnicalPlanWithoutReload(partial),
         updateTechnicalPlanForInputRevision: (revision, partial) => mutationExecutor.execute(() => technicalPlanStore.updateTechnicalPlanForInputRevision(revision, partial)),
         commitBidAnalysisMutation: (revision, build) => mutationExecutor.execute(() => {
           const previous = technicalPlanStore.loadTechnicalPlan() || {};
@@ -533,6 +757,49 @@ function createWebBidAnalysisTaskService({
         } : technicalPlanStore.clearOriginalOutlineRuntime,
         commitBidSectionExtractionResult: type === 'bid-section-extraction' && runRecord ? commitAcceptedResult : undefined,
         commitOutlineGenerationResult: type === 'outline-generation' && runRecord ? commitAcceptedResult : undefined,
+        commitTechnicalPlanResult: runRecord ? commitAcceptedResult : undefined,
+        saveContentGenerationItem: type === 'content-generation' && runRecord
+          ? (partial = {}) => {
+            const nextCheckpointState = {
+              ...volatileState,
+              contentGenerationRuntime: partial.runtime !== undefined
+                ? partial.runtime
+                : volatileState.contentGenerationRuntime,
+            };
+            const itemId = String(partial.nodeId || partial.section?.id || partial.storedPlan?.node_id || '').trim();
+            if (partial.section && itemId) {
+              nextCheckpointState.contentGenerationSections = {
+                ...(volatileState.contentGenerationSections || {}),
+                [itemId]: { ...partial.section, id: itemId },
+              };
+            }
+            if (partial.storedPlan && itemId) {
+              nextCheckpointState.contentGenerationPlans = {
+                ...(volatileState.contentGenerationPlans || {}),
+                [itemId]: partial.storedPlan,
+              };
+            }
+            const checkpoint = createTechnicalPlanCheckpoint({
+              type,
+              input: manifestInput,
+              state: nextCheckpointState,
+              runRecord,
+              status: 'running',
+            });
+            const currentTask = orchestrator.activeTasks.get(type) || volatileState.contentGenerationTask;
+            technicalPlanStore.writebackTechnicalPlanTaskCheckpoint({
+              executionId: runRecord.executionId,
+              manifestHash: runRecord.manifestHash,
+              targetStageGeneration: runRecord.targetStageGeneration,
+              checkpoint,
+              status: 'running',
+              task: currentTask,
+              ...partial,
+            });
+            volatileState = technicalPlanStore.loadTechnicalPlan() || nextCheckpointState;
+            return volatileState;
+          }
+          : technicalPlanStore.saveContentGenerationItem,
       };
       const scopedBaseAiService = typeof aiService.withQueueScope === 'function'
         ? aiService.withQueueScope(queueScopeId, taskMetadata.modelSnapshot ? { modelSnapshot: taskMetadata.modelSnapshot } : {})
@@ -554,6 +821,9 @@ function createWebBidAnalysisTaskService({
         emitTask,
         taskControl,
         signal,
+        previousState,
+        taskMetadata,
+        commitTechnicalPlanResult: runRecord ? commitAcceptedResult : undefined,
         payload: Number.isInteger(inputRevision) ? { ...payload, input_revision: inputRevision } : payload,
         queueScopeId,
       };
@@ -563,6 +833,78 @@ function createWebBidAnalysisTaskService({
     },
   });
   const startingTasks = new Map();
+
+  async function runPortableTechnicalPlanTask(type, runner, context) {
+    if (typeof runner !== 'function') throw createTaskRunnerUnavailableError(type);
+    const runnerContext = type === 'content-generation'
+      ? { ...context, payload: toPortableContentRunnerPayload(context.payload) }
+      : context;
+    try {
+      await runner(runnerContext);
+    } catch (error) {
+      if (context.signal.aborted && !context.taskControl.isPauseRequested()) {
+        throw context.signal.reason || createTaskInterruptedError();
+      }
+      throw error;
+    }
+    if (context.signal.aborted && !context.taskControl.isPauseRequested()) {
+      throw context.signal.reason || createTaskInterruptedError();
+    }
+    const state = context.workspaceStore.loadTechnicalPlan() || {};
+    const definition = definitions[type];
+    const task = state[definition.field] || {};
+    const checkpoint = createTechnicalPlanCheckpoint({
+      type,
+      input: context.taskMetadata?.manifestInput || context.payload,
+      state,
+      runRecord: context.taskMetadata?.runRecord,
+      status: task.status || 'success',
+    });
+
+    if (task.status === 'paused' || task.status === 'pausing' || context.taskControl.isPauseRequested()) {
+      await mutationExecutor.execute(() => technicalPlanStore.updateTechnicalPlanTaskRunStatus({
+        executionId: context.taskMetadata.runRecord.executionId,
+        manifestHash: context.taskMetadata.runRecord.manifestHash,
+        targetStageGeneration: context.taskMetadata.runRecord.targetStageGeneration,
+        status: 'paused',
+        checkpoint,
+        task: { ...task, status: 'paused', pause_requested: true },
+      }));
+      return state;
+    }
+
+    if (task.status === 'error') {
+      const error = new Error(task.error || `${type} 执行失败`);
+      error.code = task.error_code || 'TASK_EXECUTION_FAILED';
+      error.retryable = task.retryable === true;
+      throw error;
+    }
+
+    const partial = type === 'global-facts-generation'
+      ? {
+        globalFacts: state.globalFacts || [],
+        globalFactsTask: task,
+        contentGenerationTask: undefined,
+        contentGenerationSections: {},
+        contentGenerationPlans: {},
+        contentIllustrationPlan: undefined,
+        contentGenerationRuntime: undefined,
+      }
+      : {
+        outlineData: state.outlineData || null,
+        contentGenerationSections: state.contentGenerationSections || {},
+        contentGenerationPlans: state.contentGenerationPlans || {},
+        contentIllustrationPlan: state.contentIllustrationPlan,
+        contentGenerationRuntime: state.contentGenerationRuntime,
+        contentGenerationTask: task,
+      };
+    await context.commitTechnicalPlanResult(
+      partial,
+      { ...task, status: 'success', progress: 100, pause_requested: false },
+      { ...checkpoint, status: 'success' },
+    );
+    return state;
+  }
 
   function isActiveTask(task) {
     return task?.status === 'running' || task?.status === 'pausing';
@@ -598,6 +940,7 @@ function createWebBidAnalysisTaskService({
     try {
       const existing = assertNoConflictingTask(type, payloadSignature);
       if (existing) return existing;
+      stateAdapter.assertCanStart(type, input);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -617,17 +960,29 @@ function createWebBidAnalysisTaskService({
         if (controller.signal.aborted) throw controller.signal.reason || createAcceptanceAbortError();
         const preparedPayload = prepared.payloadPatch ? { ...input, ...prepared.payloadPatch } : { ...input };
         payloadSignatures.set(preparedPayload, payloadSignature);
-        return orchestrator.start({
-          type,
-          payload: preparedPayload,
-          runner,
-          initialPartial,
-          taskMetadata: {
-            ...prepared,
-            payloadPatch: undefined,
-            payloadSignature,
-          },
-        });
+        acceptedStartLeases.add(type);
+        let started;
+        try {
+          started = orchestrator.start({
+            type,
+            payload: preparedPayload,
+            runner,
+            initialPartial: prepared.initialPartial || initialPartial,
+            taskMetadata: {
+              ...prepared,
+              payloadPatch: undefined,
+              payloadSignature,
+            },
+          });
+        } catch (error) {
+          acceptedStartLeases.delete(type);
+          throw error;
+        }
+        if (started && typeof started.then === 'function') {
+          return started.finally(() => acceptedStartLeases.delete(type));
+        }
+        acceptedStartLeases.delete(type);
+        return started;
       })
       .catch(async (error) => {
         if (acceptedRunRecord) {
@@ -670,7 +1025,7 @@ function createWebBidAnalysisTaskService({
     throw error;
   }
 
-  function prepareTechnicalPlanRun(type, input, initialPartial, payloadSignature, signal) {
+  function prepareTechnicalPlanRun(type, input, initialPartial, payloadSignature, signal, { initialCheckpoint } = {}) {
     if (!Number.isInteger(workspaceRuntimeGeneration) || workspaceRuntimeGeneration <= 0) {
       return Promise.reject(createTaskConflictError());
     }
@@ -700,6 +1055,7 @@ function createWebBidAnalysisTaskService({
           ...(initialPartial || {}),
           [definitions[type].field]: acceptedTask,
         },
+        initialCheckpoint,
       });
       return {
         taskId,
@@ -708,6 +1064,46 @@ function createWebBidAnalysisTaskService({
         generationConfigSnapshot,
         acceptedTask,
         runRecord,
+      };
+    }, { signal });
+  }
+
+  function prepareContentResumeRun(input, payloadSignature, signal) {
+    return mutationExecutor.execute(() => {
+      const state = technicalPlanStore.loadTechnicalPlan() || {};
+      const task = state.contentGenerationTask;
+      const record = task?.execution_id
+        ? technicalPlanStore.getTechnicalPlanRunRecord(task.execution_id)
+        : technicalPlanStore.getTechnicalPlanRunRecordByTaskId?.(task?.task_id);
+      if (!task || !record || !record.manifest || record.taskType !== 'content-generation') {
+        throw createTaskConflictError();
+      }
+      const manifestInput = record.checkpoint?.input;
+      if (!manifestInput || manifestInput.action === 'resume') {
+        throw createTaskConflictError();
+      }
+      const resumedRecord = technicalPlanStore.resumeTechnicalPlanTaskRun({
+        executionId: record.executionId,
+        manifestHash: record.manifestHash,
+        targetStageGeneration: record.targetStageGeneration,
+      });
+      const modelSnapshot = captureModelSnapshot();
+      const generationConfigSnapshot = captureTechnicalPlanGenerationConfig(aiService);
+      const acceptedTask = createTask('content-generation', input, {
+        taskId: record.taskId,
+        executionId: record.executionId,
+        payloadSignature,
+        runRecord: resumedRecord,
+      });
+      return {
+        taskId: record.taskId,
+        executionId: record.executionId,
+        modelSnapshot,
+        generationConfigSnapshot,
+        acceptedTask,
+        runRecord: resumedRecord,
+        manifestInput,
+        initialPartial: { contentGenerationTask: acceptedTask },
       };
     }, { signal });
   }
@@ -819,6 +1215,125 @@ function createWebBidAnalysisTaskService({
           acceptanceSignal,
         ),
         signal,
+      });
+    },
+    startGlobalFactsGeneration(payload, { signal } = {}) {
+      const input = validateStartGlobalFactsGenerationInput(payload);
+      const payloadSignature = stableHash(input);
+      const initialPartial = {
+        globalFacts: [],
+        globalFactsTask: undefined,
+        contentGenerationTask: undefined,
+        contentGenerationSections: {},
+        contentGenerationPlans: {},
+        contentIllustrationPlan: undefined,
+        contentGenerationRuntime: undefined,
+      };
+      return startManagedTask({
+        type: 'global-facts-generation',
+        input,
+        payloadSignature,
+        runner: (context) => runPortableTechnicalPlanTask('global-facts-generation', globalFactsRunner, context),
+        initialPartial,
+        prepare: (acceptanceSignal) => prepareTechnicalPlanRun(
+          'global-facts-generation',
+          input,
+          initialPartial,
+          payloadSignature,
+          acceptanceSignal,
+          { initialCheckpoint: { input, status: 'accepted' } },
+        ),
+        signal,
+      });
+    },
+    startContentGeneration(payload, { signal } = {}) {
+      const input = validateStartContentGenerationInput(payload);
+      const payloadSignature = stableHash(input);
+      if (input.action === 'resume') {
+        return startManagedTask({
+          type: 'content-generation',
+          input,
+          payloadSignature,
+          runner: (context) => runPortableTechnicalPlanTask('content-generation', contentRunner, context),
+          prepare: (acceptanceSignal) => prepareContentResumeRun(input, payloadSignature, acceptanceSignal),
+          signal,
+        });
+      }
+      const initialPartial = {
+        ...(input.generation_options ? { contentGenerationOptions: input.generation_options } : {}),
+        ...(input.action === 'start' || input.action === 'regenerate-all' ? {
+          contentGenerationSections: {},
+          contentGenerationPlans: {},
+          contentIllustrationPlan: undefined,
+          contentGenerationRuntime: undefined,
+        } : {}),
+      };
+      return startManagedTask({
+        type: 'content-generation',
+        input,
+        payloadSignature,
+        runner: (context) => runPortableTechnicalPlanTask('content-generation', contentRunner, context),
+        initialPartial,
+        prepare: (acceptanceSignal) => prepareTechnicalPlanRun(
+          'content-generation',
+          input,
+          initialPartial,
+          payloadSignature,
+          acceptanceSignal,
+          { initialCheckpoint: { input, status: 'accepted' } },
+        ),
+        signal,
+      });
+    },
+    pauseContentGeneration(payload, { signal } = {}) {
+      validatePauseContentGenerationInput(payload || {});
+      if (signal?.aborted) return Promise.reject(signal.reason || createAcceptanceAbortError());
+      const control = orchestrator.activeTaskControls.get('content-generation');
+      const activeTask = orchestrator.activeTasks.get('content-generation');
+      if (!control || !activeTask) {
+        const persisted = technicalPlanStore.loadTechnicalPlan()?.contentGenerationTask;
+        if (persisted?.status === 'paused') return Promise.resolve(persisted);
+        return Promise.reject(createTaskConflictError());
+      }
+      if (activeTask.status === 'paused') return Promise.resolve(activeTask);
+      const pausingTask = control.requestPause();
+      const timeoutMs = Math.max(1000, Number(process.env.WEB_TASK_PAUSE_DRAIN_TIMEOUT_MS) || 60000);
+      const timeout = new Promise((_, reject) => {
+        const timer = setTimeout(() => reject(createPauseTimeoutError()), timeoutMs);
+        timer.unref?.();
+      });
+      const settled = Promise.resolve(control.runnerPromise).then(() => {
+        const task = technicalPlanStore.loadTechnicalPlan()?.contentGenerationTask;
+        return task?.status === 'paused' ? task : { ...pausingTask, status: 'paused', pause_requested: true };
+      });
+      return Promise.race([settled, timeout]).catch(async (error) => {
+        if (error?.code !== 'TASK_PAUSE_TIMEOUT') throw error;
+        control.cancel(error);
+        const task = orchestrator.activeTasks.get('content-generation') || pausingTask;
+        if (task.execution_id && task.manifest_hash) {
+          await mutationExecutor.execute(() => technicalPlanStore.updateTechnicalPlanTaskRunStatus({
+            executionId: task.execution_id,
+            manifestHash: task.manifest_hash,
+            status: 'error',
+            checkpoint: createTechnicalPlanCheckpoint({
+              type: 'content-generation',
+              input: task.payload || {},
+              state: technicalPlanStore.loadTechnicalPlan(),
+              runRecord: technicalPlanStore.getTechnicalPlanRunRecord(task.execution_id),
+              status: 'error',
+              error,
+            }),
+            task: {
+              ...task,
+              status: 'error',
+              error: error.message,
+              error_code: error.code,
+              retryable: true,
+              pause_requested: false,
+            },
+          }));
+        }
+        throw error;
       });
     },
   };
