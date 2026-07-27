@@ -52,6 +52,9 @@ function responsesToChatRequest(source) {
         : (Array.isArray(item.content) ? item.content.map((part) => part.text || part.content || '').join('') : ''),
     };
   });
+  if (typeof source.instructions === 'string' && source.instructions.trim()) {
+    messages.unshift({ role: 'system', content: source.instructions });
+  }
   const tools = (Array.isArray(source.tools) ? source.tools : []).filter((tool) => tool.type === 'function').map((tool) => ({
     type: 'function',
     function: { name: tool.name, description: tool.description, parameters: tool.parameters || {} },

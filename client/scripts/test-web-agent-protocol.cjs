@@ -3,6 +3,7 @@ const { createAgentOpenAiProxy, responsesToChatRequest } = require('../server/ag
 
 async function main() {
   const translated = responsesToChatRequest({
+    instructions: 'Follow the controlled Agent workflow.',
     input: [
       { role: 'user', content: [{ type: 'input_text', text: 'run' }] },
       { type: 'function_call', call_id: 'call_1', name: 'write', arguments: '{"filePath":"result.json"}' },
@@ -10,8 +11,9 @@ async function main() {
     ],
     tools: [{ type: 'function', name: 'write', parameters: { type: 'object' } }],
   });
-  assert.equal(translated.messages[1].tool_calls[0].function.name, 'write');
-  assert.equal(translated.messages[2].role, 'tool');
+  assert.deepEqual(translated.messages[0], { role: 'system', content: 'Follow the controlled Agent workflow.' });
+  assert.equal(translated.messages[2].tool_calls[0].function.name, 'write');
+  assert.equal(translated.messages[3].role, 'tool');
   assert.equal(translated.tools[0].function.name, 'write');
 
   let captured;
@@ -28,7 +30,7 @@ async function main() {
     const response = await fetch(`${proxy.baseUrl}/v1/responses`, {
       method: 'POST',
       headers: { authorization: `Bearer ${proxy.token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ input: [{ role: 'user', content: 'hello' }], stream: true }),
+      body: JSON.stringify({ instructions: 'Keep tool policy.', input: [{ role: 'user', content: 'hello' }], stream: true }),
     });
     const body = await response.text();
     assert.equal(response.status, 200);
@@ -36,6 +38,7 @@ async function main() {
     assert.match(body, /response\.output_text\.delta/);
     assert.match(body, /response\.completed/);
     assert.equal(captured.stream, false);
+    assert.deepEqual(captured.messages[0], { role: 'system', content: 'Keep tool policy.' });
     console.log('PASS: Agent Responses/Chat protocol adapter');
   } finally {
     await proxy.close();

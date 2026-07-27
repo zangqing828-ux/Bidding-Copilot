@@ -28,6 +28,8 @@ async function main() {
       const writeTool = body.tools?.find((tool) => tool.function?.name === 'write');
       if (writeTool) businessRequests.push(body);
       if (writeTool && !body.messages?.some((message) => message.role === 'tool')) {
+        const instructions = body.messages?.find((message) => message.role === 'system')?.content;
+        assert.ok(String(instructions || '').trim(), '真实 OpenCode 请求缺少 Responses instructions');
         assert.ok(writeTool, `真实 OpenCode 请求未包含 write 工具：${JSON.stringify(body.tools?.map((tool) => tool.function?.name))}`);
         const properties = writeTool.function.parameters?.properties || {};
         const pathKey = ['filePath', 'path', 'file_path'].find((key) => properties[key]) || 'filePath';

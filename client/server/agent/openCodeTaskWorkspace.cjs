@@ -132,6 +132,15 @@ function makeTreeWritable(directory) {
   fs.chmodSync(directory, 0o700);
 }
 
+function cleanupTaskDirectory(taskDir) {
+  if (!fs.existsSync(taskDir)) return;
+  try {
+    makeTreeWritable(taskDir);
+  } finally {
+    fs.rmSync(taskDir, { recursive: true, force: true });
+  }
+}
+
 function createOpenCodeTaskWorkspace({ workspaceRoot, runId, inputs = {}, maxInputBytes = MAX_INPUT_BYTES }) {
   const normalizedRunId = String(runId || '').trim();
   if (!workspaceRoot || !normalizedRunId) throw new Error('createOpenCodeTaskWorkspace 缺少 workspaceRoot 或 runId');
@@ -141,26 +150,35 @@ function createOpenCodeTaskWorkspace({ workspaceRoot, runId, inputs = {}, maxInp
   const runtimeDir = path.join(taskDir, 'runtime');
   const configPath = path.join(runtimeDir, 'opencode.json');
   const outputPath = path.join(workDir, OUTPUT_FILE);
-  fs.mkdirSync(inputDir, { recursive: true, mode: 0o700 });
-  fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
-  let totalBytes = 0;
-  const declared = new Set();
-  for (const [sourcePath, sourceContent] of Object.entries(inputs)) {
-    const relative = safeRelativePath(sourcePath);
-    if (!relative.startsWith('input/')) {
-      throw createWorkspaceError('Agent 输入必须位于 input/ 目录', 'AGENT_WORKSPACE_PATH_INVALID');
+  try {
+    fs.mkdirSync(inputDir, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
+    let totalBytes = 0;
+    const declared = new Set();
+    for (const [sourcePath, sourceContent] of Object.entries(inputs)) {
+      const relative = safeRelativePath(sourcePath);
+      if (!relative.startsWith('input/')) {
+        throw createWorkspaceError('Agent 输入必须位于 input/ 目录', 'AGENT_WORKSPACE_PATH_INVALID');
+      }
+      const folded = relative.toLowerCase();
+      if (declared.has(folded)) throw createWorkspaceError('Agent 输入路径重复', 'AGENT_WORKSPACE_PATH_INVALID');
+      declared.add(folded);
+      const content = Buffer.isBuffer(sourceContent) ? sourceContent : Buffer.from(String(sourceContent ?? ''), 'utf8');
+      totalBytes += content.length;
+      if (totalBytes > maxInputBytes) throw createWorkspaceError('Agent 输入超出大小限制', 'AGENT_INPUT_TOO_LARGE');
+      const target = ensureInsideRoot(workDir, path.join(workDir, relative));
+      fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(target, content, { mode: 0o600 });
     }
-    const folded = relative.toLowerCase();
-    if (declared.has(folded)) throw createWorkspaceError('Agent 输入路径重复', 'AGENT_WORKSPACE_PATH_INVALID');
-    declared.add(folded);
-    const content = Buffer.isBuffer(sourceContent) ? sourceContent : Buffer.from(String(sourceContent ?? ''), 'utf8');
-    totalBytes += content.length;
-    if (totalBytes > maxInputBytes) throw createWorkspaceError('Agent 输入超出大小限制', 'AGENT_INPUT_TOO_LARGE');
-    const target = ensureInsideRoot(workDir, path.join(workDir, relative));
-    fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(target, content, { mode: 0o600 });
+    freezeInputTree(inputDir);
+  } catch (error) {
+    try {
+      cleanupTaskDirectory(taskDir);
+    } catch (cleanupError) {
+      error.cleanupError = cleanupError;
+    }
+    throw error;
   }
-  freezeInputTree(inputDir);
   return Object.freeze({
     taskDir,
     workDir,
@@ -169,9 +187,7 @@ function createOpenCodeTaskWorkspace({ workspaceRoot, runId, inputs = {}, maxInp
     configPath,
     outputPath,
     cleanup() {
-      if (!fs.existsSync(taskDir)) return;
-      makeTreeWritable(taskDir);
-      fs.rmSync(taskDir, { recursive: true, force: true });
+      cleanupTaskDirectory(taskDir);
     },
     assertDeclaredFiles: () => assertDeclaredFiles(workDir),
     readOutput: (options) => readSafeOutput(outputPath, options),

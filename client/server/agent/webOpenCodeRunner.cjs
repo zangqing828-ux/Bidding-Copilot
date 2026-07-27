@@ -104,6 +104,12 @@ function createWebOpenCodeRunner({ env = process.env } = {}) {
     if (!isExecutable(prlimit)) return Promise.reject(createRunnerError('prlimit 未部署，拒绝启动 Agent', 'AGENT_PRLIMIT_UNAVAILABLE'));
     if (signal?.aborted) return Promise.reject(signal.reason || createRunnerError('Agent 请求已取消', 'AGENT_ABORTED'));
     const effectiveTimeoutMs = normalizeTimeoutMs(timeoutMs);
+    const runnerPath = Array.from(new Set([
+      path.dirname(process.execPath),
+      '/usr/local/bin',
+      '/usr/bin',
+      '/bin',
+    ])).join(path.delimiter);
     const args = [
       ...(Number.isFinite(limits.addressSpaceBytes) && limits.addressSpaceBytes > 0
         ? [`--as=${limits.addressSpaceBytes}:${limits.addressSpaceBytes}`]
@@ -129,7 +135,7 @@ function createWebOpenCodeRunner({ env = process.env } = {}) {
           XDG_DATA_HOME: path.join(taskWorkspace.runtimeDir, 'data'),
           XDG_CACHE_HOME: path.join(taskWorkspace.runtimeDir, 'cache'),
           TMPDIR: path.join(taskWorkspace.runtimeDir, 'tmp'),
-          PATH: '/usr/local/bin:/usr/bin:/bin',
+          PATH: runnerPath,
           LANG: env.LANG || 'C.UTF-8',
           OPENCODE_CONFIG: taskWorkspace.configPath,
           OPENCODE_CONFIG_DIR: taskWorkspace.runtimeDir,

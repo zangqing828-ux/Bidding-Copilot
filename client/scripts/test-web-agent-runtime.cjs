@@ -88,6 +88,22 @@ async function run() {
   check(result.output_file === OUTPUT_FILE && result.output_content.includes('agent generated content'), 'Agent 读取受控输出文件');
   check(!fs.existsSync(path.join(workspaceRoot, '.agent-tasks', 'plan-1')), '任务结束后清理临时工作区');
   check(service.getStatus().active_task === null, '任务结束后状态恢复空闲');
+
+  const partialWorkspacePath = path.join(workspaceRoot, '.agent-tasks', 'partial-input-failure');
+  assert.throws(
+    () => createOpenCodeTaskWorkspace({
+      workspaceRoot,
+      runId: 'partial-input-failure',
+      maxInputBytes: 4,
+      inputs: {
+        'input/first.txt': '12',
+        'input/second.txt': '345',
+      },
+    }),
+    (error) => error?.code === 'AGENT_INPUT_TOO_LARGE',
+  );
+  check(!fs.existsSync(partialWorkspacePath), '输入构建中途失败会清理部分工作区');
+
   const config = buildOpenCodeConfig('http://127.0.0.1:3000');
   check(config.permission?.['*'] === 'deny', 'Agent 权限默认全部拒绝');
   check(config.permission?.bash === 'deny', 'Agent 禁止 Bash');
