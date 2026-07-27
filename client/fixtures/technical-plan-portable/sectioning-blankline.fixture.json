@@ -1,0 +1,23 @@
+{
+  "name": "leading-and-trailing-blank-lines-preserve",
+  "markdown": "\n\n# 标题\n\n说明文本\n\n\n## 标段一\n正文A\n\n",
+  "sections": [
+    {
+      "id": "section-1",
+      "index": 1,
+      "title": "标段一",
+      "unit": "标段",
+      "headLine": "## 标段一",
+      "description": "标段一说明",
+      "includeRanges": [
+        {
+          "startLine": 8,
+          "endLine": 8
+        }
+      ]
+    }
+  ],
+  "selectedSectionId": "section-1",
+  "expectedSelectedMarkdown": "\n\n# 标题\n\n说明文本\n\n\n## 标段一\n正文A\n\n",
+  "expectedSelectedLineNumbers": [8]
+}

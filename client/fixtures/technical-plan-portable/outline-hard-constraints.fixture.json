@@ -1,0 +1,124 @@
+{
+  "cases": [
+    {
+      "name": "depth-exceeds-three",
+      "mode": "standard",
+      "outline": [
+        {
+          "id": "1",
+          "title": "一级节点",
+          "description": "一级目录",
+          "source_requirement_id": "REQ-01",
+          "source_requirement_title": "一级目录",
+          "children": [
+            {
+              "id": "1.1",
+              "title": "二级节点",
+              "description": "二级目录",
+              "children": [
+                {
+                  "id": "1.1.1",
+                  "title": "三级节点",
+                  "description": "三级目录",
+                  "children": [
+                    {
+                      "title": "四级节点",
+                      "description": "超限目录"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expectedError": "目录层级超过最大值 3"
+    },
+    {
+      "name": "standard-missing-source-metadata",
+      "mode": "standard",
+      "outline": [
+        {
+          "id": "1",
+          "title": "一级节点",
+          "description": "一级目录",
+          "children": [
+            {
+              "title": "二级节点",
+              "description": "二级目录",
+              "children": [
+                {
+                  "title": "三级节点",
+                  "description": "三级目录"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expectedError": "标准方案第 1 个一级目录缺少 source_requirement_id"
+    },
+    {
+      "name": "duplicate-sibling-title",
+      "mode": "existing",
+      "outline": [
+        {
+          "id": "1",
+          "title": "一级节点",
+          "description": "一级目录",
+          "children": [
+            {
+              "id": "1.1",
+              "title": "同名章节",
+              "description": "重复标题A",
+              "children": [
+                {
+                  "title": "三级A",
+                  "description": "三级A"
+                }
+              ]
+            },
+            {
+              "id": "1.2",
+              "title": "同名章节",
+              "description": "重复标题B",
+              "children": [
+                {
+                  "title": "三级B",
+                  "description": "三级B"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expectedError": "title 与同级目录重复"
+    },
+    {
+      "name": "missing-description",
+      "mode": "standard",
+      "outline": [
+        {
+          "id": "1",
+          "title": "一级节点",
+          "description": "一级目录",
+          "source_requirement_id": "REQ-01",
+          "source_requirement_title": "一级目录",
+          "children": [
+            {
+              "id": "1.1",
+              "title": "二级节点",
+              "children": [
+                {
+                  "id": "1.1.1",
+                  "title": "三级节点"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expectedError": "outline[0].children[0].description 不能为空"
+    }
+  ]
+}

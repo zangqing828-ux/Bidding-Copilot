@@ -1,0 +1,150 @@
+{
+  "cases": [
+    {
+      "name": "missing-selected-section",
+      "markdown": "# 招标文件\n共4页\n\n## 标段一\n测试A",
+      "sections": [
+        {
+          "id": "section-1",
+          "index": 1,
+          "title": "标段一",
+          "unit": "标段",
+          "headLine": "## 标段一",
+          "description": "标段一说明",
+          "includeRanges": [
+            {
+              "startLine": 4,
+              "endLine": 4
+            }
+          ]
+        }
+      ],
+      "selectedSectionId": "section-2",
+      "expectedError": "未找到所选标段"
+    },
+    {
+      "name": "overlapping-ranges",
+      "markdown": "# 招标文件\n说明\n\n## 标段一\nA\n\n## 标段二\nB",
+      "sections": [
+        {
+          "id": "section-1",
+          "index": 1,
+          "title": "标段一",
+          "unit": "标段",
+          "headLine": "## 标段一",
+          "description": "标段一说明",
+          "includeRanges": [
+            {
+              "startLine": 4,
+              "endLine": 6
+            }
+          ]
+        },
+        {
+          "id": "section-2",
+          "index": 2,
+          "title": "标段二",
+          "unit": "标段",
+          "headLine": "## 标段二",
+          "description": "标段二说明",
+          "includeRanges": [
+            {
+              "startLine": 5,
+              "endLine": 7
+            }
+          ]
+        }
+      ],
+      "selectedSectionId": "section-1",
+      "expectedError": "标段范围重叠"
+    },
+    {
+      "name": "out-of-bound-range",
+      "markdown": "# 招标文件\n标题",
+      "sections": [
+        {
+          "id": "section-1",
+          "index": 1,
+          "title": "标段一",
+          "unit": "标段",
+          "headLine": "## 标段一",
+          "description": "标段一说明",
+          "includeRanges": [
+            {
+              "startLine": 1,
+              "endLine": 3
+            }
+          ]
+        }
+      ],
+      "selectedSectionId": "section-1",
+      "expectedError": "超出招标正文行数边界"
+    },
+    {
+      "name": "invalid-range-order",
+      "markdown": "# 招标文件\n说明\n\n## 标段一\nA",
+      "sections": [
+        {
+          "id": "section-1",
+          "index": 1,
+          "title": "标段一",
+          "unit": "标段",
+          "headLine": "## 标段一",
+          "description": "标段一说明",
+          "includeRanges": [
+            {
+              "startLine": 5,
+              "endLine": 4
+            }
+          ]
+        }
+      ],
+      "selectedSectionId": "section-1",
+      "expectedError": "startLine 不能大于 endLine"
+    },
+    {
+      "name": "string-line-number",
+      "markdown": "# 招标文件\n说明\n\n## 标段一\nA\n",
+      "sections": [
+        {
+          "id": "section-1",
+          "index": 1,
+          "title": "标段一",
+          "unit": "标段",
+          "headLine": "## 标段一",
+          "description": "标段一说明",
+          "includeRanges": [
+            {
+              "startLine": "7",
+              "endLine": "8"
+            }
+          ]
+        }
+      ],
+      "selectedSectionId": "section-1",
+      "expectedError": "section-1.startLine 必须是正整数"
+    },
+    {
+      "name": "whitespace-source",
+      "markdown": "  \n\t\n  \n",
+      "sections": [
+        {
+          "id": "section-1",
+          "index": 1,
+          "title": "标段一",
+          "unit": "标段",
+          "headLine": "## 标段一",
+          "description": "标段一说明",
+          "includeRanges": [
+            {
+              "startLine": 1,
+              "endLine": 1
+            }
+          ]
+        }
+      ],
+      "selectedSectionId": "section-1",
+      "expectedError": "源标书内容不能为空"
+    }
+  ]
+}
