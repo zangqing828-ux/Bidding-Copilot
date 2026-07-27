@@ -99,7 +99,8 @@ async function main() {
     });
 
     await run('runtime migration 创建 Agent 幂等账本并与 schema 版本一致', async () => {
-      assert.equal(schemaVersion, 22);
+      assert.equal(sqlite.schemaVersion, schemaVersion);
+      assert.ok(schemaVersion >= 22);
       const table = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_result_applications'").get();
       assert.equal(table.name, 'agent_result_applications');
     });
