@@ -15,6 +15,8 @@ const SERVER_LIMIT_CEILINGS = Object.freeze({
   maxModelCalls: 8,
   maxTotalTokens: 64_000,
 });
+
+const TASK_SPEC_ID_PATTERN = /^[a-z][a-z0-9-]{1,63}(?:\.[a-z][a-z0-9-]{1,63})*$/;
 const FORBIDDEN_SPEC_IMPORTS = Object.freeze([
   'node:fs',
   'fs',
@@ -66,7 +68,7 @@ function validateSpec(spec) {
     if (!expectedKeys.has(key)) throw createSpecError(`Task Spec 包含未知字段 ${key}`);
   }
   const id = String(source.id || '').trim();
-  if (!/^[a-z][a-z0-9-]{1,63}$/.test(id)) throw createSpecError('Task Spec id 非法');
+  if (!TASK_SPEC_ID_PATTERN.test(id)) throw createSpecError('Task Spec id 非法');
   const version = Number(source.version);
   if (!Number.isInteger(version) || version <= 0) throw createSpecError('Task Spec version 非法');
   if (source.runtime !== ALLOWED_RUNTIME) throw createSpecError('Task Spec runtime 非法');
@@ -120,16 +122,27 @@ function assertNoForbiddenImports(specPath, source) {
   }
 }
 
-function createBusinessAgentTaskRegistry({ specs = [], env = process.env } = {}) {
+function createBusinessAgentTaskRegistry({ specs = [], env = process.env, sidecarReady = false } = {}) {
   if (!Array.isArray(specs)) throw createSpecError('Task Spec registry 必须是数组');
   const isTest = env.NODE_ENV === 'test';
+  const productionSpecs = specs.filter((rawSpec) => rawSpec && rawSpec.testOnly !== true);
+  const productionGateOpen = isTest || (
+    String(env.AGENT_QUALITY_ENABLED || '').toLowerCase() === 'true'
+    && (sidecarReady === true || sidecarReady?.status === 'ready')
+  );
+  if (!isTest && productionSpecs.length) {
+    if (String(env.AGENT_QUALITY_ENABLED || '').toLowerCase() !== 'true') {
+      throw createSpecError('Agent Quality 默认关闭，生产 Task Spec 不开放', 'AGENT_QUALITY_DISABLED');
+    }
+    if (sidecarReady !== true && sidecarReady?.status !== 'ready') {
+      throw createSpecError('Agent Runner Sidecar 未通过 readiness gate', 'AGENT_SANDBOX_UNAVAILABLE');
+    }
+  }
   const registry = new Map();
   for (const rawSpec of specs) {
     const spec = validateSpec(rawSpec);
     if (spec.testOnly && !isTest) throw createSpecError('测试 Task Spec 只能在 NODE_ENV=test 装配');
-    if (!spec.testOnly && !isTest) {
-      throw createSpecError('I-2 生产 Task Spec 注册表必须为空');
-    }
+    if (!spec.testOnly && !productionGateOpen) throw createSpecError('生产 Task Spec readiness gate 未打开', 'AGENT_SANDBOX_UNAVAILABLE');
     const key = `${spec.id}@${spec.version}`;
     if (registry.has(key)) throw createSpecError(`重复 Task Spec ${key}`);
     registry.set(key, spec);
@@ -150,6 +163,7 @@ function createBusinessAgentTaskRegistry({ specs = [], env = process.env } = {})
 module.exports = {
   FORBIDDEN_SPEC_IMPORTS,
   SERVER_LIMIT_CEILINGS,
+  TASK_SPEC_ID_PATTERN,
   assertNoForbiddenImports,
   createBusinessAgentTaskRegistry,
   createSpecError,

@@ -2434,6 +2434,191 @@ function createTechnicalPlanStore({
     };
   }
 
+  // Agent Quality 只接收无路径的权威快照；外层 Executor 负责把该快照冻结到 execution envelope。
+  function readAgentQualitySnapshot(request = {}) {
+    const state = loadTechnicalPlan();
+    const plan = state.contentIllustrationPlan && typeof state.contentIllustrationPlan === 'object'
+      ? JSON.parse(JSON.stringify({
+        ...state.contentIllustrationPlan,
+        items: Array.isArray(state.contentIllustrationPlan.items)
+          ? state.contentIllustrationPlan.items.map((item) => {
+            if (!item || typeof item !== 'object') return item;
+            const { generation: _generation, ...pureItem } = item;
+            return pureItem;
+          })
+          : [],
+      }))
+      : null;
+    return Object.freeze({
+      snapshot_version: 'technical-plan-agent-snapshot.v1',
+      input_revision: state.inputRevision,
+      stage_revisions: currentStageRevisions(),
+      workflow_kind: state.workflowKind,
+      outline_expansion_mode: state.outlineExpansionMode,
+      outline_word_control_options: JSON.parse(JSON.stringify(state.outlineWordControlOptions || {})),
+      outline_word_control_snapshot: state.outlineWordControlSnapshot
+        ? JSON.parse(JSON.stringify(state.outlineWordControlSnapshot))
+        : null,
+      reference_knowledge_document_ids: JSON.parse(JSON.stringify(state.referenceKnowledgeDocumentIds || [])),
+      request: request && typeof request === 'object' && !Array.isArray(request)
+        ? JSON.parse(JSON.stringify(request))
+        : {},
+      outline: state.outlineData ? JSON.parse(JSON.stringify(state.outlineData)) : null,
+      global_facts: JSON.parse(JSON.stringify(state.globalFacts || [])),
+      content_sections: JSON.parse(JSON.stringify(state.contentGenerationSections || {})),
+      content_plans: JSON.parse(JSON.stringify(state.contentGenerationPlans || {})),
+      original_plan_markdown: String(readOriginalPlanMarkdown() || ''),
+      illustration_plan: plan,
+    });
+  }
+
+  function agentQualityConflictError(message) {
+    const error = new Error(message || 'Agent Quality 输入已变化，请重新执行');
+    error.code = 'AGENT_INPUT_CHANGED';
+    error.retryable = true;
+    return error;
+  }
+
+  function assertAgentQualityBase(payload) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw agentQualityConflictError('Agent Quality 写回 payload 无效');
+    }
+    if (currentInputRevision() !== Number(payload.base_input_revision)) {
+      throw agentQualityConflictError('Agent Quality 输入 revision 已变化');
+    }
+    if (!stageRevisionEquals(currentStageRevisions(), payload.base_stage_revisions || {})) {
+      throw agentQualityConflictError('Agent Quality 阶段 revision 已变化');
+    }
+  }
+
+  function clearAgentQualityDerivedState({ clearFacts = false } = {}) {
+    if (clearFacts) db.prepare('DELETE FROM technical_plan_global_fact_groups').run();
+    db.prepare('DELETE FROM technical_plan_content_sections').run();
+    db.prepare('DELETE FROM technical_plan_content_plans').run();
+    updateMeta({
+      content_generation_runtime_json: null,
+      content_illustration_plan_json: null,
+    });
+  }
+
+  function assertAgentLeafNode(nodeId) {
+    const normalizedNodeId = String(nodeId || '').trim();
+    if (!normalizedNodeId) throw agentQualityConflictError('Agent Quality node_id 缺失');
+    const node = db.prepare('SELECT node_id FROM technical_plan_outline_nodes WHERE node_id = ?').get(normalizedNodeId);
+    if (!node) throw agentQualityConflictError(`Agent Quality 未找到章节 ${normalizedNodeId}`);
+    const child = db.prepare('SELECT node_id FROM technical_plan_outline_nodes WHERE parent_node_id = ? LIMIT 1').get(normalizedNodeId);
+    if (child) throw agentQualityConflictError(`Agent Quality 只能修改正文叶子小节：${normalizedNodeId}`);
+    return normalizedNodeId;
+  }
+
+  function applyAgentOutlineResult(payload, { wordControl = null } = {}) {
+    assertAgentQualityBase(payload);
+    const currentOutline = loadOutlineData(ensureMetaRow());
+    saveOutlineData({
+      outline: payload.outline,
+      project_name: payload.project_name || currentOutline?.project_name,
+      project_overview: payload.project_overview || currentOutline?.project_overview,
+    });
+    clearAgentQualityDerivedState({ clearFacts: true });
+    updateMeta({
+      outline_word_control_snapshot_json: wordControl ? JSON.stringify(wordControl) : null,
+    });
+    const revisions = bumpStageRevision('outline_revision');
+    return {
+      stage: 'outline_revision',
+      revision: revisions.outline_revision,
+      node_count: db.prepare('SELECT COUNT(*) AS count FROM technical_plan_outline_nodes').get().count,
+    };
+  }
+
+  function applyAgentContentResult(payload, { sourceIds = [], coveredRequirements = [] } = {}) {
+    assertAgentQualityBase(payload);
+    const nodeId = assertAgentLeafNode(payload.node_id);
+    const timestamp = now();
+    db.prepare('UPDATE technical_plan_outline_nodes SET content = ?, updated_at = ? WHERE node_id = ?')
+      .run(String(payload.content), timestamp, nodeId);
+    db.prepare(`
+      INSERT INTO technical_plan_content_sections (node_id, status, error, updated_at)
+      VALUES (?, 'success', NULL, ?)
+      ON CONFLICT(node_id) DO UPDATE SET status = 'success', error = NULL, updated_at = excluded.updated_at
+    `).run(nodeId, timestamp);
+    db.prepare('DELETE FROM technical_plan_content_plans WHERE node_id = ?').run(nodeId);
+    updateMeta({ content_illustration_plan_json: null, content_generation_runtime_json: null });
+    const revisions = bumpStageRevision('content_revision');
+    return {
+      node_id: nodeId,
+      revision: revisions.content_revision,
+      source_count: Array.isArray(sourceIds) ? sourceIds.length : 0,
+      covered_requirement_count: Array.isArray(coveredRequirements) ? coveredRequirements.length : 0,
+    };
+  }
+
+  function applyAgentConsistencyResult(payload) {
+    assertAgentQualityBase(payload);
+    const changes = Array.isArray(payload.changes) ? payload.changes : [];
+    const nodeIds = changes.map((change) => assertAgentLeafNode(change.node_id));
+    const timestamp = now();
+    const updateContent = db.prepare('UPDATE technical_plan_outline_nodes SET content = ?, updated_at = ? WHERE node_id = ?');
+    const upsertSection = db.prepare(`
+      INSERT INTO technical_plan_content_sections (node_id, status, error, updated_at)
+      VALUES (?, 'success', NULL, ?)
+      ON CONFLICT(node_id) DO UPDATE SET status = 'success', error = NULL, updated_at = excluded.updated_at
+    `);
+    changes.forEach((change, index) => {
+      updateContent.run(String(change.content), timestamp, nodeIds[index]);
+      upsertSection.run(nodeIds[index], timestamp);
+      db.prepare('DELETE FROM technical_plan_content_plans WHERE node_id = ?').run(nodeIds[index]);
+    });
+    updateMeta({ content_illustration_plan_json: null, content_generation_runtime_json: null });
+    const revisions = bumpStageRevision('content_revision');
+    return { changed_nodes: nodeIds, revision: revisions.content_revision };
+  }
+
+  function applyAgentIllustrationPlanResult(payload) {
+    assertAgentQualityBase(payload);
+    const currentRevisions = currentStageRevisions();
+    if (currentRevisions.content_revision !== Number(payload.content_revision)
+      || currentRevisions.outline_revision !== Number(payload.outline_revision)) {
+      throw agentQualityConflictError('IllustrationPlan 输入阶段已变化');
+    }
+    const seenItems = new Set();
+    const seenSections = new Set();
+    for (const item of payload.items || []) {
+      if (seenItems.has(item.item_id)) throw new Error(`IllustrationPlan item_id 重复：${item.item_id}`);
+      seenItems.add(item.item_id);
+      for (const sectionId of item.section_ids || []) {
+        if (seenSections.has(sectionId)) throw new Error(`IllustrationPlan section_id 重复：${sectionId}`);
+        seenSections.add(sectionId);
+        assertAgentLeafNode(sectionId);
+      }
+    }
+    const plan = {
+      plan_version: 1,
+      content_revision: payload.content_revision,
+      outline_revision: payload.outline_revision,
+      manifest_hash: payload.manifest_hash,
+      revision: payload.revision,
+      items: payload.items,
+    };
+    db.prepare('DELETE FROM technical_plan_illustration_render_receipts').run();
+    updateMeta({ content_illustration_plan_json: JSON.stringify(plan) });
+    return { plan_version: 1, item_count: plan.items.length, revision: plan.revision };
+  }
+
+  function getAgentQualityOperations() {
+    return Object.freeze({
+      'technical-plan-apply-outline-repair': (payload) => applyAgentOutlineResult(payload),
+      'technical-plan-apply-outline-word-adjust': (payload) => applyAgentOutlineResult(payload, { wordControl: payload.word_control }),
+      'technical-plan-apply-content-repair': (payload) => applyAgentContentResult(payload),
+      'technical-plan-apply-original-coverage-repair': (payload) => applyAgentContentResult(payload, {
+        sourceIds: payload.source_ids,
+        coveredRequirements: payload.covered_requirements,
+      }),
+      'technical-plan-apply-consistency-repair': (payload) => applyAgentConsistencyResult(payload),
+      'technical-plan-apply-illustration-plan': (payload) => applyAgentIllustrationPlanResult(payload),
+    });
+  }
+
   const updateTechnicalPlanTransaction = db.transaction((partial) => {
     applyPartial(partial || {});
   });
@@ -2925,6 +3110,8 @@ function createTechnicalPlanStore({
 
   return {
     loadTechnicalPlan,
+    readAgentQualitySnapshot,
+    getAgentQualityOperations,
     updateTechnicalPlan,
     updateTechnicalPlanWithoutReload,
     updateTechnicalPlanForInputRevision,
