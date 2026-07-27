@@ -108,12 +108,14 @@ function buildOutlineExecutionPlan(input = {}) {
     outlineExpansionMode,
     stages,
     decisions,
-    decision: decisions.length ? DECISION_AGENT_QUALITY_DISABLED : DECISION_PLAN_READY,
+    decision: DECISION_PLAN_READY,
+    agentQualityDecision: decisions.length ? DECISION_AGENT_QUALITY_DISABLED : DECISION_PLAN_READY,
     runnable: true,
   };
 }
 
 module.exports = {
   DECISION_AGENT_QUALITY_DISABLED,
+  DECISION_PLAN_READY,
   buildOutlineExecutionPlan,
 };

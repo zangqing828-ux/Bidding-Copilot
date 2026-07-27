@@ -14,6 +14,7 @@ const {
 } = require('../core/technical-plan/outline/outlineWordControl.cjs');
 const {
   DECISION_AGENT_QUALITY_DISABLED,
+  DECISION_PLAN_READY,
   buildOutlineExecutionPlan,
 } = require('../core/technical-plan/outline/outlineExecutionPlan.cjs');
 
@@ -172,7 +173,8 @@ function runExecutionPlanChecks() {
     capabilities: {},
   });
   assert.equal(standardWithoutCap.workflowKind, 'technical-plan', '技术方案工作流应为 technical-plan');
-  assert.equal(standardWithoutCap.decision, DECISION_AGENT_QUALITY_DISABLED, '缺能力应提示质量决策不可用');
+  assert.equal(standardWithoutCap.decision, DECISION_PLAN_READY, '可选质量能力关闭时主计划仍应可执行');
+  assert.equal(standardWithoutCap.agentQualityDecision, DECISION_AGENT_QUALITY_DISABLED, '缺能力应单独提示质量决策不可用');
   assert.equal(
     standardWithoutCap.stages.filter((item) => item.required).length,
     5,
@@ -204,6 +206,7 @@ function runExecutionPlanChecks() {
     0,
     '有能力时不应产生命名决策',
   );
+  assert.equal(standardWithCap.agentQualityDecision, DECISION_PLAN_READY, '质量能力可用时应标记为可执行');
 
   const existingOriginal = buildOutlineExecutionPlan({
     workflowKind: 'existing-plan-expansion',
