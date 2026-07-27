@@ -57,6 +57,14 @@ function expectCode(fn, code) {
 function main() {
   assert.equal(validateRunnerSecurityPolicy(RUNNER_SECURITY_POLICY), true, 'Runner security policy 必须通过自校验');
   const dockerfile = fs.readFileSync(path.join(__dirname, '../../docker/agent-runner/Dockerfile'), 'utf8');
+  assert.match(dockerfile, /prepare-agent-runner-assets\.cjs/, 'Runner image 必须执行固定资产准备脚本');
+  assert.match(dockerfile, /agent-runner-assets\.json/, 'Runner image 必须复制固定资产清单');
+  assert.match(dockerfile, /COPY --from=runner-assets \/opt\/agent-assets/, 'Runner image 必须复制独立资产层');
+  assert.match(dockerfile, /opencode --version/, 'Runner image 必须在构建期校验 OpenCode');
+  assert.match(dockerfile, /rg --version/, 'Runner image 必须在构建期校验 rg');
+  assert.match(dockerfile, /fd --version/, 'Runner image 必须在构建期校验 fd');
+  assert.match(dockerfile, /jq -n/, 'Runner image 必须在构建期校验 jq');
+  assert.match(dockerfile, /prlimit --version/, 'Runner image 必须在构建期校验 prlimit');
   assert.match(dockerfile, /USER 10001:10001/, 'Runner image 必须以非 root 用户运行');
   assert.match(dockerfile, /COPY client\/server\/agent-sidecar/, 'Runner image 必须独立复制 Sidecar runtime');
   const seccomp = JSON.parse(fs.readFileSync(path.join(__dirname, '../../docker/agent-runner/seccomp/agent-runner.json'), 'utf8'));

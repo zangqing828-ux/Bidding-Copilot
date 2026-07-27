@@ -101,9 +101,37 @@ curl -fsS http://127.0.0.1:3010/api/health
 curl -fsS http://127.0.0.1:3010/api/readiness
 ```
 
+## WP-J Agent Sidecar 验证
+
+WP-J J3 将 Agent Runner 放在独立的 `j-agent` profile 中。Web 默认不启用该 profile，也不会在 Web 镜像中携带 Runner 工具。
+
+```bash
+export YIBIAO_SIDECAR_SECRET="$(openssl rand -hex 32)"
+export AGENT_QUALITY_ENABLED=1
+docker compose --profile j-agent build
+docker compose --profile j-agent up -d
+
+cd client
+npm run test:web-agent-sidecar
+npm run wp-j:doctor
+npm run wp-j:readiness
+npm run wp-j:diagnose
+npm run wp-j:rollback-smoke
+```
+
+Runner 只加入 `agent-internal` 网络，不发布宿主机端口。需要关闭 Sidecar 时执行：
+
+```bash
+cd ..
+docker compose --profile j-agent stop agent-runner
+```
+
+当前门禁覆盖协议、安全边界、镜像分层和运行手册。正式业务 Agent Task Spec 需要后续 WP-J 业务 Gate。
+
 验证结束后清理临时容器：
 
 ```bash
+docker compose --profile j-agent stop agent-runner
 docker stop bidding-copilot-wp-j-local
 docker rm bidding-copilot-wp-j-local
 ```

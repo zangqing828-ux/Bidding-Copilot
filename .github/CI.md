@@ -24,9 +24,38 @@
 | `CI / Client Build` | `npm ci`、CommonJS 语法、TypeScript/Vite 构建、critical 审计 |
 | `CI / Analytics Worker Check` | `npm ci`、Wrangler dry-run、critical 审计 |
 | `CI / Analytics Dashboard Check` | `npm ci`、Wrangler dry-run、critical 审计 |
-| `CI / Quality Gate` | 汇总以上四项，任一失败时整体失败 |
+| `CI / Agent Foundation` | 现有 Agent Foundation 合约与执行基础测试、独立 Runner target 构建 |
+| `CI / Technical Plan Content Gate` | J-2 内容核心、质量和生命周期测试、Web contract、portable core、build；浏览器门禁独立执行 |
+| `CI / Agent Sidecar Security` | Sidecar 安全策略、Web production 镜像负向边界、doctor |
+| `CI / Agent Sidecar E2E` | Sidecar 协议/API、独立 Runner 镜像身份与 Compose 拓扑 |
+| `CI / Quality Gate` | 汇总所有 required job，任一失败时整体失败 |
 
 主分支保护应使用稳定检查名 `CI / Quality Gate`。
+
+### WP-J 本地等价门禁
+
+```bash
+cd client
+npm run test:web-agent-sidecar
+npm run test:web-image-boundary
+npm run test:opencode-checksum
+npm run test:wp-j:j2-core
+npm run wp-j:gate:j2
+npm run wp-j:doctor
+npm run wp-j:readiness
+npm run wp-j:diagnose
+npm run wp-j:rollback-smoke
+```
+
+Docker 可用时：
+
+```bash
+cd ..
+docker build --target production -t bidmaster-web:local .
+docker build --target agent-runner -t bidmaster-agent:local .
+docker build -f docker/agent-runner/Dockerfile -t bidmaster-agent:local-independent .
+docker compose --profile j-agent config --quiet
+```
 
 ### Release Client
 

@@ -1,0 +1,65 @@
+{
+  "opencodeVersion": "v1.17.8",
+  "architectures": {
+    "amd64": {
+      "opencode": {
+        "fileName": "opencode-linux-x64.tar.gz",
+        "url": "https://github.com/anomalyco/opencode/releases/download/v1.17.8/opencode-linux-x64.tar.gz",
+        "sha256": "13fffc29227093462b7d14777ea6b804cfd94c2612819c101bbf933d862b1e5f",
+        "archive": "tar.gz",
+        "binary": "opencode"
+      },
+      "rg": {
+        "fileName": "ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz",
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz",
+        "sha256": "4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e",
+        "archive": "tar.gz",
+        "binary": "rg"
+      },
+      "fd": {
+        "fileName": "fd-v10.3.0-x86_64-unknown-linux-musl.tar.gz",
+        "url": "https://github.com/sharkdp/fd/releases/download/v10.3.0/fd-v10.3.0-x86_64-unknown-linux-musl.tar.gz",
+        "sha256": "2b6bfaae8c48f12050813c2ffe1884c61ea26e750d803df9c9114550a314cd14",
+        "archive": "tar.gz",
+        "binary": "fd"
+      },
+      "jq": {
+        "fileName": "jq-linux-amd64",
+        "url": "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64",
+        "sha256": "5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5",
+        "archive": "binary",
+        "binary": "jq"
+      }
+    },
+    "arm64": {
+      "opencode": {
+        "fileName": "opencode-linux-arm64.tar.gz",
+        "url": "https://github.com/anomalyco/opencode/releases/download/v1.17.8/opencode-linux-arm64.tar.gz",
+        "sha256": "cfb34a6a9a40f9a2adb0d0f3ab387b97307823d075572bfb54a553228adcebbd",
+        "archive": "tar.gz",
+        "binary": "opencode"
+      },
+      "rg": {
+        "fileName": "ripgrep-14.1.1-aarch64-unknown-linux-gnu.tar.gz",
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-aarch64-unknown-linux-gnu.tar.gz",
+        "sha256": "c827481c4ff4ea10c9dc7a4022c8de5db34a5737cb74484d62eb94a95841ab2f",
+        "archive": "tar.gz",
+        "binary": "rg"
+      },
+      "fd": {
+        "fileName": "fd-v10.3.0-aarch64-unknown-linux-musl.tar.gz",
+        "url": "https://github.com/sharkdp/fd/releases/download/v10.3.0/fd-v10.3.0-aarch64-unknown-linux-musl.tar.gz",
+        "sha256": "996b9b1366433b211cb3bbedba91c9dbce2431842144d925428ead0adf32020b",
+        "archive": "tar.gz",
+        "binary": "fd"
+      },
+      "jq": {
+        "fileName": "jq-linux-arm64",
+        "url": "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-arm64",
+        "sha256": "4dd2d8a0661df0b22f1bb9a1f9830f06b6f3b8f7d91211a1ef5d7c4f06a8b4a5",
+        "archive": "binary",
+        "binary": "jq"
+      }
+    }
+  }
+}

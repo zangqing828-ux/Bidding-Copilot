@@ -105,19 +105,26 @@ jobs:
         working-directory: .
         run: docker build -t bidding-copilot-web:ci .
 
-      - name: Reject invalid OpenCode checksum
+      - name: Verify checksum rejection and Web image boundary
+        working-directory: client
+        run: npm run test:opencode-checksum && npm run test:web-image-boundary
+
+      - name: Verify Web production image excludes Runner tools
         working-directory: .
         run: |
-          set +e
-          docker build \
-            --build-arg OPENCODE_ASSET_SHA256=0000000000000000000000000000000000000000000000000000000000000000 \
-            -t bidding-copilot-web:invalid-checksum . \
-            > /tmp/yibiao-invalid-checksum-build.log 2>&1
-          build_status="$?"
-          set -e
-          cat /tmp/yibiao-invalid-checksum-build.log
-          test "$build_status" -ne 0
-          grep -q 'checksum 校验失败' /tmp/yibiao-invalid-checksum-build.log
+          docker run --rm --entrypoint node bidding-copilot-web:ci -e '
+            const fs = require("node:fs");
+            const forbidden = [
+              "/app/client/vendor/opencode",
+              "/app/client/vendor/opencode-tools",
+              "/usr/bin/curl",
+              "/usr/bin/jq",
+              "/usr/bin/rg",
+              "/usr/bin/fd",
+              "/usr/bin/prlimit"
+            ];
+            if (forbidden.some((entry) => fs.existsSync(entry))) process.exit(1);
+          '
 
       - name: Docker Web business smoke
         working-directory: .
@@ -319,6 +326,32 @@ jobs:
       - name: Block critical vulnerabilities
         run: npm audit --audit-level=critical
 
+  technical_plan_content:
+    name: Technical Plan Content Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: client
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci && npm rebuild better-sqlite3 --runtime=node
+
+      - name: Run WP-J J-2 content gate
+        run: npm run wp-j:gate:j2
+
   agent_foundation:
     name: Agent Foundation
     runs-on: ubuntu-latest
@@ -338,14 +371,88 @@ jobs:
       - name: Run Agent foundation tests
         working-directory: client
         run: npm run test:web-agent-protocol && npm run test:web-agent-runtime && npm run test:web-agent-coordinator && npm run test:web-agent-executor
-      - name: Run real OpenCode Docker E2E
+      - name: Verify fixed Runner asset manifest
+        working-directory: client
+        run: npm run test:web-agent-runner-assets
+      - name: Build independent Runner target
         run: |
-          docker build --target agent-e2e -t bidding-copilot-agent:e2e .
-          docker run --rm \
-            -e YIBIAO_WEB_OPENCODE_BIN=/app/client/vendor/opencode/linux-x64/opencode \
-            bidding-copilot-agent:e2e
-          docker build --target runtime -t bidding-copilot-agent:runtime .
-          test "$(docker run --rm --entrypoint /bin/sh bidding-copilot-agent:runtime -lc 'test ! -e scripts/test-web-agent-docker.cjs && echo clean')" = clean
+          docker build --target agent-runner -t bidding-copilot-agent:foundation .
+          docker build -f docker/agent-runner/Dockerfile -t bidding-copilot-agent:independent .
+
+  agent_sidecar_security:
+    name: Agent Sidecar Security
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Install dependencies
+        working-directory: client
+        run: npm ci && npm rebuild better-sqlite3 --runtime=node
+      - name: Run Sidecar security and Web boundary tests
+        working-directory: client
+        run: npm run test:web-agent-sidecar-security && npm run test:web-agent-readiness && npm run test:web-agent-runner-assets && npm run wp-j:doctor
+      - name: Build Web production image and assert negative boundary
+        run: |
+          docker build --target production -t bidding-copilot-web:sidecar-security .
+          docker run --rm --entrypoint node bidding-copilot-web:sidecar-security -e '
+            const fs = require("node:fs");
+            const forbidden = [
+              "/app/client/vendor/opencode",
+              "/app/client/vendor/opencode-tools",
+              "/usr/bin/curl",
+              "/usr/bin/jq",
+              "/usr/bin/rg",
+              "/usr/bin/fd",
+              "/usr/bin/prlimit"
+            ];
+            if (forbidden.some((entry) => fs.existsSync(entry))) process.exit(1);
+          '
+
+  agent_sidecar_e2e:
+    name: Agent Sidecar E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Install dependencies
+        working-directory: client
+        run: npm ci && npm rebuild better-sqlite3 --runtime=node
+      - name: Run protocol and HTTP E2E
+        working-directory: client
+        run: npm run test:web-agent-sidecar-e2e
+      - name: Validate independent Runner image identity and policy
+        run: |
+          docker build -f docker/agent-runner/Dockerfile -t bidding-copilot-agent:e2e .
+          docker run --rm --entrypoint node bidding-copilot-agent:e2e -e '
+            const policy = require("/opt/bidmaster/client/agent-runner/securityPolicy.cjs");
+            if (process.getuid() !== 10001 || !policy.validateRunnerSecurityPolicy(policy.RUNNER_SECURITY_POLICY)) process.exit(1);
+          '
+          docker run --rm --entrypoint sh bidding-copilot-agent:e2e -c '
+            set -eu;
+            /opt/agent-assets/bin/opencode --version >/dev/null;
+            /opt/agent-assets/bin/rg --version >/dev/null;
+            /opt/agent-assets/bin/fd --version >/dev/null;
+            test "$(/opt/agent-assets/bin/jq -n "1+1")" = 2;
+            prlimit --version >/dev/null;
+          '
+      - name: Validate Compose topology
+        run: |
+          touch .env
+          YIBIAO_SIDECAR_SECRET=ci-sidecar-secret docker compose --profile j-agent config --quiet
 
   analytics_dashboard:
     name: Analytics Dashboard Check
@@ -386,9 +493,12 @@ jobs:
       - repo_hygiene
       - client
       - technical_plan_core
+      - technical_plan_content
       - analytics_worker
       - analytics_dashboard
       - agent_foundation
+      - agent_sidecar_security
+      - agent_sidecar_e2e
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -398,21 +508,30 @@ jobs:
           REPO_HYGIENE_RESULT: ${{ needs.repo_hygiene.result }}
           CLIENT_RESULT: ${{ needs.client.result }}
           TECHNICAL_PLAN_CORE_RESULT: ${{ needs.technical_plan_core.result }}
+          TECHNICAL_PLAN_CONTENT_RESULT: ${{ needs.technical_plan_content.result }}
           ANALYTICS_WORKER_RESULT: ${{ needs.analytics_worker.result }}
           ANALYTICS_DASHBOARD_RESULT: ${{ needs.analytics_dashboard.result }}
           AGENT_FOUNDATION_RESULT: ${{ needs.agent_foundation.result }}
+          AGENT_SIDECAR_SECURITY_RESULT: ${{ needs.agent_sidecar_security.result }}
+          AGENT_SIDECAR_E2E_RESULT: ${{ needs.agent_sidecar_e2e.result }}
         run: |
           printf '%s\n' \
             "Repository Hygiene: $REPO_HYGIENE_RESULT" \
             "Client Build: $CLIENT_RESULT" \
             "Technical Plan Core Gate: $TECHNICAL_PLAN_CORE_RESULT" \
+            "Technical Plan Content Gate: $TECHNICAL_PLAN_CONTENT_RESULT" \
             "Analytics Worker Check: $ANALYTICS_WORKER_RESULT" \
             "Analytics Dashboard Check: $ANALYTICS_DASHBOARD_RESULT" \
-            "Agent Foundation: $AGENT_FOUNDATION_RESULT"
+            "Agent Foundation: $AGENT_FOUNDATION_RESULT" \
+            "Agent Sidecar Security: $AGENT_SIDECAR_SECURITY_RESULT" \
+            "Agent Sidecar E2E: $AGENT_SIDECAR_E2E_RESULT"
 
           test "$REPO_HYGIENE_RESULT" = "success"
           test "$CLIENT_RESULT" = "success"
           test "$TECHNICAL_PLAN_CORE_RESULT" = "success"
+          test "$TECHNICAL_PLAN_CONTENT_RESULT" = "success"
           test "$ANALYTICS_WORKER_RESULT" = "success"
           test "$ANALYTICS_DASHBOARD_RESULT" = "success"
           test "$AGENT_FOUNDATION_RESULT" = "success"
+          test "$AGENT_SIDECAR_SECURITY_RESULT" = "success"
+          test "$AGENT_SIDECAR_E2E_RESULT" = "success"

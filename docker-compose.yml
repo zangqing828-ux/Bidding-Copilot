@@ -3,12 +3,20 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: production
     ports:
       - "${PORT:-3000}:3000"
     volumes:
       - web-data:/data
     env_file:
       - .env
+    environment:
+      AGENT_QUALITY_ENABLED: "${AGENT_QUALITY_ENABLED:-0}"
+      AGENT_SIDECAR_ENABLED: "${AGENT_SIDECAR_ENABLED:-0}"
+      AGENT_SIDECAR_URL: "${AGENT_SIDECAR_URL:-http://agent-runner:7101}"
+    networks:
+      - web-egress
+      - agent-internal
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -17,6 +25,57 @@ services:
       start_period: 10s
       retries: 3
 
+  agent-runner:
+    profiles: ["j-agent"]
+    build:
+      context: .
+      dockerfile: docker/agent-runner/Dockerfile
+    environment:
+      NODE_ENV: production
+      RUNNER_HOST: 0.0.0.0
+      RUNNER_PORT: 7101
+      YIBIAO_SIDECAR_SECRET: "${YIBIAO_SIDECAR_SECRET:-}"
+      AGENT_OUTPUT_DIR: /var/lib/bidmaster/output
+    networks:
+      - agent-internal
+    volumes:
+      - agent-output:/var/lib/bidmaster/output
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+      - /run:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./docker/agent-runner/seccomp/agent-runner.json
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: 1.0
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 1024
+      nproc:
+        soft: 128
+        hard: 128
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7101/internal/runner/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+
 volumes:
   web-data:
     driver: local
+  agent-output:
+    driver: local
+
+networks:
+  web-egress:
+    driver: bridge
+  agent-internal:
+    driver: bridge
+    internal: true

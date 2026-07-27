@@ -1,75 +1,129 @@
-// Readiness 检查：验证数据目录、系统库和关键运行时可用性。
+// Readiness 检查：J-Core 与 Agent Quality 分离，Sidecar 故障不拖垮 Web 主链路。
 const express = require('express');
 const fs = require('node:fs');
-const path = require('node:path');
 const config = require('../config.cjs');
 
 const router = express.Router();
 
-router.get('/readiness', (_req, res) => {
-  const checks = [];
+function isEnabled(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
 
-  // 1. 数据目录可写
-  const dataDir = config.dataDir;
+function isAgentQualityEnabled() {
+  const value = process.env.AGENT_QUALITY_ENABLED === undefined
+    ? process.env.AGENT_SIDECAR_ENABLED
+    : process.env.AGENT_QUALITY_ENABLED;
+  return isEnabled(value);
+}
+
+function normalizeSidecarUrl(value) {
+  let parsed;
   try {
-    fs.mkdirSync(dataDir, { recursive: true });
-    fs.accessSync(dataDir, fs.constants.W_OK);
-    checks.push({ name: 'data_dir', status: 'ok' });
-  } catch (err) {
-    checks.push({ name: 'data_dir', status: 'fail', message: err?.message || '不可写' });
+    parsed = new URL(String(value || '').trim());
+  } catch {
+    throw new Error('Agent Sidecar URL 不可用');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error('Agent Sidecar URL 不可用');
+  }
+  return `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`;
+}
+
+async function checkAgentSidecar() {
+  if (!isAgentQualityEnabled()) {
+    return { name: 'agent_sidecar', status: 'disabled', feature: 'j-agent' };
   }
 
-  // 2. 系统身份库可用
+  try {
+    const baseUrl = normalizeSidecarUrl(process.env.AGENT_SIDECAR_URL || 'http://agent-runner:7101');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
+    timer.unref?.();
+    let response;
+    try {
+      response = await fetch(`${baseUrl}/internal/runner/v1/health`, {
+        signal: controller.signal,
+        headers: { accept: 'application/json' },
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!response.ok) {
+      return { name: 'agent_sidecar', status: 'blocked', code: 'AGENT_SANDBOX_UNAVAILABLE', message: 'Sidecar health 返回异常' };
+    }
+    const body = await response.json();
+    if (body?.protocol !== 'SidecarProtocolV1' || body?.ready !== true) {
+      return { name: 'agent_sidecar', status: 'blocked', code: 'AGENT_SANDBOX_UNAVAILABLE', message: 'Sidecar 协议或状态不匹配' };
+    }
+    return { name: 'agent_sidecar', status: 'ready', protocol: body.protocol, version: body.version };
+  } catch {
+    return { name: 'agent_sidecar', status: 'blocked', code: 'AGENT_SANDBOX_UNAVAILABLE', message: 'Sidecar 暂不可达' };
+  }
+}
+
+async function buildCoreChecks() {
+  const checks = [];
+
+  try {
+    fs.mkdirSync(config.dataDir, { recursive: true });
+    fs.accessSync(config.dataDir, fs.constants.W_OK);
+    checks.push({ name: 'data_dir', status: 'ok' });
+  } catch {
+    checks.push({ name: 'data_dir', status: 'fail', message: '数据目录不可写' });
+  }
+
   try {
     const { getSystemDb } = require('../database/systemDatabase.cjs');
     const db = getSystemDb();
     db.prepare('SELECT COUNT(*) as count FROM accounts').get();
     checks.push({ name: 'system_db', status: 'ok' });
-  } catch (err) {
-    checks.push({ name: 'system_db', status: 'fail', message: err?.message || '不可用' });
+  } catch {
+    checks.push({ name: 'system_db', status: 'fail', message: '系统数据库不可用' });
   }
 
-  // 3. 静态资源目录存在
   try {
     if (fs.existsSync(config.distDir)) {
       checks.push({ name: 'static_assets', status: 'ok' });
     } else {
       checks.push({ name: 'static_assets', status: 'warn', message: 'dist 目录不存在' });
     }
-  } catch (err) {
-    checks.push({ name: 'static_assets', status: 'fail', message: err?.message || '不可用' });
+  } catch {
+    checks.push({ name: 'static_assets', status: 'fail', message: '静态资源不可用' });
   }
+  return checks;
+}
 
-  // 4. Web Agent Runtime 依赖。生产镜像由 Dockerfile 在构建阶段固定安装。
-  try {
-    const { getRuntimeBinary } = require('../agent/webAgentService.cjs');
-    const { createWebOpenCodeRunner } = require('../agent/webOpenCodeRunner.cjs');
-    const runtimeBinary = getRuntimeBinary(process.env);
-    const requiredTools = ['rg', 'fd', 'jq'];
-    const hasBinary = fs.existsSync(runtimeBinary);
-    const missingTools = requiredTools.filter((tool) => !['/usr/local/bin', '/usr/bin', '/bin']
-      .some((root) => fs.existsSync(path.join(root, tool))));
-    const runnerStatus = createWebOpenCodeRunner({ env: process.env }).selfCheck();
-    if (hasBinary && missingTools.length === 0 && runnerStatus.available) {
-      checks.push({ name: 'agent_runtime', status: 'ok' });
-    } else {
-      const missing = [
-        ...missingTools,
-        ...(runnerStatus.available ? [] : ['prlimit']),
-      ];
-      checks.push({ name: 'agent_runtime', status: 'fail', message: hasBinary ? `缺少依赖：${missing.join(', ')}` : 'OpenCode binary 不存在' });
-    }
-  } catch (err) {
-    checks.push({ name: 'agent_runtime', status: 'fail', message: err?.message || '不可用' });
-  }
+function coreStatus(checks) {
+  return checks.some((check) => check.status === 'fail') ? 'not_ready' : 'ready';
+}
 
-  const allOk = checks.every((c) => c.status === 'ok' || c.status === 'warn');
-  const hasFail = checks.some((c) => c.status === 'fail');
-
-  res.status(hasFail ? 503 : 200).json({
-    status: hasFail ? 'not_ready' : 'ready',
-    checks,
+router.get('/readiness', async (_req, res) => {
+  const checks = await buildCoreChecks();
+  const agentQuality = await checkAgentSidecar();
+  const status = coreStatus(checks);
+  res.status(status === 'ready' ? 200 : 503).json({
+    status,
+    capabilities: {
+      technical_plan_core: status === 'ready' ? 'ready' : 'blocked',
+      agent_quality: agentQuality.status,
+    },
+    checks: [...checks, agentQuality],
   });
 });
 
+router.get('/readiness/agent-quality', async (_req, res) => {
+  const agentQuality = await checkAgentSidecar();
+  const ready = agentQuality.status === 'ready';
+  const disabled = agentQuality.status === 'disabled';
+  res.status(ready || disabled ? 200 : 503).json({
+    status: agentQuality.status,
+    capabilities: { agent_quality: agentQuality.status },
+    checks: [agentQuality],
+  });
+});
+
+// 保持 Express 默认导出，同时把测试和诊断 helper 作为 router 属性暴露。
+router.isAgentQualityEnabled = isAgentQualityEnabled;
+router.checkAgentSidecar = checkAgentSidecar;
+router.normalizeSidecarUrl = normalizeSidecarUrl;
 module.exports = router;
