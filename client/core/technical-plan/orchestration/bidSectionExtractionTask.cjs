@@ -317,22 +317,27 @@ async function runBidSectionExtractionTask({
     validateSectionsResponse(merged);
     throwIfAborted(signal);
 
-    const finalState = workspaceStore.updateTechnicalPlan({
+    const finalPatch = {
       bidSectionMode: normalizeBidSectionMode(merged.sections.length),
       bidSections: merged.sections,
       bidSectionExtractionStatus: 'success',
       bidSectionExtractionError: undefined,
-    });
+    };
+    const finalState = typeof workspaceStore.commitBidSectionExtractionResult === 'function'
+      ? await workspaceStore.commitBidSectionExtractionResult(finalPatch)
+      : workspaceStore.updateTechnicalPlan(finalPatch);
     const finalLogs = pushLog(logs, `已识别 ${merged.sections.length} 个标段，请选择本次投标范围。`);
     updateTask({ status: 'success', progress: 100, logs: finalLogs }, finalState);
   } catch (error) {
     const failureReason = error instanceof Error ? error : new Error('多标段识别失败');
     const message = failureReason.message;
-    const failedState = workspaceStore.updateTechnicalPlan({
-      bidSectionMode: normalizeBidSectionMode(0),
-      bidSectionExtractionStatus: 'error',
-      bidSectionExtractionError: message,
-    });
+    const failedState = typeof workspaceStore.loadTechnicalPlan === 'function'
+      ? workspaceStore.loadTechnicalPlan()
+      : workspaceStore.updateTechnicalPlan({
+        bidSectionMode: normalizeBidSectionMode(0),
+        bidSectionExtractionStatus: 'error',
+        bidSectionExtractionError: message,
+      });
     updateTask({ status: 'error', progress: 100, error: message, error_code: failureReason.code, logs: pushLog(logs, message) }, failedState);
     throw failureReason;
   }

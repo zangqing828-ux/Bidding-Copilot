@@ -45,7 +45,7 @@ test('真实浏览器完成招标文件解析并展示持久化结果', async ({
   await expect(page.getByText('招标文件解析', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: '开始解析' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.getByRole('dialog').getByRole('button', { name: '多标段' })).toHaveCount(0);
+  await expect(page.getByRole('dialog').getByRole('button', { name: '多标段' })).toBeVisible();
   await page.getByRole('dialog').getByRole('button', { name: '开始解析' }).click();
 
   await expect(page.getByText('招标文件解析任务已在后台启动', { exact: true })).toBeVisible();

@@ -252,6 +252,41 @@ jobs:
       - name: Block critical production vulnerabilities
         run: npm run audit:production
 
+  technical_plan_core:
+    name: Technical Plan Core Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: client
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Rebuild better-sqlite3 for Node.js
+        run: npm rebuild better-sqlite3 --runtime=node
+
+      - name: Run WP-J J-1 Node gate
+        run: npm run wp-j:gate:j1
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run WP-J J-1 browser gate
+        run: npm run test:web-technical-plan-browser
+
   analytics_worker:
     name: Analytics Worker Check
     runs-on: ubuntu-latest
@@ -350,6 +385,7 @@ jobs:
     needs:
       - repo_hygiene
       - client
+      - technical_plan_core
       - analytics_worker
       - analytics_dashboard
       - agent_foundation
@@ -361,6 +397,7 @@ jobs:
         env:
           REPO_HYGIENE_RESULT: ${{ needs.repo_hygiene.result }}
           CLIENT_RESULT: ${{ needs.client.result }}
+          TECHNICAL_PLAN_CORE_RESULT: ${{ needs.technical_plan_core.result }}
           ANALYTICS_WORKER_RESULT: ${{ needs.analytics_worker.result }}
           ANALYTICS_DASHBOARD_RESULT: ${{ needs.analytics_dashboard.result }}
           AGENT_FOUNDATION_RESULT: ${{ needs.agent_foundation.result }}
@@ -368,12 +405,14 @@ jobs:
           printf '%s\n' \
             "Repository Hygiene: $REPO_HYGIENE_RESULT" \
             "Client Build: $CLIENT_RESULT" \
+            "Technical Plan Core Gate: $TECHNICAL_PLAN_CORE_RESULT" \
             "Analytics Worker Check: $ANALYTICS_WORKER_RESULT" \
             "Analytics Dashboard Check: $ANALYTICS_DASHBOARD_RESULT" \
             "Agent Foundation: $AGENT_FOUNDATION_RESULT"
 
           test "$REPO_HYGIENE_RESULT" = "success"
           test "$CLIENT_RESULT" = "success"
+          test "$TECHNICAL_PLAN_CORE_RESULT" = "success"
           test "$ANALYTICS_WORKER_RESULT" = "success"
           test "$ANALYTICS_DASHBOARD_RESULT" = "success"
           test "$AGENT_FOUNDATION_RESULT" = "success"

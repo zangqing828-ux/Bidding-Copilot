@@ -81,7 +81,7 @@ const STAGE_REVISION_KEYS = Object.freeze([
 ]);
 
 const TASK_UPSTREAM_STAGE_KEYS = Object.freeze({
-  'bid-section-extraction': Object.freeze(['source_revision']),
+  'bid-section-extraction': Object.freeze([]),
   'outline-generation': Object.freeze(['source_revision', 'analysis_revision']),
   'global-facts-generation': Object.freeze(['source_revision', 'analysis_revision', 'outline_revision']),
   'content-generation': Object.freeze(['source_revision', 'analysis_revision', 'outline_revision', 'facts_revision']),
@@ -863,7 +863,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
       throw manifestInputChangedError('任务阶段代号已变化，请重新提交任务');
     }
     const requiredKeys = TASK_UPSTREAM_STAGE_KEYS[taskType] || [];
-    if (!requiredKeys.length || !stageRevisionMatches(currentStageRevisions(), record.baseStageVector, requiredKeys)) {
+    if (requiredKeys.length && !stageRevisionMatches(currentStageRevisions(), record.baseStageVector, requiredKeys)) {
       throw manifestInputChangedError('阶段输入已变化，请重新提交任务');
     }
   }
@@ -1039,6 +1039,40 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
         ...getTechnicalPlanRunRecord(executionId),
         payload: patch,
       };
+    })();
+  }
+
+  function failTechnicalPlanTaskRun({
+    executionId,
+    manifestHash,
+    errorCode,
+    message,
+    retryable = false,
+  } = {}) {
+    if (!executionId) {
+      throw stageManifestConflictError('执行 ID 缺失');
+    }
+
+    return db.transaction(() => {
+      const record = getTechnicalPlanRunRecord(executionId);
+      if (!record || record.manifestHash !== String(manifestHash || '')) {
+        throw stageManifestConflictError('任务执行记录或 manifest 不匹配');
+      }
+      if (record.status === 'succeeded') {
+        throw stageManifestConflictError('已成功写回的任务不能改写为失败');
+      }
+      const checkpoint = {
+        error_code: String(errorCode || 'TASK_EXECUTION_FAILED'),
+        message: String(message || '任务执行失败'),
+        retryable: retryable === true,
+      };
+      updateRunRecordStatement.run({
+        execution_id: executionId,
+        status: 'error',
+        checkpoint_json: JSON.stringify(checkpoint),
+        updated_at: now(),
+      });
+      return getTechnicalPlanRunRecord(executionId);
     })();
   }
 
@@ -1303,7 +1337,6 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
     const interrupted = db.prepare(
       "SELECT * FROM technical_plan_tasks WHERE status IN ('running', 'pausing')",
     ).all();
-    if (!interrupted.length) return { recovered: 0 };
     const timestamp = now();
     const transaction = db.transaction(() => {
       const updateTask = db.prepare(`
@@ -1335,9 +1368,22 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
             updated_at = ?
         WHERE status = 'running'
       `).run(timestamp);
+      const interruptedRunCheckpoint = JSON.stringify({
+        error_code: 'TASK_INTERRUPTED_BY_RESTART',
+        message: '服务重启导致任务中断，请重新执行',
+        retryable: true,
+      });
+      const recoveredRuns = db.prepare(`
+        UPDATE technical_plan_run_records
+        SET status = 'error',
+            checkpoint_json = ?,
+            updated_at = ?
+        WHERE status IN ('accepted', 'queued', 'running', 'pausing', 'validating')
+      `).run(interruptedRunCheckpoint, timestamp).changes;
+      return recoveredRuns;
     });
-    transaction();
-    return { recovered: interrupted.length };
+    const recoveredRuns = transaction();
+    return { recovered: interrupted.length, recoveredRuns };
   }
 
   function loadBidItems() {
@@ -2599,6 +2645,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot, workspaceRun
     currentStageRevisions,
     acceptTechnicalPlanTaskRun,
     writebackTechnicalPlanTaskRun,
+    failTechnicalPlanTaskRun,
     getTechnicalPlanRunRecord,
     getBidAnalysisInputVersion,
     recoverInterruptedTasks,

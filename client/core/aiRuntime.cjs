@@ -433,6 +433,20 @@ function createTextModelSnapshot(modelConfig) {
   });
 }
 
+function modelConfigFromSnapshot(modelSnapshot, errorCode = 'AI_CONFIG_INVALID') {
+  const snapshot = modelSnapshot && typeof modelSnapshot === 'object' ? modelSnapshot : null;
+  const modelConfig = snapshot ? {
+    provider: normalizeText(snapshot.provider),
+    baseUrl: trimBaseUrl(snapshot.baseUrl),
+    modelName: normalizeText(snapshot.modelName),
+    apiKey: normalizeText(snapshot.apiKey),
+  } : null;
+  if (!modelConfig?.provider || !modelConfig.baseUrl || !modelConfig.modelName || !modelConfig.apiKey) {
+    throw createRuntimeError('AI 模型快照无效', errorCode);
+  }
+  return modelConfig;
+}
+
 function extractMessageContent(message) {
   if (typeof message?.content === 'string') {
     return message.content;
@@ -951,8 +965,11 @@ function createAiRuntime(options = {}) {
   }
 
   async function executeChat(request, executionOptions = {}) {
-    const config = loadConfigSafely();
-    const modelConfig = requireModelConfig(config);
+    const modelSnapshot = executionOptions.modelSnapshot;
+    const config = modelSnapshot ? null : loadConfigSafely();
+    const modelConfig = modelSnapshot
+      ? modelConfigFromSnapshot(modelSnapshot)
+      : requireModelConfig(config);
     const responseData = await executeChatCompletion(
       modelConfig,
       config,
@@ -967,19 +984,7 @@ function createAiRuntime(options = {}) {
   }
 
   async function executeRawChat(modelSnapshot, request, executionOptions = {}) {
-    const snapshot = modelSnapshot && typeof modelSnapshot === 'object' ? modelSnapshot : null;
-    if (!snapshot) {
-      throw createRuntimeError('Agent 模型快照无效', 'AGENT_PROXY_BAD_REQUEST');
-    }
-    const modelConfig = {
-      provider: normalizeText(snapshot.provider),
-      baseUrl: trimBaseUrl(snapshot.baseUrl),
-      modelName: normalizeText(snapshot.modelName),
-      apiKey: normalizeText(snapshot.apiKey),
-    };
-    if (!modelConfig.provider || !modelConfig.baseUrl || !modelConfig.modelName || !modelConfig.apiKey) {
-      throw createRuntimeError('Agent 模型快照无效', 'AGENT_PROXY_BAD_REQUEST');
-    }
+    const modelConfig = modelConfigFromSnapshot(modelSnapshot, 'AGENT_PROXY_BAD_REQUEST');
     return executeChatCompletion(
       modelConfig,
       null,
@@ -1144,24 +1149,41 @@ function createAiRuntime(options = {}) {
       return service.onChanged(listener);
     },
 
-    withQueueScope(scopeId) {
+    withQueueScope(scopeId, scopedExecutionOptions = {}) {
       const normalizedScopeId = normalizeScopeId(scopeId);
+      const mergeExecutionOptions = (executionOptions = {}) => ({
+        ...scopedExecutionOptions,
+        ...executionOptions,
+      });
       return {
         ...service,
         chatCompletionsRaw(request, executionOptions = {}) {
           return service.chatCompletionsRaw(
             request,
-            { ...executionOptions, queueScopeId: normalizedScopeId, modelSnapshot: executionOptions.modelSnapshot },
+            {
+              ...mergeExecutionOptions(executionOptions),
+              queueScopeId: normalizedScopeId,
+              modelSnapshot: executionOptions.modelSnapshot || scopedExecutionOptions.modelSnapshot,
+            },
           );
         },
         chat(request, executionOptions = {}) {
-          return service.chat({ ...(request || {}), queueScopeId: getScopeId(request, normalizedScopeId) || normalizedScopeId }, executionOptions);
+          return service.chat(
+            { ...(request || {}), queueScopeId: getScopeId(request, normalizedScopeId) || normalizedScopeId },
+            mergeExecutionOptions(executionOptions),
+          );
         },
-        requestJson(request) {
-          return service.requestJson({ ...(request || {}), queueScopeId: getScopeId(request, normalizedScopeId) || normalizedScopeId });
+        requestJson(request, executionOptions = {}) {
+          return service.requestJson(
+            { ...(request || {}), queueScopeId: getScopeId(request, normalizedScopeId) || normalizedScopeId },
+            mergeExecutionOptions(executionOptions),
+          );
         },
-        collectJsonResponse(request) {
-          return service.collectJsonResponse({ ...(request || {}), queueScopeId: getScopeId(request, normalizedScopeId) || normalizedScopeId });
+        collectJsonResponse(request, executionOptions = {}) {
+          return service.collectJsonResponse(
+            { ...(request || {}), queueScopeId: getScopeId(request, normalizedScopeId) || normalizedScopeId },
+            mergeExecutionOptions(executionOptions),
+          );
         },
         listModels(configOverride) {
           return service.listModels({ ...(configOverride || {}), queueScopeId: normalizedScopeId });

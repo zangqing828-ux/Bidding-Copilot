@@ -3728,7 +3728,7 @@ async function runOutlineGenerationTask({
       };
       const finalLogs = [...logs, '目录生成完成。'];
       const finalTask = updateTask({ status: 'success', progress: OUTLINE_PROGRESS.complete, logs: finalLogs, stats: taskStats() });
-      technicalPlan = workspaceStore.updateTechnicalPlan({
+      const finalPatch = {
         outlineData: { ...oldOutline, project_overview: overview },
         outlineWordControlSnapshot: wordControlOptions,
         contentGenerationTask: undefined,
@@ -3737,7 +3737,10 @@ async function runOutlineGenerationTask({
         contentGenerationRuntime: undefined,
         contentIllustrationPlan: undefined,
         outlineGenerationTask: finalTask,
-      });
+      };
+      technicalPlan = typeof workspaceStore.commitOutlineGenerationResult === 'function'
+        ? await workspaceStore.commitOutlineGenerationResult(finalPatch)
+        : workspaceStore.updateTechnicalPlan(finalPatch);
       updateTask(finalTask, technicalPlan);
       return;
     } else {
@@ -3821,7 +3824,7 @@ async function runOutlineGenerationTask({
   };
   const finalLogs = [...logs, '目录生成完成。', ...(wordControlWarning ? [wordControlWarning] : [])];
   const finalTask = updateTask({ status: 'success', progress: OUTLINE_PROGRESS.complete, logs: finalLogs, stats: taskStats() });
-  technicalPlan = workspaceStore.updateTechnicalPlan({
+  const finalPatch = {
     outlineData: { ...outline, project_overview: overview },
     outlineWordControlSnapshot: wordControlOptions,
     contentGenerationTask: undefined,
@@ -3830,7 +3833,10 @@ async function runOutlineGenerationTask({
     contentGenerationRuntime: undefined,
     contentIllustrationPlan: undefined,
     outlineGenerationTask: finalTask,
-  });
+  };
+  technicalPlan = typeof workspaceStore.commitOutlineGenerationResult === 'function'
+    ? await workspaceStore.commitOutlineGenerationResult(finalPatch)
+    : workspaceStore.updateTechnicalPlan(finalPatch);
   updateTask(finalTask, technicalPlan);
 }
 

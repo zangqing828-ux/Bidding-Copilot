@@ -1,9 +1,179 @@
 const crypto = require('node:crypto');
 const { createTaskOrchestrator } = require('../../core/taskOrchestrator.cjs');
 const { runBidAnalysisTask } = require('../../core/bidAnalysisTask.cjs');
+const { runBidSectionExtractionTask } = require('../../core/technical-plan/orchestration/bidSectionExtractionTask.cjs');
+const { runOutlineGenerationTask } = require('../../core/technical-plan/orchestration/outlineGenerationTask.cjs');
 const { bidAnalysisDefinitions, normalizeBidAnalysisSelection, validateStartBidAnalysisInput } = require('../../shared/bidAnalysisContract.cjs');
+const {
+  validateStartBidSectionExtractionInput,
+  validateStartOutlineGenerationInput,
+} = require('../../shared/contracts/technical-plan/taskContracts.cjs');
+const { computeRunManifestV1Hash } = require('../../shared/contracts/technical-plan/runManifest.cjs');
 
-// 其他 Web 任务仍保留 pending，投标解析在 WP-I 中接入真实运行时。
+const TECHNICAL_PLAN_TASK_DEFINITIONS = Object.freeze({
+  'bid-section-extraction': Object.freeze({
+    label: '多标段识别',
+    group: 'technical-plan',
+    groupLabel: '技术方案',
+    step: 2,
+    lockPolicy: 'group-exclusive',
+    stateKey: 'technicalPlan',
+    field: 'bidSectionExtractionTask',
+  }),
+  'bid-analysis': Object.freeze({
+    label: '招标文件解析',
+    group: 'technical-plan',
+    groupLabel: '技术方案',
+    step: 2,
+    lockPolicy: 'group-exclusive',
+    stateKey: 'technicalPlan',
+    field: 'bidAnalysisTask',
+  }),
+  'outline-generation': Object.freeze({
+    label: '目录生成',
+    group: 'technical-plan',
+    groupLabel: '技术方案',
+    step: 3,
+    lockPolicy: 'group-exclusive',
+    stateKey: 'technicalPlan',
+    field: 'outlineGenerationTask',
+  }),
+});
+
+function stableHash(value) {
+  const normalized = typeof value === 'string' ? value : JSON.stringify(value);
+  return crypto.createHash('sha256').update(normalized || '', 'utf8').digest('hex');
+}
+
+function hashNullableText(value) {
+  const text = String(value || '').trim();
+  return text ? stableHash(text) : null;
+}
+
+function copyPatchFields(target, source, fields) {
+  for (const field of fields) {
+    if (Object.prototype.hasOwnProperty.call(source || {}, field)) {
+      target[field] = source[field];
+    }
+  }
+}
+
+function createTaskItemNotFoundError(message) {
+  const error = new Error(message);
+  error.code = 'TASK_ITEM_NOT_FOUND';
+  error.retryable = false;
+  return error;
+}
+
+function createTaskInputChangedError(message = '任务输入已变化，请重新执行') {
+  const error = new Error(message);
+  error.code = 'TASK_INPUT_CHANGED';
+  error.retryable = true;
+  return error;
+}
+
+function createReferenceDocumentManifest(knowledgeBaseService, documentIds) {
+  const store = knowledgeBaseService?.store;
+  return (documentIds || []).map((documentId) => {
+    let document;
+    try {
+      document = store?.getDocument?.(documentId);
+    } catch {
+      document = null;
+    }
+    if (!document || document.status !== 'success') {
+      throw createTaskItemNotFoundError(`参考知识文档 ${documentId} 不存在或尚未解析完成`);
+    }
+    const markdown = store.readMarkdown(documentId);
+    const parseVersion = String(document.updated_at || document.created_at || 'knowledge-v1');
+    return {
+      document_id: documentId,
+      content_hash: stableHash(String(markdown || '')),
+      parse_version: parseVersion,
+      source_record_hash: stableHash({
+        document_id: documentId,
+        file_name: document.file_name || '',
+        updated_at: document.updated_at || '',
+        status: document.status,
+      }),
+    };
+  });
+}
+
+function createModelSnapshotReference(modelSnapshot) {
+  const publicSnapshot = {
+    provider: String(modelSnapshot?.provider || ''),
+    base_url: String(modelSnapshot?.baseUrl || ''),
+    model_name: String(modelSnapshot?.modelName || ''),
+  };
+  return {
+    publicSnapshot,
+    reference: `text-model:${stableHash(publicSnapshot)}`,
+  };
+}
+
+function createTechnicalPlanRunManifest({
+  type,
+  input,
+  taskId,
+  executionId,
+  workspaceRuntimeGeneration,
+  technicalPlanStore,
+  knowledgeBaseService,
+  modelSnapshot,
+  stageRevisionVector,
+}) {
+  const state = technicalPlanStore.loadTechnicalPlan() || {};
+  const referenceDocumentIds = type === 'outline-generation'
+    ? input.reference_knowledge_document_ids
+    : [];
+  const referenceDocuments = createReferenceDocumentManifest(knowledgeBaseService, referenceDocumentIds);
+  const tenderMarkdown = technicalPlanStore.readTenderMarkdown?.() || '';
+  const originalPlanMarkdown = technicalPlanStore.readOriginalPlanMarkdown?.() || '';
+  const selectedSectionId = String(state.selectedSectionId || '').trim();
+  const { publicSnapshot, reference: modelSnapshotRef } = createModelSnapshotReference(modelSnapshot);
+  const bidAnalysisHash = hashNullableText(JSON.stringify({
+    bidAnalysisTasks: state.bidAnalysisTasks || {},
+    projectOverview: state.projectOverview || '',
+    techRequirements: state.techRequirements || '',
+  }));
+  const promptVersion = type === 'bid-section-extraction'
+    ? 'technical-plan.bid-section-extraction.v1'
+    : 'technical-plan.outline-generation.v1';
+
+  return {
+    manifest_version: 1,
+    task_id: taskId,
+    execution_id: executionId,
+    task_type: type,
+    workspace_runtime_generation: workspaceRuntimeGeneration,
+    stage_revision_vector: stageRevisionVector || technicalPlanStore.currentStageRevisions(),
+    normalized_input_hash: stableHash(input),
+    source_hashes: {
+      tender_document_hash: hashNullableText(tenderMarkdown),
+      original_plan_hash: hashNullableText(originalPlanMarkdown),
+      reference_documents: referenceDocuments,
+    },
+    selected_bid_section: selectedSectionId ? {
+      section_id: selectedSectionId,
+      content_hash: stableHash(tenderMarkdown),
+    } : null,
+    upstream_result_hashes: {
+      bid_analysis_hash: type === 'outline-generation' ? bidAnalysisHash : null,
+      outline_hash: null,
+      global_facts_hash: null,
+      content_hash: null,
+    },
+    generation_config_hash: stableHash({
+      input,
+      model: publicSnapshot,
+      api_key_hash: stableHash(String(modelSnapshot?.apiKey || '')),
+    }),
+    prompt_template_version: promptVersion,
+    model_snapshot_ref: modelSnapshotRef,
+    output_schema_version: type === 'bid-section-extraction' ? 'bid-sections.v1' : 'outline-data.v1',
+  };
+}
 
 function createWebTaskServiceStub() {
   const callbacks = new Set();
@@ -65,21 +235,24 @@ function createWebTaskServiceStub() {
   };
 }
 
-function createTask(_type, payload) {
+function createTask(type, payload, taskMetadata = {}) {
+  const definition = TECHNICAL_PLAN_TASK_DEFINITIONS[type] || {};
   const timestamp = new Date().toISOString();
   return {
-    task_id: crypto.randomUUID(),
-    type: 'bid-analysis',
-    group: 'technical-plan',
-    step: 2,
-    lock_policy: 'group-exclusive',
+    task_id: taskMetadata.taskId || crypto.randomUUID(),
+    execution_id: taskMetadata.executionId,
+    manifest_hash: taskMetadata.runRecord?.manifestHash,
+    type,
+    group: definition.group,
+    step: definition.step,
+    lock_policy: definition.lockPolicy,
     status: 'running',
     progress: 0,
     logs: [],
     started_at: timestamp,
     updated_at: timestamp,
     input_revision: payload.input_revision,
-    payload_signature: payload.payload_signature,
+    payload_signature: taskMetadata.payloadSignature,
   };
 }
 
@@ -118,22 +291,28 @@ function createPayloadSignature(input) {
   });
 }
 
-function createWebBidAnalysisTaskService({ aiService, technicalPlanStore, mutationExecutor }) {
+function createWebBidAnalysisTaskService({
+  aiService,
+  agentService,
+  knowledgeBaseService,
+  technicalPlanStore,
+  mutationExecutor,
+  workspaceRuntimeGeneration,
+}) {
   if (!aiService || !technicalPlanStore || !mutationExecutor) {
     throw new Error('Web 招标解析任务服务缺少运行时依赖');
   }
+  const boundAgentService = typeof agentService?.bindSelectedRuntime === 'function'
+    ? agentService.bindSelectedRuntime()
+    : {
+      runTask: async () => {
+        const error = new Error('Web Agent 运行时尚未装配');
+        error.code = 'AGENT_SANDBOX_UNAVAILABLE';
+        throw error;
+      },
+    };
 
-  const definitions = {
-    'bid-analysis': {
-      label: '招标文件解析',
-      group: 'technical-plan',
-      groupLabel: '技术方案',
-      step: 2,
-      lockPolicy: 'group-exclusive',
-      stateKey: 'technicalPlan',
-      field: 'bidAnalysisTask',
-    },
-  };
+  const definitions = TECHNICAL_PLAN_TASK_DEFINITIONS;
   const stateAdapter = {
     load: () => technicalPlanStore.loadTechnicalPlan(),
     persist(_definition, partial) {
@@ -143,17 +322,86 @@ function createWebBidAnalysisTaskService({ aiService, technicalPlanStore, mutati
       }
       return mutationExecutor.execute(() => technicalPlanStore.updateTechnicalPlan(partial));
     },
-    snapshot(_definition, state, task, eventPatch = {}) {
-      const patch = {
-        bidAnalysisTask: state?.bidAnalysisTask || task,
-        bidAnalysisMode: state?.bidAnalysisMode,
-        bidAnalysisSelectedTaskIds: state?.bidAnalysisSelectedTaskIds,
-        bidAnalysisProgress: state?.bidAnalysisProgress,
-        projectOverview: state?.projectOverview,
-        techRequirements: state?.techRequirements,
-        bidAnalysisTasks: state?.bidAnalysisTasks,
-        ...eventPatch.technicalPlanPatch,
-      };
+    persistFailure(definition, failedTask, error) {
+      return mutationExecutor.execute(() => {
+        if (failedTask.execution_id && failedTask.manifest_hash) {
+          technicalPlanStore.failTechnicalPlanTaskRun({
+            executionId: failedTask.execution_id,
+            manifestHash: failedTask.manifest_hash,
+            errorCode: error?.code,
+            message: error?.message,
+            retryable: error?.retryable === true,
+          });
+        }
+        return technicalPlanStore.updateTechnicalPlan({ [definition.field]: failedTask });
+      });
+    },
+    snapshot(definition, state, task, eventPatch = {}) {
+      const patch = { ...(eventPatch.technicalPlanPatch || {}) };
+      if (definition.field) {
+        patch[definition.field] = state?.[definition.field] || task;
+      }
+      if (task.type === 'bid-analysis') {
+        copyPatchFields(patch, state, [
+          'bidAnalysisMode',
+          'bidAnalysisSelectedTaskIds',
+          'bidAnalysisProgress',
+          'projectOverview',
+          'techRequirements',
+          'bidAnalysisTasks',
+          'outlineData',
+          'outlineWordControlSnapshot',
+          'outlineGenerationTask',
+          'globalFactsTask',
+          'globalFacts',
+          'contentGenerationTask',
+          'contentGenerationSections',
+          'contentGenerationPlans',
+          'contentIllustrationPlan',
+          'contentGenerationRuntime',
+        ]);
+      } else if (task.type === 'bid-section-extraction') {
+        copyPatchFields(patch, state, [
+          'bidSectionMode',
+          'bidSections',
+          'bidSectionExtractionStatus',
+          'bidSectionExtractionError',
+          'tenderFile',
+          'bidAnalysisTask',
+          'bidAnalysisTasks',
+          'bidAnalysisProgress',
+          'projectOverview',
+          'techRequirements',
+          'outlineData',
+          'outlineWordControlSnapshot',
+          'outlineGenerationTask',
+          'referenceKnowledgeDocumentIds',
+          'globalFactsTask',
+          'globalFacts',
+          'contentGenerationTask',
+          'contentGenerationOptions',
+          'contentGenerationSections',
+          'contentGenerationPlans',
+          'contentIllustrationPlan',
+          'contentGenerationRuntime',
+        ]);
+      } else if (task.type === 'outline-generation') {
+        copyPatchFields(patch, state, [
+          'outlineMode',
+          'outlineExpansionMode',
+          'outlineWordControlOptions',
+          'outlineWordControlSnapshot',
+          'referenceKnowledgeDocumentIds',
+          'outlineData',
+          'globalFactsTask',
+          'globalFacts',
+          'contentGenerationTask',
+          'contentGenerationSections',
+          'contentGenerationPlans',
+          'contentIllustrationPlan',
+          'contentGenerationRuntime',
+        ]);
+      }
       return {
         technicalPlanPatch: patch,
         ...(eventPatch.bidItem ? { bidItem: eventPatch.bidItem } : {}),
@@ -162,18 +410,50 @@ function createWebBidAnalysisTaskService({ aiService, technicalPlanStore, mutati
   };
   let closed = false;
   let closePromise = null;
+  const payloadSignatures = new WeakMap();
   const orchestrator = createTaskOrchestrator({
     definitions,
     createTask,
     getScopeId: () => '',
-    getPayloadSignature: (_type, payload) => payload?.payload_signature,
+    getPayloadSignature: (_type, payload) => payloadSignatures.get(payload),
     stateAdapter,
-    createRunnerContext({ payload, queueScopeId, updateTask, emitTask, taskControl, signal }) {
+    createRunnerContext({ type, payload, queueScopeId, updateTask, emitTask, taskControl, signal, taskMetadata = {} }) {
       const inputRevision = payload.input_revision;
+      const runRecord = taskMetadata.runRecord;
+      const commitAcceptedResult = (partial) => mutationExecutor.execute(() => {
+        let currentModelSnapshot;
+        try {
+          currentModelSnapshot = captureModelSnapshot();
+        } catch {
+          throw createTaskInputChangedError('模型配置已变化，请重新执行任务');
+        }
+        const currentManifest = createTechnicalPlanRunManifest({
+          type,
+          input: payload,
+          taskId: runRecord.taskId,
+          executionId: runRecord.executionId,
+          workspaceRuntimeGeneration,
+          technicalPlanStore,
+          knowledgeBaseService,
+          modelSnapshot: currentModelSnapshot,
+          stageRevisionVector: runRecord.manifest.stage_revision_vector,
+        });
+        if (computeRunManifestV1Hash(currentManifest) !== runRecord.manifestHash) {
+          throw createTaskInputChangedError();
+        }
+        const writeback = technicalPlanStore.writebackTechnicalPlanTaskRun({
+          executionId: runRecord.executionId,
+          manifestHash: runRecord.manifestHash,
+          targetStageGeneration: runRecord.targetStageGeneration,
+          apply: () => technicalPlanStore.updateTechnicalPlan(partial),
+        });
+        return writeback.payload;
+      }, { signal });
       const workspaceStore = {
+        ...technicalPlanStore,
         readTenderMarkdown: () => technicalPlanStore.readTenderMarkdown(),
         loadTechnicalPlan: () => technicalPlanStore.loadTechnicalPlan(),
-        updateTechnicalPlan: (partial) => mutationExecutor.execute(() => technicalPlanStore.updateTechnicalPlan(partial)),
+        updateTechnicalPlan: (partial) => technicalPlanStore.updateTechnicalPlan(partial),
         updateTechnicalPlanForInputRevision: (revision, partial) => mutationExecutor.execute(() => technicalPlanStore.updateTechnicalPlanForInputRevision(revision, partial)),
         commitBidAnalysisMutation: (revision, build) => mutationExecutor.execute(() => {
           const previous = technicalPlanStore.loadTechnicalPlan() || {};
@@ -181,15 +461,23 @@ function createWebBidAnalysisTaskService({ aiService, technicalPlanStore, mutati
           const state = technicalPlanStore.updateTechnicalPlanForInputRevision(revision, result.partial || {});
           return { ...result, state };
         }),
+        prepareBidSectionExtraction: runRecord ? () => technicalPlanStore.loadTechnicalPlan() : technicalPlanStore.prepareBidSectionExtraction,
+        commitBidSectionExtractionResult: type === 'bid-section-extraction' && runRecord ? commitAcceptedResult : undefined,
+        commitOutlineGenerationResult: type === 'outline-generation' && runRecord ? commitAcceptedResult : undefined,
       };
+      const scopedAiService = typeof aiService.withQueueScope === 'function'
+        ? aiService.withQueueScope(queueScopeId, taskMetadata.modelSnapshot ? { modelSnapshot: taskMetadata.modelSnapshot } : {})
+        : aiService;
       return {
-        aiService: typeof aiService.withQueueScope === 'function' ? aiService.withQueueScope(queueScopeId) : aiService,
+        aiService: scopedAiService,
+        agentService: boundAgentService,
+        knowledgeBaseService,
         workspaceStore,
         updateTask,
         emitTask,
         taskControl,
         signal,
-        payload: { ...payload, input_revision: inputRevision },
+        payload: Number.isInteger(inputRevision) ? { ...payload, input_revision: inputRevision } : payload,
         queueScopeId,
       };
     },
@@ -197,12 +485,130 @@ function createWebBidAnalysisTaskService({ aiService, technicalPlanStore, mutati
       if (!closed && typeof aiService.resumeQueueScope === 'function') aiService.resumeQueueScope(queueScopeId);
     },
   });
-  let startingBidAnalysis = null;
+  const startingTasks = new Map();
 
-  function clearStartingBidAnalysis(starting) {
-    if (startingBidAnalysis === starting) {
-      startingBidAnalysis = null;
+  function isActiveTask(task) {
+    return task?.status === 'running' || task?.status === 'pausing';
+  }
+
+  function assertNoConflictingTask(type, payloadSignature) {
+    for (const [activeType, activeTask] of orchestrator.activeTasks.entries()) {
+      if (!isActiveTask(activeTask)) continue;
+      if (activeType === type && activeTask.payload_signature === payloadSignature) {
+        return activeTask;
+      }
+      throw createTaskConflictError();
     }
+    for (const [startingType, starting] of startingTasks.entries()) {
+      if (startingType === type && starting.payloadSignature === payloadSignature) {
+        return starting.promise;
+      }
+      throw createTaskConflictError();
+    }
+    return null;
+  }
+
+  function startManagedTask({
+    type,
+    input,
+    payloadSignature,
+    runner,
+    initialPartial,
+    prepare,
+    signal,
+  }) {
+    if (closed) return Promise.reject(createTaskInterruptedError());
+    try {
+      const existing = assertNoConflictingTask(type, payloadSignature);
+      if (existing) return existing;
+    } catch (error) {
+      return Promise.reject(error);
+    }
+
+    const controller = new AbortController();
+    const abortAcceptance = () => controller.abort(createAcceptanceAbortError());
+    if (signal?.aborted) abortAcceptance();
+    else signal?.addEventListener?.('abort', abortAcceptance, { once: true });
+
+    let acceptedRunRecord = null;
+    const startPromise = Promise.resolve()
+      .then(() => prepare(controller.signal))
+      .then((prepared = {}) => {
+        acceptedRunRecord = prepared.runRecord || null;
+        if (controller.signal.aborted) throw controller.signal.reason || createAcceptanceAbortError();
+        const preparedPayload = prepared.payloadPatch ? { ...input, ...prepared.payloadPatch } : { ...input };
+        payloadSignatures.set(preparedPayload, payloadSignature);
+        return orchestrator.start({
+          type,
+          payload: preparedPayload,
+          runner,
+          initialPartial,
+          taskMetadata: {
+            ...prepared,
+            payloadPatch: undefined,
+            payloadSignature,
+          },
+        });
+      })
+      .catch(async (error) => {
+        if (acceptedRunRecord) {
+          await mutationExecutor.execute(() => technicalPlanStore.failTechnicalPlanTaskRun({
+            executionId: acceptedRunRecord.executionId,
+            manifestHash: acceptedRunRecord.manifestHash,
+            errorCode: error?.code || 'TASK_ACCEPTANCE_FAILED',
+            message: error?.message || '任务受理失败',
+            retryable: error?.retryable === true,
+          }));
+        }
+        throw error;
+      });
+    const starting = { payloadSignature, controller, promise: startPromise };
+    startingTasks.set(type, starting);
+    void startPromise.finally(() => {
+      if (startingTasks.get(type) === starting) {
+        startingTasks.delete(type);
+      }
+      signal?.removeEventListener?.('abort', abortAcceptance);
+    }).catch(() => undefined);
+    return startPromise;
+  }
+
+  function captureModelSnapshot() {
+    if (typeof aiService.captureTextModelSnapshot === 'function') {
+      return aiService.captureTextModelSnapshot();
+    }
+    const error = new Error('当前 AI Runtime 无法冻结模型配置');
+    error.code = 'AI_CONFIG_INVALID';
+    error.retryable = false;
+    throw error;
+  }
+
+  function prepareTechnicalPlanRun(type, input, signal) {
+    if (!Number.isInteger(workspaceRuntimeGeneration) || workspaceRuntimeGeneration <= 0) {
+      return Promise.reject(createTaskConflictError());
+    }
+    const taskId = crypto.randomUUID();
+    const executionId = crypto.randomUUID();
+    return mutationExecutor.execute(() => {
+      const modelSnapshot = captureModelSnapshot();
+      const manifest = createTechnicalPlanRunManifest({
+        type,
+        input,
+        taskId,
+        executionId,
+        workspaceRuntimeGeneration,
+        technicalPlanStore,
+        knowledgeBaseService,
+        modelSnapshot,
+      });
+      const runRecord = technicalPlanStore.acceptTechnicalPlanTaskRun(manifest);
+      return {
+        taskId,
+        executionId,
+        modelSnapshot,
+        runRecord,
+      };
+    }, { signal });
   }
 
   return {
@@ -210,58 +616,84 @@ function createWebBidAnalysisTaskService({ aiService, technicalPlanStore, mutati
       if (closePromise) return closePromise;
       closed = true;
       const interrupted = createTaskInterruptedError();
-      startingBidAnalysis?.controller.abort(interrupted);
-      closePromise = Promise.resolve(startingBidAnalysis?.promise)
-        .catch(() => undefined)
+      const starting = Array.from(startingTasks.values());
+      starting.forEach((item) => item.controller.abort(interrupted));
+      closePromise = Promise.allSettled(starting.map((item) => item.promise))
         .then(() => orchestrator.close({ reason: interrupted }));
       return closePromise;
     },
     getActiveTasks: orchestrator.getActiveTasks,
     subscribeCallback: orchestrator.subscribe,
     unsubscribeCallback: orchestrator.unsubscribe,
+    startBidSectionExtraction(payload, { signal } = {}) {
+      const input = validateStartBidSectionExtractionInput(payload);
+      return startManagedTask({
+        type: 'bid-section-extraction',
+        input,
+        payloadSignature: stableHash(input),
+        runner: runBidSectionExtractionTask,
+        initialPartial: {
+          bidSectionMode: 'multiple',
+          bidSections: [],
+          bidSectionExtractionStatus: 'running',
+          bidSectionExtractionError: undefined,
+          bidAnalysisTask: undefined,
+          bidAnalysisTasks: {},
+          bidAnalysisProgress: 0,
+          projectOverview: '',
+          techRequirements: '',
+          outlineData: null,
+          outlineWordControlSnapshot: undefined,
+          outlineGenerationTask: undefined,
+          referenceKnowledgeDocumentIds: [],
+          globalFactsTask: undefined,
+          globalFacts: [],
+          contentGenerationTask: undefined,
+          contentGenerationOptions: undefined,
+          contentGenerationSections: {},
+          contentGenerationPlans: {},
+          contentIllustrationPlan: undefined,
+          contentGenerationRuntime: undefined,
+        },
+        prepare: (acceptanceSignal) => prepareTechnicalPlanRun('bid-section-extraction', input, acceptanceSignal),
+        signal,
+      });
+    },
     startBidAnalysis(payload, { signal } = {}) {
-      if (closed) return Promise.reject(createTaskInterruptedError());
       const input = validateStartBidAnalysisInput(payload);
       const payloadSignature = createPayloadSignature(input);
-      const activeTask = orchestrator.activeTasks.get('bid-analysis');
-      if (activeTask?.status === 'running' || activeTask?.status === 'pausing') {
-        if (activeTask.payload_signature !== payloadSignature) {
-          return Promise.reject(createTaskConflictError());
-        }
-        return activeTask;
-      }
-      if (startingBidAnalysis) {
-        if (startingBidAnalysis.payloadSignature !== payloadSignature) {
-          return Promise.reject(createTaskConflictError());
-        }
-        return startingBidAnalysis.promise;
-      }
-      const controller = new AbortController();
-      const abortAcceptance = () => controller.abort(createAcceptanceAbortError());
-      if (signal?.aborted) abortAcceptance();
-      else signal?.addEventListener?.('abort', abortAcceptance, { once: true });
-      const startPromise = mutationExecutor.execute(() => technicalPlanStore.prepareBidAnalysisRun({
-        mode: input.mode,
-        selectedTaskIds: input.selected_task_ids,
-        taskIds: input.task_ids,
-        forceRerun: input.force_rerun,
-      }), { signal: controller.signal }).then(({ inputVersion }) => {
-        if (controller.signal.aborted) throw controller.signal.reason || createAcceptanceAbortError();
-        return orchestrator.start({
+      return startManagedTask({
         type: 'bid-analysis',
-        payload: { ...input, input_revision: inputVersion.inputRevision, payload_signature: payloadSignature },
+        input,
+        payloadSignature,
         runner: runBidAnalysisTask,
-        });
+        prepare: (acceptanceSignal) => mutationExecutor.execute(() => technicalPlanStore.prepareBidAnalysisRun({
+          mode: input.mode,
+          selectedTaskIds: input.selected_task_ids,
+          taskIds: input.task_ids,
+          forceRerun: input.force_rerun,
+        }), { signal: acceptanceSignal }).then(({ inputVersion }) => ({
+          payloadPatch: { input_revision: inputVersion.inputRevision },
+        })),
+        signal,
       });
-      const starting = { payloadSignature, controller, promise: startPromise };
-      startingBidAnalysis = starting;
-      void startPromise.then(
-        () => clearStartingBidAnalysis(starting),
-        () => clearStartingBidAnalysis(starting),
-      ).finally(() => {
-        signal?.removeEventListener?.('abort', abortAcceptance);
+    },
+    startOutlineGeneration(payload, { signal } = {}) {
+      const input = validateStartOutlineGenerationInput(payload);
+      return startManagedTask({
+        type: 'outline-generation',
+        input,
+        payloadSignature: stableHash(input),
+        runner: runOutlineGenerationTask,
+        initialPartial: {
+          outlineMode: 'aligned',
+          outlineExpansionMode: input.outline_expansion_mode,
+          outlineWordControlOptions: input.word_control_options,
+          referenceKnowledgeDocumentIds: input.reference_knowledge_document_ids,
+        },
+        prepare: (acceptanceSignal) => prepareTechnicalPlanRun('outline-generation', input, acceptanceSignal),
+        signal,
       });
-      return startPromise;
     },
   };
 }
@@ -299,6 +731,15 @@ function createWebKnowledgeBaseService({ knowledgeBaseStore, fileService }) {
     },
     createFolder(name) {
       return knowledgeBaseStore.createFolder(name);
+    },
+    getOutlineReferences(documentIds) {
+      return knowledgeBaseStore.getOutlineReferences(documentIds);
+    },
+    getDocument(documentId) {
+      return knowledgeBaseStore.getDocument(documentId);
+    },
+    readMarkdown(documentId) {
+      return knowledgeBaseStore.readMarkdown(documentId);
     },
     uploadDocuments(folderId, fileIds, options = {}) {
       return fileService.uploadKnowledgeBaseDocuments({ folderId, fileIds, knowledgeBaseStore, signal: options.signal });

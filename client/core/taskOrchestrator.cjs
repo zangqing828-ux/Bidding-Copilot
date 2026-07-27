@@ -21,6 +21,16 @@ function createTaskOrchestrator({
   const activeTasks = new Map();
   const activeTaskControls = new Map();
   const subscribers = new Set();
+  const pendingPersists = new Set();
+
+  function trackPersist(value) {
+    if (!value || typeof value.then !== 'function') return value;
+    const tracked = Promise.resolve(value).finally(() => {
+      pendingPersists.delete(tracked);
+    });
+    pendingPersists.add(tracked);
+    return tracked;
+  }
 
   function createTaskConflictError(definition) {
     const error = new Error(`当前${definition.groupLabel || '任务组'}正在执行“${definition.label || '任务'}”，请等待当前任务完成后再重新分析新的文件集合。`);
@@ -85,7 +95,7 @@ function createTaskOrchestrator({
     throw new Error(`当前${definition.groupLabel || '任务组'}正在执行“${conflict.definition.label || conflict.task.type}”，请完成后再启动“${definition.label || type}”。`);
   }
 
-  function start({ type, payload, runner, initialPartial = {} }) {
+  function start({ type, payload, runner, initialPartial = {}, taskMetadata }) {
     if (typeof runner !== 'function') throw new Error(`${type} 缺少 task runner`);
     const existingTask = activeTasks.get(type);
     if (existingTask && isActive(existingTask)) {
@@ -100,7 +110,7 @@ function createTaskOrchestrator({
 
     assertCanStart(type, payload);
     const definition = definitionFor(type);
-    const task = createTask(type, payload);
+    const task = createTask(type, payload, taskMetadata);
     const queueScopeId = `${type}:${task.task_id}`;
     activeTasks.set(type, task);
     let currentTask = task;
@@ -118,8 +128,14 @@ function createTaskOrchestrator({
         this.pauseRequested = true;
         const logs = currentTask.logs?.length ? currentTask.logs : ['已请求暂停，正在等待当前 AI 请求完成。'];
         const pausingTask = updateTask({ status: 'pausing', pause_requested: true, logs });
-        const state = stateAdapter.persist(definition, { [definition.field]: pausingTask });
-        emit(pausingTask, stateAdapter.snapshot(definition, state, pausingTask));
+        const state = trackPersist(stateAdapter.persist(definition, { [definition.field]: pausingTask }));
+        if (state && typeof state.then === 'function') {
+          void state.then((persistedState) => {
+            emit(pausingTask, stateAdapter.snapshot(definition, persistedState, pausingTask));
+          }).catch(() => undefined);
+        } else {
+          emit(pausingTask, stateAdapter.snapshot(definition, state, pausingTask));
+        }
         return pausingTask;
       },
     };
@@ -138,8 +154,17 @@ function createTaskOrchestrator({
       activeTasks.set(type, currentTask);
       if (workspaceState) {
         let persistedState = workspaceState;
-        if (definition.field) persistedState = stateAdapter.persist(definition, { [definition.field]: currentTask }, options);
-        emit(currentTask, stateAdapter.snapshot(definition, persistedState, currentTask, eventPatch));
+        if (definition.field) {
+          persistedState = trackPersist(stateAdapter.persist(definition, { [definition.field]: currentTask }, options));
+        }
+        if (persistedState && typeof persistedState.then === 'function') {
+          const emittedTask = currentTask;
+          void persistedState.then((nextState) => {
+            emit(emittedTask, stateAdapter.snapshot(definition, nextState, emittedTask, eventPatch));
+          }).catch(() => undefined);
+        } else {
+          emit(currentTask, stateAdapter.snapshot(definition, persistedState, currentTask, eventPatch));
+        }
       }
       return currentTask;
     };
@@ -156,6 +181,7 @@ function createTaskOrchestrator({
         taskControl,
         signal: taskControl.abortController.signal,
         previousState,
+        taskMetadata,
         emitTask(task, workspaceState, eventPatch) {
           emit(task, stateAdapter.snapshot(definition, workspaceState, task, eventPatch));
         },
@@ -174,6 +200,10 @@ function createTaskOrchestrator({
           error_code: error?.code,
           retryable: error?.retryable === true,
         });
+        if (typeof stateAdapter.persistFailure === 'function') {
+          return Promise.resolve(stateAdapter.persistFailure(definition, failedTask, error))
+            .then((failedState) => emit(failedTask, stateAdapter.snapshot(definition, failedState, failedTask)));
+        }
         if (error?.code === 'TASK_INPUT_CHANGED') {
           emit(failedTask, snapshotFor(failedTask));
           return;
@@ -212,6 +242,7 @@ function createTaskOrchestrator({
     const controls = Array.from(activeTaskControls.values());
     controls.forEach((control) => control.cancel(reason));
     await Promise.allSettled(controls.map((control) => control.runnerPromise).filter(Boolean));
+    await Promise.allSettled(Array.from(pendingPersists));
   }
 
   return Object.freeze({

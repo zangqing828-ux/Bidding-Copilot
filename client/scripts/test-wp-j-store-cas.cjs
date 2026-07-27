@@ -268,6 +268,20 @@ async function runStageInvalidationMatrix() {
     assert.equal(acceptedBid.targetStageGeneration, bidStageVector.source_revision + 1, 'accept 使用当前阶段代号生成目标代号');
     const replayBid = store.acceptTechnicalPlanTaskRun(bidManifest);
     assert.equal(replayBid.isReplay, true, '重复同一 execution_id 且同一 manifest 会进入 replay');
+    const bidWriteback = store.writebackTechnicalPlanTaskRun({
+      executionId: acceptedBid.executionId,
+      manifestHash: acceptedBid.manifestHash,
+      targetStageGeneration: acceptedBid.targetStageGeneration,
+      apply: () => {
+        store.updateTechnicalPlan({
+          bidSectionExtractionStatus: 'success',
+          bidSections: [{ id: 'section-1', title: '第一标段', content: '标段正文' }],
+        });
+        return { sectionCount: 1 };
+      },
+    });
+    assert.equal(bidWriteback.status, 'succeeded', 'source 阶段无上游依赖时可以成功写回');
+    assert.equal(bidWriteback.payload.sectionCount, 1, 'source 阶段写回返回业务 payload');
 
     await assertErrorCode(
       () => store.acceptTechnicalPlanTaskRun({ ...bidManifest, task_id: 'task-bid-01-wrong-gen', workspace_runtime_generation: 8 }),
@@ -407,6 +421,35 @@ async function runStageInvalidationMatrix() {
       '延迟 writeback 不应更新为 succeeded',
     );
 
+    const failedManifest = buildManifest({
+      executionId: 'exec-outline-failed-01',
+      taskId: 'task-outline-failed-01',
+      taskType: 'outline-generation',
+      workspaceRuntimeGeneration,
+      stageRevisionVector: store.currentStageRevisions(),
+    });
+    const acceptedFailed = store.acceptTechnicalPlanTaskRun(failedManifest);
+    const failedRecord = store.failTechnicalPlanTaskRun({
+      executionId: acceptedFailed.executionId,
+      manifestHash: acceptedFailed.manifestHash,
+      errorCode: 'TASK_INPUT_CHANGED',
+      message: '输入已变化',
+      retryable: true,
+    });
+    assert.equal(failedRecord.status, 'error', '失败终态会持久化到 execution run record');
+    assert.deepEqual(failedRecord.checkpoint, {
+      error_code: 'TASK_INPUT_CHANGED',
+      message: '输入已变化',
+      retryable: true,
+    }, '失败 run record 保留稳定错误语义');
+    const recovery = store.recoverInterruptedTasks();
+    assert.ok(recovery.recoveredRuns >= 1, '重启恢复会收口尚未完成的 execution run record');
+    assert.equal(
+      store.getTechnicalPlanRunRecord(acceptedDelayed.executionId).checkpoint?.error_code,
+      'TASK_INTERRUPTED_BY_RESTART',
+      '重启恢复为 execution run record 保留稳定中断错误码',
+    );
+
     sqlite.close();
     sqlite = null;
 
@@ -416,7 +459,7 @@ async function runStageInvalidationMatrix() {
     assert.equal(reopened.schemaVersion, schemaVersion, '重新打开数据库为当前 schemaVersion');
     assert.equal(
       reopenedStore.getTechnicalPlanRunRecord(acceptedBid.executionId)?.status,
-      'accepted',
+      'succeeded',
       'schema23 重开后 run record 可读取',
     );
     assert.equal(
