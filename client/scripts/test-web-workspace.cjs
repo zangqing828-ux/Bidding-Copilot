@@ -22,6 +22,7 @@ function assert(condition, message) {
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-test-'));
 process.env.YIBIAO_DATA_DIR = tmpDir;
 process.env.CONFIG_ENCRYPTION_KEY = 'test-encryption-key-for-testing';
+process.env.BIDMASTER_TENANT_ID = 'workspace-test';
 
 async function runTests() {
   // 测试 1：resolveWorkspacePaths 返回完整路径
@@ -170,12 +171,12 @@ async function runTests() {
   // 测试 7：同一 workspaceId 重新获取保持数据
   {
     const { getWorkspaceContext, closeAll } = require('../server/workspace/workspaceRegistry.cjs');
-    const ctx1 = getWorkspaceContext('ws-persist-test');
+    const ctx1 = getWorkspaceContext(process.env.BIDMASTER_TENANT_ID);
     ctx1.configStore.save({ api_key: 'sk-persist-key' });
     await closeAll();
 
     // 重新获取同一个 workspace
-    const ctx2 = getWorkspaceContext('ws-persist-test');
+    const ctx2 = getWorkspaceContext(process.env.BIDMASTER_TENANT_ID);
     const config = ctx2.configStore.loadDecrypted();
     assert(config.api_key === 'sk-persist-key', '同一 workspace 重新获取后数据仍在');
     await closeAll();
@@ -184,7 +185,7 @@ async function runTests() {
   // 测试 8：bridge dispatcher config.load 返回脱敏
   {
     const { getWorkspaceContext, closeAll } = require('../server/workspace/workspaceRegistry.cjs');
-    const ctx = getWorkspaceContext('ws-bridge-test');
+    const ctx = getWorkspaceContext(process.env.BIDMASTER_TENANT_ID);
     ctx.configStore.save({ api_key: 'sk-bridge-secret-key' });
 
     // 模拟 bridge dispatcher 调用

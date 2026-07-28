@@ -126,6 +126,7 @@ async function runTests() {
 
   let contextCreateCount = 0;
   const registry = createWorkspaceRegistry({
+    tenantId: config.tenantId,
     dataDir: tmpDir,
     createContext({ workspaceId }) {
       contextCreateCount += 1;

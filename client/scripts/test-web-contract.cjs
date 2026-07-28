@@ -771,7 +771,10 @@ function collectWorkspaceCloseWarnings() {
         return String(item || '');
       })
       .join(' ');
-    if (message.includes('[workspace] 关闭 workspace 失败')) {
+    if (
+      message.includes('[workspace] 关闭 workspace 失败')
+      || message.includes('[workspace] 关闭租户上下文失败')
+    ) {
       observed.push(message);
     }
     originalWarn(...args);
@@ -1001,39 +1004,33 @@ async function runBridgeBehavior(inject, context) {
   const bindingKeys = collectBindingDispatcherKeys(routeDispatchers);
   const implementedContractEntries = Array.from(contractMap.entries()).filter(([, entry]) => entry.status === 'implemented');
 
-  const workspaceContext = getWorkspaceContext('contract-test-context');
-  try {
-    for (const [contractKey, contractEntry] of implementedContractEntries) {
-      const isMemberMeta = contractKey.startsWith('members.') || contractKey.startsWith('locals.') || contractKey.startsWith('events.');
-      if (isMemberMeta) {
-        continue;
-      }
-
-      assert(contractEntry && contractEntry.status === 'implemented', `${contractKey} 是 implemented RPC`);
-
-      const binding = bindingMetadata.get(contractKey);
-      assert(Boolean(binding), `${contractKey} 有绑定元数据`);
-      assert(['direct', 'store'].includes(binding.type), `${contractKey} binding.type 需为 direct 或 store`);
-
-      const dispatcher = routeDispatchers[contractKey.split('.')[0]]?.[contractKey.split('.')[1]];
-      assert(typeof dispatcher === 'function', `${contractKey} 有 dispatcher 函数`);
-
-      if (binding.type === 'store') {
-        assert(typeof binding.storeName === 'string' && binding.storeName.length > 0, `${contractKey} storeName 有值`);
-        assert(typeof binding.storeMethod === 'string' && binding.storeMethod.length > 0, `${contractKey} storeMethod 有值`);
-
-        const store = workspaceContext.stores?.[binding.storeName];
-        assert(Boolean(store), `${contractKey} 对应 Store 在真实 context 中存在`);
-        assert(typeof store[binding.storeMethod] === 'function', `${contractKey} 对应 Store 方法存在`);
-      }
-
-      if (binding.type === 'direct') {
-        assert(typeof binding.handler === 'function', `${contractKey} direct handler 已声明为函数`);
-      }
+  const workspaceContext = getWorkspaceContext(process.env.BIDMASTER_TENANT_ID);
+  for (const [contractKey, contractEntry] of implementedContractEntries) {
+    const isMemberMeta = contractKey.startsWith('members.') || contractKey.startsWith('locals.') || contractKey.startsWith('events.');
+    if (isMemberMeta) {
+      continue;
     }
-  } finally {
-    if (workspaceContext && workspaceContext.close) {
-      await workspaceContext.close();
+
+    assert(contractEntry && contractEntry.status === 'implemented', `${contractKey} 是 implemented RPC`);
+
+    const binding = bindingMetadata.get(contractKey);
+    assert(Boolean(binding), `${contractKey} 有绑定元数据`);
+    assert(['direct', 'store'].includes(binding.type), `${contractKey} binding.type 需为 direct 或 store`);
+
+    const dispatcher = routeDispatchers[contractKey.split('.')[0]]?.[contractKey.split('.')[1]];
+    assert(typeof dispatcher === 'function', `${contractKey} 有 dispatcher 函数`);
+
+    if (binding.type === 'store') {
+      assert(typeof binding.storeName === 'string' && binding.storeName.length > 0, `${contractKey} storeName 有值`);
+      assert(typeof binding.storeMethod === 'string' && binding.storeMethod.length > 0, `${contractKey} storeMethod 有值`);
+
+      const store = workspaceContext.stores?.[binding.storeName];
+      assert(Boolean(store), `${contractKey} 对应 Store 在真实 context 中存在`);
+      assert(typeof store[binding.storeMethod] === 'function', `${contractKey} 对应 Store 方法存在`);
+    }
+
+    if (binding.type === 'direct') {
+      assert(typeof binding.handler === 'function', `${contractKey} direct handler 已声明为函数`);
     }
   }
 
@@ -1722,6 +1719,7 @@ async function closeServer() {
     process.env.CONFIG_ENCRYPTION_KEY = 'test-key';
     process.env.OAUTH_MODE = 'mock';
     process.env.SESSION_SECRET = 'dev-secret';
+    process.env.BIDMASTER_TENANT_ID = 'contract-test-context';
 
     const contractModule = require('../shared/bridgeContract.cjs');
     contractVersion = contractModule.version;
@@ -1732,7 +1730,7 @@ async function closeServer() {
       workspaceContextModule.createWorkspaceContext = (...args) => {
         const workspaceContext = originalCreateWorkspaceContext(...args);
         const options = args[0] || {};
-        if (options.workspaceId === 'contract-close-warning') {
+        if (options.workspaceId === process.env.BIDMASTER_TENANT_ID) {
           const originalClose = typeof workspaceContext.close === 'function' ? workspaceContext.close.bind(workspaceContext) : undefined;
           return {
             ...workspaceContext,
@@ -1767,7 +1765,7 @@ async function closeServer() {
     server = http.createServer(app);
     closeWorkspace = closeAll;
     if (process.env.WEB_CONTRACT_SIMULATE_CLOSE_WARNING === '1') {
-      getWorkspaceContext('contract-close-warning');
+      getWorkspaceContext(process.env.BIDMASTER_TENANT_ID);
     }
 
     const inject = createRequest();
