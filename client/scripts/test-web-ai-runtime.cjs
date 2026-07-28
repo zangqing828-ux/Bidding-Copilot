@@ -981,7 +981,7 @@ async function main() {
     await run('development 显式注入 endpoint policy 仍可测试本地 mock', async () => {
       assert.equal(bridgeContract.methods.config.listModels.status, 'implemented');
       assert.equal(bridgeContract.methods.ai.chat.status, 'pending');
-      assert.equal(bridgeContract.methods.ai.requestJson.status, 'pending');
+      assert.equal(bridgeContract.methods.ai.requestJson.status, 'removed');
       assert.equal(bridgeContract.methods.ai.testImageModel.status, 'pending');
       assert.equal(typeof bridgeRouter.__contractDispatchers.config.listModels, 'function');
 

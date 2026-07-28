@@ -23,6 +23,14 @@ test('登录后 App 成功挂载且四个首发入口可达', async ({ page }) =
     throw new Error(`页面运行时异常：${error.message}`);
   });
 
+  const bridgeRemovedResponses = [];
+  page.on('response', (response) => {
+    const sameOrigin = new URL(response.url()).origin === new URL(page.url()).origin;
+    if (sameOrigin && response.status() === 410) {
+      bridgeRemovedResponses.push(response.url());
+    }
+  });
+
   await login(page);
 
   await expect(page.locator('#root')).not.toBeEmpty();
@@ -55,4 +63,9 @@ test('登录后 App 成功挂载且四个首发入口可达', async ({ page }) =
   await expect(page.getByText('离线激活授权')).toHaveCount(0);
 
   await expect(page.getByRole('button', { name: /商务标|文档知识库|标书查重|废标项检查|AI评标|测试页/ })).toHaveCount(0);
+
+  expect(
+    bridgeRemovedResponses,
+    `检测到 ${bridgeRemovedResponses.length} 次 410 Bridge 响应（已下线能力仍被 Renderer 调用）: ${bridgeRemovedResponses.join(', ')}`,
+  ).toHaveLength(0);
 });

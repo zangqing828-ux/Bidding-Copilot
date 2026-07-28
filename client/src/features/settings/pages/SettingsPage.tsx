@@ -1,14 +1,11 @@
 ﻿import { useEffect, useState } from 'react';
 import { trackConfigUsage } from '../../../shared/analytics/analytics';
 import { DetailHelpLink, FloatingToolbar, InputWithAction, useToast } from '../../../shared/ui';
-import { showUpdateReadyToast } from '../../../shared/updateToast';
 import type { FloatingToolbarGroup } from '../../../shared/ui';
-import type { AgentModeScenariosConfig, AgentRuntimeDescriptor, AgentSelfCheckResult, AgentSelfCheckStepStatus, AiRequestMode, ClientConfig, ComponentsConfig, ConfiguredTextModelProvider, FileParserProvider, ImageModelConfig, ImageModelProfiles, ImageModelProvider, ImageModelSize, ImageModelStatus, LicenseRuntimeStatus, TextModelConfig, TextModelProfiles, TextModelProvider, UpdateChannel } from '../../../shared/types';
+import type { AiRequestMode, ClientConfig, ComponentsConfig, ConfiguredTextModelProvider, FileParserProvider, ImageModelConfig, ImageModelProfiles, ImageModelProvider, ImageModelSize, ImageModelStatus, TextModelConfig, TextModelProfiles, TextModelProvider } from '../../../shared/types';
 import type { SettingsPageState } from '../types';
 
-type SettingsTab = 'general' | 'text-model' | 'image-model' | 'components' | 'agent' | 'about';
-type UpdateStatus = 'idle' | 'checking' | 'downloading' | 'downloaded' | 'error' | 'disabled';
-type AgentSelfCheckUiStatus = 'untested' | 'checking' | 'normal' | 'busy' | 'error';
+type SettingsTab = 'general' | 'text-model' | 'image-model' | 'components' | 'about';
 
 const settingsTabs: Array<{ id: SettingsTab; label: string }> = [
   { id: 'general', label: '通用' },
@@ -17,49 +14,6 @@ const settingsTabs: Array<{ id: SettingsTab; label: string }> = [
   { id: 'components', label: '组件设置' },
   { id: 'about', label: '关于' },
 ];
-
-const agentSelfCheckStatusMeta: Record<AgentSelfCheckUiStatus, { label: string; description: string }> = {
-  untested: { label: '未检测', description: '点击自检后，会验证当前已保存运行时的环境、工具、文本模型和输出链路。' },
-  checking: { label: '检测中', description: '正在检查运行环境、工具链与极简智能体任务。' },
-  normal: { label: '正常', description: '当前智能体运行时和关键集成能力已通过自检。' },
-  busy: { label: '忙碌', description: '智能体正在处理其他任务，本次自检已跳过。' },
-  error: { label: '异常', description: '智能体链路自检失败，请查看下方错误详情。' },
-};
-
-const agentDiagnosticStatusMeta: Record<AgentSelfCheckStepStatus, { label: string; description: string }> = {
-  pending: { label: '待检查', description: '尚未执行检查。' },
-  running: { label: '检查中', description: '正在执行检查。' },
-  success: { label: '正常', description: '检查已通过。' },
-  warning: { label: '警告', description: '检查完成，但存在需要留意的信息。' },
-  error: { label: '异常', description: '检查未通过。' },
-  skipped: { label: '已跳过', description: '因前置条件不足或无需执行而跳过。' },
-};
-
-const updateChannelOptions: Array<{ value: UpdateChannel; label: string; description: string }> = [
-  { value: 'github', label: 'GitHub', description: '使用 GitHub Release 检查和下载更新' },
-  { value: 'cloudflare', label: 'Cloudflare', description: '使用 Cloudflare R2 镜像检查和下载更新' },
-];
-
-const defaultAgentModeScenarios: AgentModeScenariosConfig = {
-  existing_plan_expansion_original_outline_extraction: true,
-};
-
-function normalizeUpdateChannel(value?: string): UpdateChannel {
-  return value === 'cloudflare' ? 'cloudflare' : 'github';
-}
-
-function normalizeAgentModeScenarios(value?: Partial<AgentModeScenariosConfig>): AgentModeScenariosConfig {
-  return {
-    existing_plan_expansion_original_outline_extraction: value?.existing_plan_expansion_original_outline_extraction === undefined
-      ? defaultAgentModeScenarios.existing_plan_expansion_original_outline_extraction
-      : Boolean(value.existing_plan_expansion_original_outline_extraction),
-  };
-}
-
-function getLicenseSourceLabel(status: LicenseRuntimeStatus | null) {
-  if (!status) return '读取中';
-  return status.sourceTrusted ? '官方发行版' : '不可信的客户端来源';
-}
 
 const textModelProviders: Array<{ value: TextModelProvider; label: string }> = [
   { value: 'jinlong', label: '金龙中转站【推荐】' },
@@ -523,22 +477,9 @@ const initialState: SettingsPageState = {
     mermaid_concurrency_limit: DEFAULT_COMPONENT_CONCURRENCY_LIMIT,
     html_concurrency_limit: DEFAULT_COMPONENT_CONCURRENCY_LIMIT,
   },
-  agentRuntime: '',
-  agentModeScenarios: { ...defaultAgentModeScenarios },
-  general: {
-    developer_mode: false,
-    developer_token_stats_auto_open: false,
-    update_channel: 'github',
-    gpu_hardware_acceleration_enabled: true,
-    gpu_hardware_acceleration_configured: true,
-  },
 };
 
-interface SettingsPageProps {
-  onDeveloperModeChange?: (developerMode: boolean) => void;
-}
-
-function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
+function SettingsPage() {
   const [state, setState] = useState<SettingsPageState>(initialState);
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [savedConfig, setSavedConfig] = useState<ClientConfig | null>(null);
@@ -549,26 +490,11 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
   const [testingImageModel, setTestingImageModel] = useState(false);
   const [imageTestPreview, setImageTestPreview] = useState<{ src: string; title: string } | null>(null);
   const [appVersion, setAppVersion] = useState('');
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
-  const [updatePercent, setUpdatePercent] = useState(0);
-  const [updateVersion, setUpdateVersion] = useState('');
-  const [updateError, setUpdateError] = useState('');
-  const [licenseStatus, setLicenseStatus] = useState<LicenseRuntimeStatus | null>(null);
-  const [offlineLicenseDialogOpen, setOfflineLicenseDialogOpen] = useState(false);
-  const [agentRuntimes, setAgentRuntimes] = useState<AgentRuntimeDescriptor[]>([]);
-  const [agentSelfCheckStatus, setAgentSelfCheckStatus] = useState<AgentSelfCheckUiStatus>('untested');
-  const [agentSelfCheckResult, setAgentSelfCheckResult] = useState<AgentSelfCheckResult | null>(null);
-  const [exportingAgentSelfCheckReport, setExportingAgentSelfCheckReport] = useState(false);
   const { showToast } = useToast();
   const isWebPlatform = window.yibiao?.platform === 'web';
 
   useEffect(() => {
     void loadTextConfig();
-    if (!isWebPlatform) {
-      void window.yibiao?.agent.listRuntimes()
-        .then((runtimes) => setAgentRuntimes(runtimes || []))
-        .catch(() => setAgentRuntimes([]));
-    }
     if (!isWebPlatform) {
       void window.yibiao?.getVersion().then(setAppVersion);
     }
@@ -597,18 +523,8 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
         imageModel: activeImageProfile,
         imageModelProfiles,
         components: normalizeComponentsState(config.components),
-        agentRuntime: config.agent_runtime,
-        agentModeScenarios: normalizeAgentModeScenarios(config.agent_mode_scenarios),
-        general: {
-          developer_mode: Boolean(config.developer_mode),
-          developer_token_stats_auto_open: Boolean(config.developer_token_stats_auto_open),
-          update_channel: normalizeUpdateChannel(config.update_channel),
-          gpu_hardware_acceleration_enabled: Boolean(config.gpu_hardware_acceleration_enabled),
-          gpu_hardware_acceleration_configured: Boolean(config.gpu_hardware_acceleration_configured),
-        },
       }));
       setSavedConfig(config);
-      onDeveloperModeChange?.(Boolean(config.developer_mode));
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '加载客户端配置失败';
       showToast(errorMessage, 'error');
@@ -625,19 +541,12 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
     [state.imageModel.provider]: imageProfileFromState(state.imageModel),
   });
 
-  const createClientConfig = (options: { includeAgentState?: boolean } = {}): ClientConfig => {
+  const createClientConfig = (): ClientConfig => {
     const textModelProfiles = getCurrentTextModelProfiles();
     const activeTextProfile = textModelProfiles[state.textModel.provider]
       || normalizeTextModelProfile(state.textModel.provider);
     const imageModelProfiles = getCurrentImageModelProfiles();
     const activeImageProfile = imageModelProfiles[state.imageModel.provider];
-    const persistedAgentRuntime = savedConfig?.agent_runtime
-      || state.agentRuntime
-      || agentRuntimes.find((runtime) => runtime.is_default)?.id
-      || '';
-    const persistedAgentModeScenarios = savedConfig
-      ? normalizeAgentModeScenarios(savedConfig.agent_mode_scenarios)
-      : state.agentModeScenarios;
 
     return {
       text_model_provider: state.textModel.provider,
@@ -651,81 +560,7 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
       image_model: activeImageProfile,
       image_model_profiles: imageModelProfiles,
       components: componentsFromState(state.components),
-      agent_runtime: options.includeAgentState ? state.agentRuntime : persistedAgentRuntime,
-      agent_mode_scenarios: options.includeAgentState ? state.agentModeScenarios : persistedAgentModeScenarios,
-      update_channel: state.general.update_channel,
-      gpu_hardware_acceleration_enabled: state.general.gpu_hardware_acceleration_enabled,
-      gpu_hardware_acceleration_configured: state.general.gpu_hardware_acceleration_configured,
-      developer_mode: state.general.developer_mode,
-      developer_token_stats_auto_open: state.general.developer_token_stats_auto_open,
     };
-  };
-
-  const checkForUpdates = async () => {
-    if (updateStatus === 'checking' || updateStatus === 'downloading') {
-      return;
-    }
-
-    if (isWebPlatform) {
-      setUpdateStatus('disabled');
-      return;
-    }
-
-    try {
-      setUpdateStatus('checking');
-      setUpdatePercent(0);
-      setUpdateError('');
-      const result = await window.yibiao?.checkUpdate();
-      if (!result?.enabled) {
-        setUpdateStatus('disabled');
-        showToast('开发调试模式不执行自动更新', 'info');
-        return;
-      }
-      if (result.failed) {
-        const message = result.message || '检查更新失败';
-        setUpdateStatus('error');
-        setUpdateError(message);
-        showToast(message, 'error');
-        return;
-      }
-      if (!result.updateAvailable) {
-        setUpdateStatus('idle');
-        showToast('已是最新版本', 'success');
-        return;
-      }
-
-      const version = result.version || updateVersion;
-      setUpdateVersion(version);
-      if (result.downloaded) {
-        setUpdateStatus('downloaded');
-        showUpdateReadyToast(showToast, version);
-        return;
-      }
-
-      setUpdateStatus('idle');
-      showToast('发现新版本，但更新包尚未下载完成，请稍后重试', 'info');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '检查更新失败';
-      setUpdateStatus('error');
-      setUpdateError(message);
-      showToast(message, 'error');
-    }
-  };
-
-  const installDownloadedUpdate = async () => {
-    if (isWebPlatform) {
-      return;
-    }
-
-    try {
-      const result = await window.yibiao?.quitAndInstall();
-      if (result && !result.success) {
-        showToast(result.message || '安装更新失败', 'error');
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '安装更新失败';
-      showToast(message, 'error');
-    }
   };
 
   const updateImageModelConfig = (partial: Partial<Omit<SettingsPageState['imageModel'], 'provider'>>, options: { clearModels?: boolean } = {}) => {
@@ -767,7 +602,6 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
       showToast(result?.success ? '配置已保存' : result?.message || '配置保存失败', result?.success ? 'success' : 'error');
       if (result?.success) {
         setSavedConfig(config);
-        onDeveloperModeChange?.(Boolean(config.developer_mode));
         trackConfigUsage({}, config);
       }
       return Boolean(result?.success);
@@ -780,55 +614,6 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
 
   const saveTextConfig = async () => {
     await saveClientConfig(createClientConfig());
-  };
-
-  const updateDeveloperMode = (developerMode: boolean) => {
-    setState((prev) => ({
-      ...prev,
-      general: { ...prev.general, developer_mode: developerMode },
-    }));
-    onDeveloperModeChange?.(developerMode);
-  };
-
-  const updateDeveloperTokenStatsAutoOpen = (autoOpen: boolean) => {
-    setState((prev) => ({
-      ...prev,
-      general: { ...prev.general, developer_token_stats_auto_open: autoOpen },
-    }));
-  };
-
-  const updateUpdateChannel = (updateChannel: UpdateChannel) => {
-    setState((prev) => ({
-      ...prev,
-      general: { ...prev.general, update_channel: updateChannel },
-    }));
-  };
-
-  const updateGpuHardwareAcceleration = (enabled: boolean) => {
-    setState((prev) => ({
-      ...prev,
-      general: {
-        ...prev.general,
-        gpu_hardware_acceleration_enabled: enabled,
-        gpu_hardware_acceleration_configured: true,
-      },
-    }));
-  };
-
-  const updateAgentModeScenario = (key: keyof AgentModeScenariosConfig, enabled: boolean) => {
-    setState((prev) => ({
-      ...prev,
-      agentModeScenarios: {
-        ...prev.agentModeScenarios,
-        [key]: enabled,
-      },
-    }));
-  };
-
-  const updateAgentRuntime = (runtimeId: string) => {
-    setState((prev) => ({ ...prev, agentRuntime: runtimeId }));
-    setAgentSelfCheckStatus('untested');
-    setAgentSelfCheckResult(null);
   };
 
   const updateTextModelProvider = (provider: TextModelProvider) => {
@@ -921,80 +706,6 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
       showToast(error instanceof Error ? error.message : '测试失败', 'error');
     } finally {
       setTestingTextModel(false);
-    }
-  };
-
-  const runAgentSelfCheck = async () => {
-    if (agentSelfCheckStatus === 'checking') return;
-
-    try {
-      setAgentSelfCheckStatus('checking');
-      setAgentSelfCheckResult(null);
-
-      if (!savedConfig?.agent_runtime) {
-        throw new Error('尚未读取到已保存的智能体运行时');
-      }
-      const result = await window.yibiao?.agent.selfCheck(savedConfig.agent_runtime);
-      if (!result) {
-        throw new Error('智能体自检未返回结果');
-      }
-
-      setAgentSelfCheckResult(result);
-      const nextStatus = result.success ? 'normal' : result.status === 'busy' ? 'busy' : 'error';
-      setAgentSelfCheckStatus(nextStatus);
-      showToast(
-        result.success ? '智能体自检正常' : result.message || '智能体自检失败',
-        result.success ? 'success' : result.status === 'busy' ? 'info' : 'error'
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '智能体自检失败';
-      const failedResult: AgentSelfCheckResult = {
-        success: false,
-        runtime_id: savedConfig?.agent_runtime || state.agentRuntime,
-        runtime_name: agentRuntimes.find((runtime) => runtime.id === (savedConfig?.agent_runtime || state.agentRuntime))?.display_name || '智能体',
-        status: 'error',
-        message,
-        checked_at: new Date().toISOString(),
-        duration_ms: 0,
-        log_dir: '',
-        log_file: '',
-        runtime_root: '',
-        workspace_dir: '',
-        output_file: '',
-        output_path: '',
-        steps: [],
-        sections: [],
-        error: { message },
-        diagnostics: { message },
-        detail_text: message,
-      };
-      setAgentSelfCheckResult(failedResult);
-      setAgentSelfCheckStatus('error');
-      showToast(message, 'error');
-    }
-  };
-
-  const exportAgentSelfCheckReport = async () => {
-    if (!agentSelfCheckResult || exportingAgentSelfCheckReport) return;
-
-    try {
-      setExportingAgentSelfCheckReport(true);
-      const result = await window.yibiao?.agent.exportSelfCheckReport(agentSelfCheckResult);
-      if (!result) {
-        throw new Error('导出智能体自检报告失败');
-      }
-      if (result.canceled) {
-        showToast(result.message || '已取消导出', 'info');
-        return;
-      }
-      if (!result.success) {
-        throw new Error(result.message || '导出智能体自检报告失败');
-      }
-      showToast(result.message || '智能体自检报告已导出', 'success');
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : '导出智能体自检报告失败', 'error');
-    } finally {
-      setExportingAgentSelfCheckReport(false);
     }
   };
 
@@ -1212,22 +923,6 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
       });
     }
 
-    if (activeTab === 'general') {
-      return JSON.stringify({
-        developer_mode: Boolean(state.general.developer_mode),
-        developer_token_stats_auto_open: Boolean(state.general.developer_token_stats_auto_open),
-        update_channel: state.general.update_channel,
-        gpu_hardware_acceleration_enabled: Boolean(state.general.gpu_hardware_acceleration_enabled),
-        gpu_hardware_acceleration_configured: Boolean(state.general.gpu_hardware_acceleration_configured),
-      }) !== JSON.stringify({
-        developer_mode: Boolean(savedConfig.developer_mode),
-        developer_token_stats_auto_open: Boolean(savedConfig.developer_token_stats_auto_open),
-        update_channel: normalizeUpdateChannel(savedConfig.update_channel),
-        gpu_hardware_acceleration_enabled: Boolean(savedConfig.gpu_hardware_acceleration_enabled),
-        gpu_hardware_acceleration_configured: Boolean(savedConfig.gpu_hardware_acceleration_configured),
-      });
-    }
-
     if (activeTab === 'image-model') {
       return JSON.stringify({
         provider: state.imageModel.provider,
@@ -1242,21 +937,10 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
       return JSON.stringify(componentsFromState(state.components)) !== JSON.stringify(normalizeComponentsState(savedConfig.components));
     }
 
-    if (activeTab === 'agent') {
-      return JSON.stringify({ runtime: state.agentRuntime, scenarios: state.agentModeScenarios }) !== JSON.stringify({
-        runtime: savedConfig.agent_runtime,
-        scenarios: normalizeAgentModeScenarios(savedConfig.agent_mode_scenarios),
-      });
-    }
-
     return false;
   };
 
   const saveActiveTabConfig = async () => {
-    if (activeTab === 'general') {
-      await saveClientConfig(createClientConfig());
-      return;
-    }
     if (activeTab === 'text-model') {
       await saveTextConfig();
       return;
@@ -1270,17 +954,13 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
     }
   };
 
-  const canSaveActiveTab = activeTab === 'general' || activeTab === 'text-model' || activeTab === 'image-model' || activeTab === 'components';
+  const canSaveActiveTab = activeTab === 'text-model' || activeTab === 'image-model' || activeTab === 'components';
   const activeTabDirty = isActiveTabDirty();
   const currentTextProviderDefault = textProviderDefaults[state.textModel.provider];
   const imageModelStatus: ImageModelStatus = state.imageModel.status || 'untested';
   const currentImageStatus = imageStatusMeta[imageModelStatus];
-  const currentAgentSelfCheckStatus = agentSelfCheckStatusMeta[agentSelfCheckStatus];
-  const savedAgentRuntime = agentRuntimes.find((runtime) => runtime.id === savedConfig?.agent_runtime);
   const imageTestTime = formatImageTestTime(state.imageModel.tested_at);
-  const visibleSettingsTabs = isWebPlatform
-    ? settingsTabs.filter((tab) => tab.id !== 'agent')
-    : settingsTabs;
+  const visibleSettingsTabs = settingsTabs;
   const settingsToolbarGroups: FloatingToolbarGroup[] = canSaveActiveTab
     ? [
         {
@@ -1310,17 +990,6 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
         },
       ]
     : [];
-
-  const updateBusy = updateStatus === 'checking' || updateStatus === 'downloading';
-  const updateStatusText = (() => {
-    if (updateStatus === 'checking') return '正在检查更新...';
-    if (updateStatus === 'downloading') return `正在下载 ${updatePercent}%`;
-    if (updateStatus === 'downloaded') return updateVersion ? `新版本 ${updateVersion} 已准备好` : '更新已准备好';
-    if (updateStatus === 'error') return `更新失败：${updateError || '未知错误'}`;
-    if (updateStatus === 'disabled') return '开发调试模式不执行自动更新';
-    return '启动后自动检查，每 30 分钟轮询';
-  })();
-  const licenseSourceLabel = getLicenseSourceLabel(licenseStatus);
 
   return (
     <div className="settings-page">

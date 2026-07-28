@@ -69,14 +69,6 @@ const originalPlanCoverageRepairModeOptions: Array<{ value: OriginalPlanCoverage
   { value: 'normal', label: '普通修复' },
 ];
 
-const illustrationKindLabels: Record<ContentIllustrationKind, string> = {
-  html: 'HTML 图片',
-  mermaid: 'Mermaid 图片',
-  ai: 'AI 图片',
-};
-
-const illustrationKinds: ContentIllustrationKind[] = ['html', 'mermaid', 'ai'];
-
 const imageGenerationExamples: Record<ContentIllustrationKind, { src: string; alt: string }> = {
   ai: { src: aiImageExampleUrl, alt: 'AI 生图示例' },
   mermaid: { src: mermaidImageExampleUrl, alt: 'Mermaid 生图示例' },
@@ -275,7 +267,6 @@ function ContentEditPage({
   outlineData,
   task,
   contentGenerationOptions,
-  contentIllustrationPlan,
   sections,
   onContentGenerationOptionsChange,
   onContentSaved,
@@ -299,7 +290,6 @@ function ContentEditPage({
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string } | null>(null);
   const [pausePending, setPausePending] = useState(false);
   const [exportFormat, setExportFormat] = useState<ExportFormatConfig>(DEFAULT_EXPORT_FORMAT);
-  const [developerMode, setDeveloperMode] = useState(false);
   const firstLeafId = leaves[0]?.id || '';
   const selectedItem = outlineData?.outline && selectedItemId ? findItem(outlineData.outline, selectedItemId) : null;
   const selectedIsLeaf = Boolean(selectedItem && !selectedItem.children?.length);
@@ -314,25 +304,6 @@ function ContentEditPage({
   const taskBlocksGeneration = taskInFlight || paused;
   const generationStrategyLocked = paused;
   const contentStats = task?.stats?.content;
-  const illustrationStats = useMemo(() => {
-    const stats: Record<ContentIllustrationKind, { planned: number; success: number }> = {
-      html: { planned: 0, success: 0 },
-      mermaid: { planned: 0, success: 0 },
-      ai: { planned: 0, success: 0 },
-    };
-
-    contentIllustrationPlan?.items.forEach((item) => {
-      stats[item.kind].planned += 1;
-      if (item.generation?.status === 'success') {
-        stats[item.kind].success += 1;
-      }
-    });
-
-    return stats;
-  }, [contentIllustrationPlan]);
-  const illustrationPlannedTotal = illustrationKinds.reduce((sum, kind) => sum + illustrationStats[kind].planned, 0);
-  const illustrationSuccessTotal = illustrationKinds.reduce((sum, kind) => sum + illustrationStats[kind].success, 0);
-  const showIllustrationStats = developerMode && Boolean(contentIllustrationPlan);
   const planning = phaseVisible && contentStats?.phase === 'planning';
   const restoring = phaseVisible && contentStats?.phase === 'restoring';
   const sectionWordAdjusting = phaseVisible && contentStats?.phase === 'section-word-adjusting';
@@ -562,13 +533,12 @@ function ContentEditPage({
   useEffect(() => {
     window.yibiao?.config.load()
       .then((config) => {
-        setDeveloperMode(Boolean(config.developer_mode));
         setImageModelStatus(config.image_model?.status || 'untested');
         if (config.export_format) {
           setExportFormat(config.export_format);
         }
       })
-      .catch((error) => console.warn('读取开发者模式失败', error));
+      .catch((error) => console.warn('读取配置失败', error));
   }, []);
 
   useEffect(() => {
@@ -683,20 +653,6 @@ function ContentEditPage({
       showToast(`${contentRetryTargetLabel}重试任务已在后台启动`, 'success');
     } catch (error) {
       showToast(error instanceof Error ? error.message : `重试${contentRetryTargetLabel}失败`, 'error');
-    }
-  };
-
-  const rerunIllustrations = async () => {
-    if (!contentIllustrationPlan || taskBlocksGeneration) {
-      return;
-    }
-
-    try {
-      await window.yibiao?.tasks.startContentGeneration({ rerunIllustrations: true });
-      trackConfigUsage({ content_generation_action: 'rerun_illustrations' });
-      showToast('仅重新配图任务已在后台启动', 'success');
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : '启动仅重新配图任务失败', 'error');
     }
   };
 
@@ -968,7 +924,7 @@ function ContentEditPage({
   }
 
   return (
-    <div className={`plan-step-body content-generation-page${showIllustrationStats ? ' has-dev-stats' : ''}`}>
+    <div className="plan-step-body content-generation-page">
       <section className="content-generation-command-bar">
         <div>
           <span className="section-kicker">STEP 05</span>
@@ -999,28 +955,6 @@ function ContentEditPage({
           </button>
         </div>
       </section>
-
-      {showIllustrationStats && (
-        <aside className="content-dev-stats-panel" aria-label="开发者配图统计">
-          <div className="content-dev-stats-summary">
-            <strong>配图统计</strong>
-            <span>共编排 <b>{illustrationPlannedTotal}</b>，成功 <b>{illustrationSuccessTotal}</b></span>
-          </div>
-          {illustrationKinds.map((kind) => (
-            <span className="content-dev-image-stat" key={kind}>
-              <strong>{illustrationKindLabels[kind]}</strong>
-              编排 <b>{illustrationStats[kind].planned}</b>
-              成功 <b>{illustrationStats[kind].success}</b>
-            </span>
-          ))}
-          <button
-            type="button"
-            className="secondary-action content-dev-stats-action"
-            disabled={taskBlocksGeneration}
-            onClick={() => void rerunIllustrations()}
-          >仅重新配图</button>
-        </aside>
-      )}
 
       <section className="content-generation-workspace">
         <aside className="content-outline-panel">
