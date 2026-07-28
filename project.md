@@ -6,16 +6,36 @@
 
 当前实施文档：
 
+- Web 单租户首发基线：`.planning/web-single-tenant-release/baseline.md`
 - Web 架构收敛：`.planning/web-architecture-convergence/architecture-convergence.spec.md`
 - 品牌清理：`.planning/yibiao-brand-cleanup/brand-cleanup.spec.md`
 
+其中 `.planning/web-single-tenant-release/baseline.md` 记录 2026-07-28 最新锁定决策；与旧 Spec 冲突时，以该基线为准。
+
 ## 项目目标
 
-基于 Bidding Copilot 现有投标业务能力，交付一个可在浏览器完成核心标书工作流、可使用 Docker 部署、通过 MainQuest OAuth 登录并按账号隔离数据的 `BidMaster` Web 产品。
+基于 Bidding Copilot 现有投标业务能力，交付一个可在浏览器完成核心标书工作流、可使用 Docker 单实例部署到 ECS、通过 MainQuest OAuth 登录的单租户 `BidMaster` Web 产品。
 
-目标不是给 Electron UI 外挂一个 HTTP 壳，而是建立能够在 Linux 容器中独立完成文件导入、AI/Agent 任务、进度恢复、图片渲染、Word 导出和下载的 Web 运行时。
+目标是在 Linux 容器中独立完成文件导入、AI 任务、进度恢复、图片渲染、Word 导出和下载。
 
-## 2026-07-24 锁定决策
+## 2026-07-28 锁定决策
+
+1. **纯 Web 首发。** Electron、桌面发行和桌面回归 Gate 退出首发；portable core 中可复用能力继续保留。
+2. **单租户单实例。** 一个 ECS 部署对应一个租户；获得 BidMaster Product 权限的 MainQuest 用户共享同一业务空间。
+3. **Auth 只做一层。** MainQuest Auth 负责登录和 Product 访问授权；本地只保留用户 session、身份映射和必要审计信息。
+4. **J-Core 选择性迁入。** `origin/main@1c0a17e` 是实施起点；旧 `wp-j-complete` 仅作为来源，不整体合并。
+5. **Agent 退出首发。** Agent Sidecar、Agent Runner、OpenCode/Pi 和 Agent Quality 不进入首发运行时。
+6. **首发表面收缩。** 只开放生成技术方案、已有方案扩写、模板管理和设置。
+7. **交付完整。** 图片生成和高保真 DOCX 属于首发硬门槛；文本降级导出不能作为完成。
+8. **安全格式收缩。** 首发上传只支持 PDF、DOCX、TXT 和 Markdown。
+9. **品牌统一。** 用户可见与运维活跃面统一为 BidMaster；若发现需保留的生产数据，先执行迁移 Gate。
+10. **体量受控。** 首发业务源码净新增预算 3,000 行；单工作包净新增超过 1,000 行时暂停复审。
+
+完整合同、退出范围、隔离方式与完成门槛见 `.planning/web-single-tenant-release/baseline.md`。
+
+## 2026-07-24 历史决策
+
+以下内容保留为历史背景；与 2026-07-28 决策冲突的部分已失效。
 
 1. **架构优先。** PR #3 已合并，但只作为 Web 基线；其中的 stub、`500/501` 占位和缺失 Linux 运行时均是待完成项。先完成架构 Spec，再进入品牌清理。
 2. **Web 是目标交付形态。** 正式候选必须能通过 Docker 在 Linux 启动并完成真实主业务链路。Electron 暂时保留为兼容/回归适配器，不新增桌面专属能力。
@@ -79,30 +99,29 @@ Runtime-neutral bridge contract
       |
 Portable application/core services
       |
-+----------------------+----------------------+
-| Web adapters         | Electron adapters    |
-| HTTP/OAuth/upload    | preload/IPC/dialog   |
-| Linux task runtime   | desktop runtime      |
-| headless render      | BrowserWindow render |
-+----------------------+----------------------+
+Web adapters
+HTTP / MainQuest OAuth / upload / SSE
+AI Runtime / headless Chromium / DOCX export
       |
-Per-account SQLite + files + encrypted config
+Single TenantContext
+SQLite + files + encrypted config
 ```
 
 关键原则：
 
 - portable core 不导入 Electron。
-- Web adapter 把认证账号绑定到唯一 workspace context。
+- Web adapter 把所有授权账号绑定到同一个 TenantContext。
 - 环境差异通过明确 adapter 注入，不在业务服务中散布运行时判断。
-- Renderer 的 Web/Electron bridge 对外保持同一业务契约；不支持的能力在开发期必须可见，在发布候选中不得保留主链路占位。
+- 发布候选的用户可达面不得保留 `pending`、stub 或占位成功。
 
 ## 实施顺序与 Gate
 
-1. 冻结并实现架构 Spec，补齐真实 Web 主链路。
-2. 通过架构验收：Docker/Linux、MainQuest、双账号隔离、任务恢复、导入、生成、渲染和导出。
-3. 冻结兼容矩阵与迁移输入。
-4. 实施品牌 Spec。
-5. 通过品牌验收和完整回归后，才生成 `BidMaster` 发布候选。
+1. 锁定单租户首发基线并建立隔离 worktree。
+2. 选择性迁入 J-Core，删除多 workspace、Agent 和桌面发行链。
+3. 完成真实 MainQuest、真实 AI、图片和高保真 DOCX。
+4. 收口上传安全、Web-only 包装和 BidMaster 品牌。
+5. 通过本地真实闭环后部署 ECS staging。
+6. 完成 HTTPS、SSE、持久化、备份和回滚验收后生成发布候选。
 
 如果架构实现改变持久化格式、bridge 契约、环境变量或部署拓扑，品牌 Spec 必须先更新再执行；不得并行猜测最终命名边界。
 
@@ -112,5 +131,5 @@ Per-account SQLite + files + encrypted config
 - 组件库替换、页面重做、信息架构重排。
 - 多实例横向扩容、共享数据库、对象存储和组织/团队后台。
 - 恢复资源下载、投标机会或插件管理。
-- 未经明确决策删除 Electron 兼容层。
+- Electron 桌面发行和 Agent 产品能力。
 - 未经基础设施迁移计划重命名或删除线上 Cloudflare 资源、GitHub Secrets、OAuth 应用或持久卷。
