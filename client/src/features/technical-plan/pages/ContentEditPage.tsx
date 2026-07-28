@@ -60,12 +60,10 @@ const tableRequirementOptions: Array<{ value: ContentTableRequirement; label: st
 ];
 
 const consistencyRepairModeOptions: Array<{ value: ConsistencyRepairMode; label: string }> = [
-  { value: 'agent', label: 'Agent 修复（推荐）' },
   { value: 'normal', label: '普通修复' },
 ];
 
 const originalPlanCoverageRepairModeOptions: Array<{ value: OriginalPlanCoverageRepairMode; label: string }> = [
-  { value: 'agent', label: 'Agent 修复（推荐）' },
   { value: 'normal', label: '普通修复' },
 ];
 
@@ -98,9 +96,9 @@ const defaultContentGenerationOptions: ContentGenerationOptions = {
   htmlImageTypes: DEFAULT_HTML_IMAGE_TYPES,
   tableRequirement: 'heavy',
   enableConsistencyAudit: true,
-  consistencyRepairMode: 'agent',
+  consistencyRepairMode: 'normal',
   enableOriginalPlanCoverageAudit: false,
-  originalPlanCoverageRepairMode: 'agent',
+  originalPlanCoverageRepairMode: 'normal',
 };
 
 function isContentTableRequirement(value: unknown): value is ContentTableRequirement {
@@ -366,15 +364,7 @@ function ContentEditPage({
   const auditFixTotal = contentStats?.audit_fix_total || 0;
   const auditFixCompleted = contentStats?.audit_fix_completed || 0;
   const auditFixFailed = contentStats?.audit_fix_failed || 0;
-  const auditAgentMode = contentStats?.audit_repair_mode === 'agent';
-  const auditAgentStepTotal = contentStats?.audit_agent_step_total || 0;
-  const auditAgentStepCompleted = contentStats?.audit_agent_step_completed || 0;
-  const auditAgentStepLabel = contentStats?.audit_agent_step_label || '';
-  const auditAgentChangedSections = contentStats?.audit_agent_changed_sections || 0;
-  const auditAgentFailedSections = contentStats?.audit_agent_failed_sections || 0;
-  const auditProgress = auditAgentMode && auditAgentStepTotal
-    ? Math.round((auditAgentStepCompleted / auditAgentStepTotal) * 100)
-    : auditFixTotal
+  const auditProgress = auditFixTotal
     ? Math.round((auditFixCompleted / auditFixTotal) * 100)
     : auditGroupTotal
       ? Math.round((auditGroupCompleted / auditGroupTotal) * 100)
@@ -386,11 +376,9 @@ function ContentEditPage({
   const tableCleanupProgress = tableCleanupTotal ? Math.round((tableCleanupCompleted / tableCleanupTotal) * 100) : 0;
   const auditCorrectionCount = auditFixTotal
     ? `${auditFixCompleted}/${auditFixTotal}`
-    : auditAgentMode && auditAgentStepTotal
-      ? `${auditAgentStepCompleted}/${auditAgentStepTotal}`
-      : auditGroupTotal
-        ? `${auditGroupCompleted}/${auditGroupTotal}`
-        : '检查中';
+    : auditGroupTotal
+      ? `${auditGroupCompleted}/${auditGroupTotal}`
+      : '检查中';
   const contentCorrectionProgress = tableCleaning ? tableCleanupProgress : auditProgress;
   const contentCorrectionCount = tableCleaning
     ? tableCleanupTotal ? `${tableCleanupCompleted}/${tableCleanupTotal}` : '检查中'
@@ -453,28 +441,14 @@ function ContentEditPage({
             : `正在进行全文字数调整，当前 ${currentWords} 字，目标 ${wordTargetText}，第 ${totalAdjustmentRound}/${totalAdjustmentRoundTotal} 轮已完成 ${totalAdjustmentBatchCompleted}/${totalAdjustmentBatchTotal} 个小节，正在处理 ${totalAdjustmentActiveCount} 个${totalAdjustmentItemId ? `（最近：${totalAdjustmentItemId}）` : ''}${totalAdjustmentBatchFailed ? `，失败 ${totalAdjustmentBatchFailed} 个` : ''}${totalAdjustmentRemainingWords ? `，仍需调整约 ${totalAdjustmentRemainingWords} 字` : ''}。`
         : originalAuditing
             ? paused
-              ? auditAgentMode
-                ? `内容矫正已暂停在原方案覆盖 Agent 修复阶段，步骤 ${auditAgentStepCompleted}/${auditAgentStepTotal}。${auditAgentStepLabel}`
-                : `内容矫正已暂停在原方案覆盖检查阶段，审计 ${auditGroupCompleted}/${auditGroupTotal} 个小节，修复 ${auditFixCompleted}/${auditFixTotal} 个小节。`
-              : auditAgentMode
-                ? auditAgentFailedSections
-                  ? `原方案覆盖 Agent 修复未完成：${auditAgentFailedSections} 个小节需人工核对，任务将继续进入后续流程。`
-                  : auditAgentStepCompleted >= auditAgentStepTotal && auditAgentChangedSections
-                    ? `原方案覆盖 Agent 修复完成：已回写 ${auditAgentChangedSections} 个小节。`
-                    : `正在内容矫正：${auditAgentStepLabel || 'Agent 正在检查并补回原方案内容'}，步骤 ${auditAgentStepCompleted}/${auditAgentStepTotal || 5}。`
-                : auditFixTotal
+              ? `内容矫正已暂停在原方案覆盖检查阶段，审计 ${auditGroupCompleted}/${auditGroupTotal} 个小节，修复 ${auditFixCompleted}/${auditFixTotal} 个小节。`
+              : auditFixTotal
                 ? `正在内容矫正：补写原方案缺失内容，已完成 ${auditFixCompleted}/${auditFixTotal} 个小节${auditFixFailed ? `，${auditFixFailed} 个需人工核对` : ''}。`
                 : `正在内容矫正：检查原方案覆盖情况，已完成 ${auditGroupCompleted}/${auditGroupTotal} 个小节${auditConflictTotal ? `，发现 ${auditConflictTotal} 个需核对来源段` : ''}。`
           : auditing
             ? paused
-              ? auditAgentMode
-                ? `内容矫正已暂停在 Agent 全文一致性修复阶段，步骤 ${auditAgentStepCompleted}/${auditAgentStepTotal}。${auditAgentStepLabel}`
-                : `内容矫正已暂停在全文一致性检查阶段，审计 ${auditGroupCompleted}/${auditGroupTotal} 组，修复 ${auditFixCompleted}/${auditFixTotal} 个小节。`
-              : auditAgentMode
-                ? auditAgentStepCompleted >= auditAgentStepTotal && auditAgentChangedSections
-                  ? `Agent 一致性修复完成：已回写 ${auditAgentChangedSections} 个小节。`
-                  : `正在内容矫正：${auditAgentStepLabel || 'Agent 正在审计并修复全文'}，步骤 ${auditAgentStepCompleted}/${auditAgentStepTotal || 5}。`
-                : auditFixTotal
+              ? `内容矫正已暂停在全文一致性检查阶段，审计 ${auditGroupCompleted}/${auditGroupTotal} 组，修复 ${auditFixCompleted}/${auditFixTotal} 个小节。`
+              : auditFixTotal
                 ? `正在内容矫正：修复一致性冲突，已完成 ${auditFixCompleted}/${auditFixTotal} 个小节${auditFixFailed ? `，${auditFixFailed} 个需人工核对` : ''}。`
                 : `正在内容矫正：检查全文一致性，已完成 ${auditGroupCompleted}/${auditGroupTotal} 组${auditConflictTotal ? `，发现 ${auditConflictTotal} 个冲突小节` : ''}。`
             : tableCleaning

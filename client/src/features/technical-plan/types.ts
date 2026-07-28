@@ -16,8 +16,8 @@ export type BackgroundTaskType = 'bid-section-extraction' | 'bid-analysis' | 'ou
 export type BackgroundTaskStatus = 'running' | 'pausing' | 'paused' | 'success' | 'error';
 export type ContentGenerationSectionStatus = 'idle' | 'running' | 'success' | 'error';
 export type ContentTableRequirement = 'none' | 'light' | 'moderate' | 'heavy';
-export type ConsistencyRepairMode = 'agent' | 'normal';
-export type OriginalPlanCoverageRepairMode = 'agent' | 'normal';
+export type ConsistencyRepairMode = 'normal';
+export type OriginalPlanCoverageRepairMode = 'normal';
 export type SaveOutlineReason = 'sort' | 'edit' | 'delete' | 'add-root' | 'add-child' | 'replace';
 
 export interface SaveOutlineRequest {
@@ -96,11 +96,6 @@ export interface BackgroundTaskState {
       audit_fix_completed?: number;
       audit_fix_failed?: number;
       audit_repair_mode?: ConsistencyRepairMode | '';
-      audit_agent_step_total?: number;
-      audit_agent_step_completed?: number;
-      audit_agent_step_label?: string;
-      audit_agent_changed_sections?: number;
-      audit_agent_failed_sections?: number;
       table_cleanup_total?: number;
       table_cleanup_completed?: number;
       table_cleanup_rewritten?: number;
