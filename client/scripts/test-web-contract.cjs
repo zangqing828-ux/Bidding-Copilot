@@ -1627,7 +1627,10 @@ async function runBridgeBehavior(inject, context) {
     const accountBLoad = await statusPayload({ namespace: 'config', method: 'load', args: [] }, sessionB);
     const accountBClientId = accountBLoad.payload?.data?.analytics_client_id || '';
     assert(accountBLoad.response.statusCode === 200, 'config.load_B 返回 200');
-    assert(accountBClientId && accountBClientId !== accountAClientId, '两个账号读取的 analytics_client_id 不同');
+    assert(
+      accountBClientId && accountBClientId === accountAClientId,
+      '两个授权账号读取同一租户 analytics_client_id',
+    );
   }
 
   const menuApiText = collectStringLiterals(readSource('src/app/menuConfig.ts'));

@@ -21,6 +21,12 @@ function resolveDataDir() {
 
 const isProduction = process.env.NODE_ENV === 'production';
 const oauthMode = process.env.OAUTH_MODE || 'mock';
+const tenantId = String(process.env.BIDMASTER_TENANT_ID || 'bidmaster').trim();
+
+if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(tenantId)) {
+  console.error('[config] BIDMASTER_TENANT_ID 必须为 1 到 64 位小写字母、数字、下划线或连字符，且首字符为字母或数字');
+  process.exit(1);
+}
 
 // 生产环境禁止 mock 模式，防止运维遗漏配置导致认证被绕过。
 if (isProduction && oauthMode !== 'mainquest') {
@@ -126,6 +132,7 @@ const config = {
   oauth,
   sessionSecret,
   publicBaseUrl,
+  tenantId,
   trustedProxyHops,
   sessionTtlDays: Number(process.env.SESSION_TTL_DAYS) || 7,
   configEncryptionKey: process.env.CONFIG_ENCRYPTION_KEY || '',

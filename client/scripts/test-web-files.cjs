@@ -306,17 +306,17 @@ async function runTests() {
     recreated.db.prepare('DELETE FROM duplicate_check_files WHERE file_id = ?').run(legacyFileId);
   }
 
-  // 0e. 另一账号无法借用 file ID，也不能提交路径替代 file ID。
+  // 0e. 同租户授权账号可复用 file ID，任意服务器路径仍被拒绝。
   {
     const otherCookie = await loginMock('files-other@test.com', 'F2');
-    const crossAccountRes = await httpRequest('POST', '/api/bridge', { cookie: otherCookie }, {
+    const sharedTenantRes = await httpRequest('POST', '/api/bridge', { cookie: otherCookie }, {
       namespace: 'technicalPlan',
       method: 'importTenderDocument',
       args: [[uploadedFileId]],
     });
-    const crossAccount = parseJson(crossAccountRes.body);
-    assert(crossAccountRes.statusCode === 400, '另一账号无法导入对方 file ID');
-    assert(crossAccount?.code === 'UPLOAD_FILE_NOT_FOUND', '跨账号 file ID 不暴露归属信息');
+    const sharedTenant = parseJson(sharedTenantRes.body);
+    assert(sharedTenantRes.statusCode === 200, '同租户另一授权账号可导入共享 file ID');
+    assert(sharedTenant?.code === 'OK', '共享 file ID 调用返回 OK');
 
     const pathIdRes = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
       namespace: 'technicalPlan',

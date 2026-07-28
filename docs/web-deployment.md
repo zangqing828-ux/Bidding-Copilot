@@ -1,4 +1,4 @@
-# Bidding Copilot Web v1 部署指南
+# BidMaster Web 部署指南
 
 ## 前置条件
 
@@ -14,8 +14,10 @@
    - `PUBLIC_BASE_URL`：你的 HTTPS 域名
    - `MAINQUEST_OAUTH_CLIENT_ID` / `MAINQUEST_OAUTH_CLIENT_SECRET`：MainQuest Auth 注册的 OAuth 应用
    - `MAINQUEST_OAUTH_REDIRECT_URI`：`https://你的域名/api/auth/callback`
+   - `BIDMASTER_TENANT_ID`：当前部署的固定租户标识，只允许小写字母、数字、下划线和连字符
    - `SESSION_SECRET`：随机字符串（`openssl rand -hex 32`）
    - `CONFIG_ENCRYPTION_KEY`：随机字符串（`openssl rand -hex 32`）
+3. 在 MainQuest Auth 中把 OAuth Application 绑定到 BidMaster Product，并为允许访问的用户分配 Product 权限
 
 ## 构建与启动
 
@@ -37,7 +39,8 @@ curl -fsS http://127.0.0.1:3000/api/readiness
 
 - 数据卷 `web-data` 挂载到容器 `/data`
 - 系统身份库：`/data/auth.sqlite`
-- 账号数据：`/data/users/<workspaceId>/`
+- 租户业务数据：`/data/users/<BIDMASTER_TENANT_ID>/workspace/`
+- 所有获授权用户共享租户业务数据，各自 session 独立
 - 容器重启后数据保留
 
 ## 反向代理
@@ -70,8 +73,8 @@ docker run --rm -v web-data:/data -v $(pwd):/backup alpine \
 
 - 前端 bundle 不含 OAuth secret / session secret / 配置主密钥
 - 日志不输出 API Key / Token / Prompt / 绝对路径
-- 两账号数据隔离验证
-- 上传大小（50MB）、类型（.docx/.pdf/.doc/.txt/.md/.xlsx）、路径穿越防护
+- 两个授权账号共享租户数据、session 相互隔离
+- 上传大小（50MB）、类型（.docx/.pdf/.txt/.md）、路径穿越防护
 
 ## 环境变量说明
 
@@ -81,6 +84,7 @@ docker run --rm -v web-data:/data -v $(pwd):/backup alpine \
 | `PORT` | 否 | 默认 3000 |
 | `PUBLIC_BASE_URL` | 是 | HTTPS 域名 |
 | `YIBIAO_DATA_DIR` | 否 | 默认 `/data` |
+| `BIDMASTER_TENANT_ID` | 否 | 默认 `bidmaster`，一个部署固定一个值 |
 | `OAUTH_MODE` | 是 | 生产必须 `mainquest` |
 | `MAINQUEST_AUTH_BASE_URL` | 是 | MainQuest Auth 地址 |
 | `MAINQUEST_OAUTH_CLIENT_ID` | 是 | OAuth Client ID |
