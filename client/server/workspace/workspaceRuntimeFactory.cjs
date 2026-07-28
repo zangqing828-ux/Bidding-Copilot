@@ -189,6 +189,8 @@ function createWebWorkspaceRuntime({
       createWebDuplicateCheckServiceStub,
     } = require('./webServices.cjs');
     const { createTechnicalPlanTaskService } = require('./technicalPlanTaskService.cjs');
+    const { createWebImageRenderer } = require('../render/webImageRenderer.cjs');
+    const { createWebIllustrationPorts } = require('../render/webIllustrationPorts.cjs');
     const { createWebAgentService } = require('../agent/webAgentService.cjs');
     const { createWebExportService } = require('../export/webExportService.cjs');
 
@@ -276,11 +278,15 @@ function createWebWorkspaceRuntime({
 
     const knowledgeBaseService = createWebKnowledgeBaseService({ knowledgeBaseStore, fileService });
     const duplicateCheckService = createWebDuplicateCheckServiceStub({ duplicateCheckStore });
+    const imageRenderer = createWebImageRenderer();
+    pushCloseHandler(closeHandlers, createCloseHandler(imageRenderer), 'imageRenderer');
+    const illustrationPorts = createWebIllustrationPorts({ renderer: imageRenderer });
     const taskService = createTechnicalPlanTaskService({
       aiService,
       technicalPlanStore,
       knowledgeBaseService,
       mutationExecutor,
+      illustrationPorts,
     });
     pushCloseHandler(closeHandlers, createCloseHandler(taskService), 'taskService');
 

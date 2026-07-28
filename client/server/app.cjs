@@ -11,6 +11,7 @@ const bridgeRouter = require('./routes/bridge.cjs');
 const authRouter = require('./routes/auth.cjs');
 const uploadsRouter = require('./routes/uploads.cjs');
 const downloadsRouter = require('./routes/downloads.cjs');
+const assetsRouter = require('./routes/assets.cjs');
 const sseRouter = require('./routes/sse.cjs');
 const readinessRouter = require('./routes/readiness.cjs');
 const { requireAuth } = require('./middleware/requireAuth.cjs');
@@ -68,6 +69,7 @@ function createApp() {
   app.use('/api', bridgeRouter);
   app.use('/api', uploadsRouter);
   app.use('/api', downloadsRouter);
+  app.use('/api', assetsRouter);
   app.use('/api', sseRouter);
 
   // 静态文件托管

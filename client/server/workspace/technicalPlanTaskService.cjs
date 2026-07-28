@@ -155,7 +155,7 @@ function buildContentRunnerPayload(canonical) {
   }
 }
 
-function createTechnicalPlanTaskService({ aiService, technicalPlanStore, knowledgeBaseService, mutationExecutor, taskRunners = {} }) {
+function createTechnicalPlanTaskService({ aiService, technicalPlanStore, knowledgeBaseService, mutationExecutor, illustrationPorts, taskRunners = {} }) {
   if (!aiService || !technicalPlanStore || !mutationExecutor) {
     throw new Error('Web 技术方案任务服务缺少运行时依赖');
   }
@@ -347,6 +347,7 @@ function createTechnicalPlanTaskService({ aiService, technicalPlanStore, knowled
         payload,
         previousState,
         queueScopeId,
+        ...(definition.field === 'contentGenerationTask' && illustrationPorts ? { illustrationPorts } : {}),
       };
     },
     releaseRunnerContext({ queueScopeId }) {

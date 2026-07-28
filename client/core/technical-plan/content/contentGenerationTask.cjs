@@ -4793,7 +4793,7 @@ async function runContentGenerationTask({ aiService, workspaceStore, knowledgeBa
       try {
         let result;
         if (planItem.kind === 'ai') {
-          result = await generateAiIllustration(aiService, execution);
+          result = await generateAiIllustration(aiService, execution, { plan: illustrationPlan, workspaceStore });
           logs = [...logs, `AI 配图完成：${planItem.section_ids[0]} ${planItem.title}`];
         } else if (planItem.kind === 'mermaid') {
           result = await generateMermaidIllustration(aiService, execution, isPauseLikeError);

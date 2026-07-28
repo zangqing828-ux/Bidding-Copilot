@@ -414,7 +414,14 @@ const rawMethods = {
   ai: {
     chat: pendingContract('ai.chat', 'runtime', 'WR-06A'),
     requestJson: removedBridgeContract('ai.requestJson', 'runtime', 'WR-01'),
-    testImageModel: pendingContract('ai.testImageModel', 'runtime', 'WR-04'),
+    testImageModel: implementedBridgeContract({
+      owner: 'runtime',
+      workPackage: 'WR-04',
+      contractRef: 'ai.testImageModel',
+      input: [contractArg('config', 'ClientConfig')],
+      output: 'ImageModelTestResult',
+      errors: ['AI_CONFIG_INVALID', 'AI_ENDPOINT_NOT_ALLOWED', 'AI_HTTP_ERROR'],
+    }),
   },
   agent: {
     listRuntimes: removedBridgeContract('agent.listRuntimes', 'workflow', 'WR-01'),

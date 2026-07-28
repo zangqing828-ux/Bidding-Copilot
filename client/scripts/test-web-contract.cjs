@@ -151,11 +151,11 @@ const REQUIRED_WEB_BRIDGE_META_KEYS = [
 ];
 
 const requiredMetaFields = ['status', 'owner', 'workPackage', 'transport', 'contractRef', 'input', 'output', 'errors'];
-const IMPLEMENTED_BRIDGE_RPC_COUNT = 31;
+const IMPLEMENTED_BRIDGE_RPC_COUNT = 32;
 const CONTRACT_STATUS_TOTALS = Object.freeze({
-  implemented: 35,
+  implemented: 36,
   removed: 74,
-  pending: 4,
+  pending: 3,
   total: 113,
 });
 const COMMON_IMPLEMENTED_BRIDGE_ERRORS = [

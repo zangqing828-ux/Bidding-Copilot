@@ -982,7 +982,7 @@ async function main() {
       assert.equal(bridgeContract.methods.config.listModels.status, 'implemented');
       assert.equal(bridgeContract.methods.ai.chat.status, 'pending');
       assert.equal(bridgeContract.methods.ai.requestJson.status, 'removed');
-      assert.equal(bridgeContract.methods.ai.testImageModel.status, 'pending');
+      assert.equal(bridgeContract.methods.ai.testImageModel.status, 'implemented');
       assert.equal(typeof bridgeRouter.__contractDispatchers.config.listModels, 'function');
 
       const coordinator = createAiFairCoordinator();
