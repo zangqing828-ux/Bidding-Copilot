@@ -27,7 +27,7 @@ const electronKnowledgeBaseStore = require('../electron/services/knowledgeBaseSt
 const electronDuplicateCheckStore = require('../electron/services/duplicateCheckStore.cjs');
 const electronRejectionCheckStore = require('../electron/services/rejectionCheckStore.cjs');
 const { createWorkspaceContext } = require('../server/workspace/workspaceContext.cjs');
-const webServices = require('../server/workspace/webServices.cjs');
+const technicalPlanTaskServiceModule = require('../server/workspace/technicalPlanTaskService.cjs');
 
 const passed = [];
 const failed = [];
@@ -831,9 +831,9 @@ function runWorkspaceRollbackCheck(tmpDir) {
         return rollbackDb;
       },
     }],
-    [require.resolve('../server/workspace/webServices.cjs'), {
-      ...webServices,
-      createWebBidAnalysisTaskService() {
+    [require.resolve('../server/workspace/technicalPlanTaskService.cjs'), {
+      ...technicalPlanTaskServiceModule,
+      createTechnicalPlanTaskService() {
         throw expectedError;
       },
     }],

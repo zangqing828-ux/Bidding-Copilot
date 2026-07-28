@@ -23,6 +23,23 @@ type KnowledgeItem = any;
 type RejectionCheckWorkspaceState = any;
 type RejectionDocumentRole = any;
 
+export interface StartOutlineGenerationInput {
+  reference_knowledge_document_ids: string[];
+  outline_expansion_mode: OutlineExpansionMode;
+  word_control_options: OutlineWordControlOptions;
+}
+
+export type StartGlobalFactsGenerationInput = Record<string, never>;
+
+export type PauseContentGenerationInput = Record<string, never>;
+
+export type StartContentGenerationInput =
+  | { resume: true }
+  | { retryContentCorrection: true }
+  | { rerunIllustrations: true }
+  | { regenerate?: boolean; generationOptions: Partial<ContentGenerationOptions> }
+  | { regenerate: true; targetItemId: string; requirement: string; generationOptions: Partial<ContentGenerationOptions> };
+
 export interface TaskEvent<TState = unknown, TRejectionCheckState = unknown, TDuplicateCheckState = unknown> {
   task: unknown;
   technicalPlan?: TState;
@@ -505,10 +522,10 @@ export interface YibiaoBridge {
   tasks: {
     startBidSectionExtraction: (payload?: unknown) => Promise<unknown>;
     startBidAnalysis: (payload: StartBidAnalysisInput) => Promise<BackgroundTaskState>;
-    startOutlineGeneration: (payload: unknown) => Promise<unknown>;
-    startGlobalFactsGeneration: (payload: unknown) => Promise<unknown>;
-    startContentGeneration: (payload: unknown) => Promise<unknown>;
-    pauseContentGeneration: () => Promise<unknown>;
+    startOutlineGeneration: (payload: StartOutlineGenerationInput) => Promise<BackgroundTaskState>;
+    startGlobalFactsGeneration: (payload?: StartGlobalFactsGenerationInput) => Promise<BackgroundTaskState>;
+    startContentGeneration: (payload: StartContentGenerationInput) => Promise<BackgroundTaskState>;
+    pauseContentGeneration: (payload?: PauseContentGenerationInput) => Promise<BackgroundTaskState>;
     startRejectionItemsExtraction: (payload: unknown) => Promise<unknown>;
     startRejectionCheck: (payload: unknown) => Promise<unknown>;
     startDuplicateAnalysis: (payload: unknown) => Promise<unknown>;

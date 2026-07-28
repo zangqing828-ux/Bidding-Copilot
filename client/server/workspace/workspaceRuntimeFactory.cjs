@@ -124,8 +124,19 @@ function createTaskEventPortAndTrack(taskService, closeHandlers) {
 }
 
 function createBidAnalysisTestAiService() {
+  // 浏览器测试装配：chat 返回可追踪文本，collectJsonResponse 返回可通过校验的全局事实 fixture。
+  const globalFactsFixture = {
+    groups: [
+      { title: '项目概况', facts: [{ name: '项目名称', value: '浏览器测试项目' }] },
+    ],
+  };
   return {
     chat: async ({ messages = [] } = {}) => `浏览器测试解析结果：${String(messages.at(-1)?.content || '').slice(0, 24)}`,
+    async collectJsonResponse(options = {}) {
+      const normalized = typeof options.normalizer === 'function' ? options.normalizer(globalFactsFixture) : globalFactsFixture;
+      if (typeof options.validator === 'function') options.validator(normalized);
+      return normalized;
+    },
     close() {},
     getConfig: () => ({}),
     getImageQueueStatus: () => ({ active: 0, queued: 0 }),
@@ -174,10 +185,10 @@ function createWebWorkspaceRuntime({
   try {
     const { createSqliteDatabase } = require('../../core/sqliteDatabase.cjs');
     const {
-      createWebBidAnalysisTaskService,
       createWebKnowledgeBaseService,
       createWebDuplicateCheckServiceStub,
     } = require('./webServices.cjs');
+    const { createTechnicalPlanTaskService } = require('./technicalPlanTaskService.cjs');
     const { createWebAgentService } = require('../agent/webAgentService.cjs');
     const { createWebExportService } = require('../export/webExportService.cjs');
 
@@ -265,9 +276,10 @@ function createWebWorkspaceRuntime({
 
     const knowledgeBaseService = createWebKnowledgeBaseService({ knowledgeBaseStore, fileService });
     const duplicateCheckService = createWebDuplicateCheckServiceStub({ duplicateCheckStore });
-    const taskService = createWebBidAnalysisTaskService({
+    const taskService = createTechnicalPlanTaskService({
       aiService,
       technicalPlanStore,
+      knowledgeBaseService,
       mutationExecutor,
     });
     pushCloseHandler(closeHandlers, createCloseHandler(taskService), 'taskService');

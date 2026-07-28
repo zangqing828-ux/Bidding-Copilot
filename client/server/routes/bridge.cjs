@@ -167,6 +167,10 @@ const bridgeBindingMetadata = Object.freeze({
   tasks: Object.freeze({
     getActiveTasks: createDirectBinding((ctx) => ctx.taskService.getActiveTasks(), 'tasks.getActiveTasks'),
     startBidAnalysis: createDirectBinding((ctx, args, options) => ctx.taskService.startBidAnalysis(args[0], options), 'tasks.startBidAnalysis'),
+    startOutlineGeneration: createDirectBinding((ctx, args) => ctx.taskService.startOutlineGeneration(args[0]), 'tasks.startOutlineGeneration'),
+    startGlobalFactsGeneration: createDirectBinding((ctx, args) => ctx.taskService.startGlobalFactsGeneration(args[0] ?? {}), 'tasks.startGlobalFactsGeneration'),
+    startContentGeneration: createDirectBinding((ctx, args) => ctx.taskService.startContentGeneration(args[0]), 'tasks.startContentGeneration'),
+    pauseContentGeneration: createDirectBinding((ctx, args) => ctx.taskService.pauseContentGeneration(args[0] ?? {}), 'tasks.pauseContentGeneration'),
   }),
 
   export: Object.freeze({
