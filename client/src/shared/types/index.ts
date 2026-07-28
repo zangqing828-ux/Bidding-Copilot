@@ -82,22 +82,3 @@ export {
 export type { OutlineData, OutlineExpansionMode, OutlineItem, OutlineMode, OutlineWordControlOptions, TechnicalRequirementGroup } from './outline';
 export { DEFAULT_OUTLINE_WORD_CONTROL_OPTIONS } from './outline';
 export type { AgentDiagnosticSection, AgentRetryAttempt, AgentRunFile, AgentRunPayload, AgentRunResult, AgentRuntimeActiveTask, AgentRuntimeDescriptor, AgentRuntimePhase, AgentRuntimeStatus, AgentSelfCheckReportExportResult, AgentSelfCheckResult, AgentSelfCheckStatus, AgentSelfCheckStep, AgentSelfCheckStepStatus, GpuHardwareAccelerationStatus, LatestReleaseInfo, LicenseOfflineActivationResult, LicenseRuntimeStatus, UpdateCheckResult, WordExportProgressEvent, WordExportResult, WorkspaceDatabasePhase, WorkspaceDatabaseStatus, YibiaoBridge } from './ipc';
-export type {
-  RejectionCheckFinding,
-  RejectionCheckResultState,
-  RejectionCheckRunStatus,
-  RejectionCheckStep,
-  RejectionCheckOptions,
-  RejectionCheckResultTab,
-  RejectionCheckWorkspaceState,
-  RejectionDocumentContent,
-  RejectionDocumentRole,
-  RejectionDocumentTabId,
-  RejectionDocumentSource,
-  RejectionExtractionSource,
-  RejectionExtractionState,
-  RejectionExtractionStatus,
-  RejectionFindingSeverity,
-  RejectionFindingType,
-  RejectionResultTab,
-} from '../../features/rejection-check/types';

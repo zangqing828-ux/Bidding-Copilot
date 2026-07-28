@@ -78,17 +78,6 @@ function createStoreBinding(storeName, storeMethod, contractRef, { mutation = fa
   });
 }
 
-function pickEditableRejectionState(value) {
-  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const editable = {};
-  for (const field of ['rejectionCheckResult', 'typoCheckResult', 'logicCheckResult']) {
-    if (hasOwnProperty(source, field)) {
-      editable[field] = source[field];
-    }
-  }
-  return editable;
-}
-
 function executeWorkspaceMutation(ctx, operation) {
   if (ctx.mutationExecutor && typeof ctx.mutationExecutor.execute === 'function') {
     return ctx.mutationExecutor.execute(operation);
@@ -207,73 +196,6 @@ const bridgeBindingMetadata = Object.freeze({
     saveContentGenerationOptions: createStoreBinding('technicalPlanStore', 'saveContentGenerationOptions', 'technicalPlan.saveContentGenerationOptions', { mutation: true }),
     saveChapterContent: createStoreBinding('technicalPlanStore', 'saveChapterContent', 'technicalPlan.saveChapterContent', { mutation: true }),
     clear: createStoreBinding('technicalPlanStore', 'clearTechnicalPlan', 'technicalPlan.clear', { mutation: true }),
-    checkBidSections: createStoreBinding('technicalPlanStore', 'checkBidSections', 'technicalPlan.checkBidSections'),
-    selectBidSection: createStoreBinding('technicalPlanStore', 'selectBidSection', 'technicalPlan.selectBidSection', { mutation: true }),
-  }),
-
-  knowledgeBase: Object.freeze({
-    list: createDirectBinding((ctx) => ctx.knowledgeBaseService.list(), 'knowledgeBase.list'),
-    createFolder: createDirectBinding((ctx, args) => ctx.knowledgeBaseService.createFolder(args[0]), 'knowledgeBase.createFolder'),
-    uploadDocuments: createDirectBinding((ctx, args, options) => ctx.knowledgeBaseService.uploadDocuments(args[0], args[1], options), 'knowledgeBase.uploadDocuments'),
-    getMigrationStatus: createStoreBinding('knowledgeBaseStore', 'getMigrationStatus', 'knowledgeBase.getMigrationStatus'),
-    migrateLegacy: createStoreBinding('knowledgeBaseStore', 'migrateLegacy', 'knowledgeBase.migrateLegacy'),
-    renameFolder: createStoreBinding('knowledgeBaseStore', 'renameFolder', 'knowledgeBase.renameFolder'),
-    readMarkdown: createStoreBinding('knowledgeBaseStore', 'readMarkdown', 'knowledgeBase.readMarkdown'),
-    readItems: createStoreBinding('knowledgeBaseStore', 'readItems', 'knowledgeBase.readItems'),
-    readAnalysis: createStoreBinding('knowledgeBaseStore', 'readAnalysis', 'knowledgeBase.readAnalysis'),
-  }),
-
-  duplicateCheck: Object.freeze({
-    loadState: createStoreBinding('duplicateCheckStore', 'loadDuplicateCheck', 'duplicateCheck.loadState'),
-    saveFiles: createDirectBinding(
-      (ctx, args) => {
-        const payload = args[0] || {};
-        const tenderFiles = ctx.fileService.resolveDuplicateCheckFiles(payload.tenderFileIds || []);
-        const bidFiles = ctx.fileService.resolveDuplicateCheckFiles(payload.bidFileIds || []);
-        const normalized = {
-          tenderFile: tenderFiles[0] || null,
-          tenderFiles,
-          bidFiles,
-          step: payload.step,
-          activeAnalysisTab: payload.activeAnalysisTab,
-        };
-        return executeWorkspaceStore(
-          ctx,
-          'duplicateCheckStore',
-          'saveFiles',
-          [normalized],
-          () => ctx.stores.duplicateCheckStore.saveFiles(normalized),
-        );
-      },
-      'duplicateCheck.saveFiles',
-    ),
-    saveUiState: createStoreBinding('duplicateCheckStore', 'saveUiState', 'duplicateCheck.saveUiState'),
-    clear: createStoreBinding('duplicateCheckStore', 'clearDuplicateCheck', 'duplicateCheck.clear'),
-  }),
-
-  rejectionCheck: Object.freeze({
-    loadState: createStoreBinding('rejectionCheckStore', 'loadRejectionCheck', 'rejectionCheck.loadState'),
-    importDocument: createDirectBinding(
-      (ctx, args, options) => ctx.stores.rejectionCheckStore.importDocument(args[0], args[1], options),
-      'rejectionCheck.importDocument',
-    ),
-    removeDocument: createStoreBinding('rejectionCheckStore', 'removeDocument', 'rejectionCheck.removeDocument'),
-    saveUiState: createStoreBinding('rejectionCheckStore', 'saveUiState', 'rejectionCheck.saveUiState'),
-    updateState: createDirectBinding(
-      (ctx, args) => {
-        const partial = pickEditableRejectionState(args[0]);
-        return executeWorkspaceStore(
-          ctx,
-          'rejectionCheckStore',
-          'updateRejectionCheck',
-          [partial],
-          () => ctx.stores.rejectionCheckStore.updateRejectionCheck(partial),
-        );
-      },
-      'rejectionCheck.updateState',
-    ),
-    clear: createStoreBinding('rejectionCheckStore', 'clearRejectionCheck', 'rejectionCheck.clear'),
-    importTenderFromTechnicalPlan: createStoreBinding('rejectionCheckStore', 'importTenderFromTechnicalPlan', 'rejectionCheck.importTenderFromTechnicalPlan'),
   }),
 
   templates: Object.freeze({

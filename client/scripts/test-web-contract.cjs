@@ -13,28 +13,107 @@ const ALLOWED_STATUSES = new Set(['implemented', 'pending', 'removed']);
 const FORBIDDEN_PROTOTYPE_IDENTIFIERS = new Set(
   Object.getOwnPropertyNames(Object.prototype).concat(['__proto__'])
 );
-const REMOVED_MENU_SECTIONS = ['resources', 'bid-opportunity', 'plugin-manager'];
 const DELETED_FEATURE_PATHS = [
   'src/features/resources',
   'src/features/bid-opportunity',
   'src/features/plugins',
+  'src/features/business-bid',
+  'src/features/knowledge-base/pages',
+  'src/features/duplicate-check',
+  'src/features/rejection-check',
+  'src/features/developer',
   'electron/services/pluginContext.cjs',
   'electron/services/pluginService.cjs',
   'electron/services/pluginConfigWindow.cjs',
   'electron/ipc/pluginIpc.cjs',
   'electron/preload-plugin-config.cjs',
 ];
-const DELETED_FEATURE_LEAVES = new Set([
+const EXIT_REMOVED_LEAVES = new Set([
   'resources.list',
   'tenderOpportunities.list',
   'plugins.list',
+  'locals.database.getStatus',
+  'events.database.onStatus',
+  'events.ai.onHttpError',
+  'events.agent.onStatus',
+  'events.developerTokenStats.onChanged',
+  'events.knowledgeBase.onEvent',
+  'events.export.onWordExportProgress',
+  'requiredOnlineServices.getStatus',
+  'license.getStatus',
+  'license.refresh',
+  'license.importOfflineFile',
+  'license.activateOfflineCode',
+  'ai.requestJson',
+  'agent.listRuntimes',
+  'agent.run',
+  'agent.selfCheck',
+  'agent.exportSelfCheckReport',
+  'agent.getStatus',
+  'agent.restart',
+  'developerTokenStats.get',
+  'developerTokenStats.reset',
+  'developerExpansionReplaceTest.run',
+  'file.selectDuplicateCheckFiles',
+  'knowledgeBase.getMigrationStatus',
+  'knowledgeBase.migrateLegacy',
+  'knowledgeBase.list',
+  'knowledgeBase.createFolder',
+  'knowledgeBase.renameFolder',
+  'knowledgeBase.reorderFolder',
+  'knowledgeBase.deleteFolder',
+  'knowledgeBase.deleteDocument',
+  'knowledgeBase.moveDocument',
+  'knowledgeBase.uploadDocuments',
+  'knowledgeBase.retryDocument',
+  'knowledgeBase.startMatching',
+  'knowledgeBase.readMarkdown',
+  'knowledgeBase.readItems',
+  'knowledgeBase.readAnalysis',
+  'technicalPlan.checkBidSections',
+  'technicalPlan.selectBidSection',
+  'duplicateCheck.loadState',
+  'duplicateCheck.saveFiles',
+  'duplicateCheck.saveUiState',
+  'duplicateCheck.updateState',
+  'duplicateCheck.clear',
+  'rejectionCheck.loadState',
+  'rejectionCheck.importDocument',
+  'rejectionCheck.importTenderFromTechnicalPlan',
+  'rejectionCheck.removeDocument',
+  'rejectionCheck.saveUiState',
+  'rejectionCheck.updateState',
+  'rejectionCheck.clear',
+  'tasks.startBidSectionExtraction',
+  'tasks.startRejectionItemsExtraction',
+  'tasks.startRejectionCheck',
+  'tasks.startDuplicateAnalysis',
 ]);
-const DELETED_PRODUCT_COUNT = DELETED_FEATURE_LEAVES.size;
+const EXIT_REMOVED_COUNT = EXIT_REMOVED_LEAVES.size;
+const REMOVED_MENU_SECTIONS = [
+  'business-bid',
+  'knowledge-base',
+  'document-knowledge-base',
+  'image-knowledge-base',
+  'bid-check',
+  'duplicate-check',
+  'rejection-check',
+  'ai-evaluation',
+  'developer-test',
+  'developer-json-test',
+  'developer-prompt-lab',
+  'developer-parser-sandbox',
+  'developer-export-preview',
+  'developer-expansion-replace-test',
+  'developer-agent-test',
+];
 const KB_PENDING_METHODS = [
   'deleteFolder',
   'deleteDocument',
   'moveDocument',
   'retryDocument',
+  'reorderFolder',
+  'startMatching',
 ];
 const DESKTOP_ONLY_CAPABILITIES = [
   'app.getGpuHardwareAccelerationStatus',
@@ -72,7 +151,7 @@ const REQUIRED_WEB_BRIDGE_META_KEYS = [
 ];
 
 const requiredMetaFields = ['status', 'owner', 'workPackage', 'transport', 'contractRef', 'input', 'output', 'errors'];
-const IMPLEMENTED_BRIDGE_RPC_COUNT = 49;
+const IMPLEMENTED_BRIDGE_RPC_COUNT = 27;
 const COMMON_IMPLEMENTED_BRIDGE_ERRORS = [
   'UNAUTHORIZED',
   'INVALID_BRIDGE_ARGUMENTS',
@@ -85,7 +164,6 @@ const CONTRACT_ENUM_SOURCES = {
   BidAnalysisMode: 'src/features/technical-plan/types.ts',
   BidSectionMode: 'src/features/technical-plan/types.ts',
   OutlineExpansionMode: 'src/shared/types/outline.ts',
-  RejectionDocumentRole: 'src/features/rejection-check/types.ts',
 };
 
 function resolvePropertyPath(target, pathParts) {
@@ -845,7 +923,7 @@ async function assertContractFieldPresence(entry, manifestKey) {
 }
 
 function assertRemovedProductWhitelist(removedProductEntries) {
-  assert(removedProductEntries.size === DELETED_PRODUCT_COUNT, `deleted-product 条目数量为 ${DELETED_PRODUCT_COUNT}（当前 ${removedProductEntries.size}）`);
+  assert(removedProductEntries.size === EXIT_REMOVED_COUNT, `deleted-product 条目数量为 ${EXIT_REMOVED_COUNT}（当前 ${removedProductEntries.size}）`);
 
   const deletedProductLeaves = new Set();
   for (const [entryKey, spec] of removedProductEntries.entries()) {
@@ -854,8 +932,8 @@ function assertRemovedProductWhitelist(removedProductEntries) {
     assert(typeof spec.contractRef === 'string', `${entryKey} contractRef 存在`);
     deletedProductLeaves.add(spec.contractRef);
   }
-  assert(deletedProductLeaves.size === DELETED_PRODUCT_COUNT, `deleted-product 可比较项数量为 3（当前 ${deletedProductLeaves.size}）`);
-  assertSetEqual(deletedProductLeaves, DELETED_FEATURE_LEAVES, 'deleted-product leaves 白名单');
+  assert(deletedProductLeaves.size === EXIT_REMOVED_COUNT, `deleted-product 可比较项数量为 ${EXIT_REMOVED_COUNT}（当前 ${deletedProductLeaves.size}）`);
+  assertSetEqual(deletedProductLeaves, EXIT_REMOVED_LEAVES, 'deleted-product leaves 白名单');
 }
 
 async function runBridgeBehavior(inject, context) {
@@ -917,12 +995,8 @@ async function runBridgeBehavior(inject, context) {
       assert(false, `manifest 中存在 webBridge 未定义叶子：${manifestKey}`);
     }
 
-    if (['members.appName', 'members.platform', 'locals.openExternal', 'locals.database.getStatus'].includes(manifestKey)) {
+    if (['members.appName', 'members.platform', 'locals.openExternal'].includes(manifestKey)) {
       assert(entry.status === 'implemented', `${manifestKey} 实际应为 implemented`);
-    }
-
-    if (manifestKey === 'events.database.onStatus') {
-      assert(entry.status === 'pending', 'events.database.onStatus 按待实现待定返回');
     }
 
     if (manifestKey.startsWith('events.')) {
@@ -953,23 +1027,6 @@ async function runBridgeBehavior(inject, context) {
       assert(Array.isArray(entry.errors) && entry.errors.length === 1 && entry.errors[0] === 'WEB_BRIDGE_DESKTOP_ONLY', `${manifestKey} errors 包含 WEB_BRIDGE_DESKTOP_ONLY`);
     }
   }
-
-  const updateNotifierSource = readSource('src/app/UpdateNotifier.tsx');
-  assertSourceContains(
-    updateNotifierSource,
-    /const isWeb = window\.yibiao\?\.platform === ['"]web['"]/,
-    'UpdateNotifier 识别 web 平台',
-  );
-  assertSourceContains(
-    updateNotifierSource,
-    /if \(!isWeb\) {\s*void checkUpdate\(\);\s*}/s,
-    'UpdateNotifier web 平台不调用 checkUpdate',
-  );
-  assertSourceContains(
-    updateNotifierSource,
-    /void checkRemoteNotice\(\)/,
-    'UpdateNotifier 保留远程公告检查',
-  );
 
   const settingsPageSource = readSource('src/features/settings/pages/SettingsPage.tsx');
   assertSourceContains(
@@ -1209,14 +1266,19 @@ async function runBridgeBehavior(inject, context) {
           wordControlOptions: {},
         }],
       }],
-      ['rejectionCheck.removeDocument', { namespace: 'rejectionCheck', method: 'removeDocument', args: ['garbage'] }],
+      ['rejectionCheck.removeDocument', { namespace: 'rejectionCheck', method: 'removeDocument', args: ['garbage'] }, 'removed'],
       ['templates.get', { namespace: 'templates', method: 'get', args: [123] }],
       ['tasks.getActiveTasks', { namespace: 'tasks', method: 'getActiveTasks', args: ['extra'] }],
     ];
-    for (const [contractKey, body] of invalidContractCases) {
+    for (const [contractKey, body, expectedRemoved] of invalidContractCases) {
       const invalidResponse = await statusPayload(body);
-      assert(invalidResponse.response.statusCode === 400, `${contractKey} 非法参数返回 400`);
-      assert(invalidResponse.payload.code === 'INVALID_BRIDGE_ARGUMENTS', `${contractKey} 返回稳定参数错误码`);
+      if (expectedRemoved === 'removed') {
+        assert(invalidResponse.response.statusCode === 410, `${contractKey} removed 返回 410`);
+        assert(invalidResponse.payload.code === 'WEB_BRIDGE_REMOVED', `${contractKey} removed 返回 WEB_BRIDGE_REMOVED`);
+      } else {
+        assert(invalidResponse.response.statusCode === 400, `${contractKey} 非法参数返回 400`);
+        assert(invalidResponse.payload.code === 'INVALID_BRIDGE_ARGUMENTS', `${contractKey} 返回稳定参数错误码`);
+      }
     }
     assert(invalidContractWorkspaceResolutions === 0, '非法契约参数不解析 workspace 或进入 Store');
   } finally {
@@ -1231,9 +1293,6 @@ async function runBridgeBehavior(inject, context) {
         switchWorkflowKind: () => ({}),
         saveBidAnalysisConfig: () => ({}),
         saveOutlineConfig: () => ({}),
-      },
-      rejectionCheckStore: {
-        removeDocument: () => ({}),
       },
     },
   }));
@@ -1256,7 +1315,6 @@ async function runBridgeBehavior(inject, context) {
           wordControlOptions: {},
         }],
       }],
-      ['rejectionCheck.removeDocument', { namespace: 'rejectionCheck', method: 'removeDocument', args: ['tender'] }],
     ];
     for (const [contractKey, body] of validContractCases) {
       const validResponse = await statusPayload(body);
@@ -1264,36 +1322,6 @@ async function runBridgeBehavior(inject, context) {
     }
   } finally {
     setWorkspaceContextResolver(previousValidEnumResolver);
-  }
-
-  let rejectionPatch = null;
-  const previousRejectionResolver = setWorkspaceContextResolver(() => ({
-    stores: {
-      rejectionCheckStore: {
-        updateRejectionCheck: (partial) => {
-          rejectionPatch = partial;
-          return partial;
-        },
-      },
-    },
-  }));
-  try {
-    const rejectionRes = await statusPayload({
-      namespace: 'rejectionCheck',
-      method: 'updateState',
-      args: [{
-        rejectionCheckResult: { status: 'success' },
-        tenderDocument: { content: 'browser-controlled' },
-        checkTask: { status: 'success' },
-      }],
-    });
-    assert(rejectionRes.response.statusCode === 200, '废标结果编辑通过 Bridge 返回 200');
-    assert(
-      JSON.stringify(rejectionPatch) === JSON.stringify({ rejectionCheckResult: { status: 'success' } }),
-      'rejectionCheck.updateState 只允许浏览器写入可编辑结果字段',
-    );
-  } finally {
-    setWorkspaceContextResolver(previousRejectionResolver);
   }
 
   for (const [manifestKey, entry] of Array.from(contractMap.entries()).filter(([key]) => key.startsWith('events.'))) {
@@ -1417,9 +1445,9 @@ async function runBridgeBehavior(inject, context) {
 
   for (const method of ['listRuntimes', 'run', 'selfCheck', 'exportSelfCheckReport', 'getStatus', 'restart']) {
     const contractKey = `agent.${method}`;
-    const pendingAgentRes = await statusPayload({ namespace: 'agent', method, args: [] });
-    assert(pendingAgentRes.response.statusCode === 501, `${contractKey} 返回 501`);
-    assert(pendingAgentRes.payload.code === 'WEB_CAPABILITY_PENDING', `${contractKey} code 为 WEB_CAPABILITY_PENDING`);
+    const removedAgentRes = await statusPayload({ namespace: 'agent', method, args: [] });
+    assert(removedAgentRes.response.statusCode === 410, `${contractKey} 返回 410`);
+    assert(removedAgentRes.payload.code === 'WEB_BRIDGE_REMOVED', `${contractKey} code 为 WEB_BRIDGE_REMOVED`);
     assert(!bindingMetadata.get(contractKey), `${contractKey} 无 binding spec`);
     assert(
       !routeDispatchers?.agent || typeof routeDispatchers.agent[method] !== 'function',
@@ -1427,11 +1455,11 @@ async function runBridgeBehavior(inject, context) {
     );
   }
 
-  for (const method of ['updateState']) {
+  for (const method of ['updateState', 'loadState', 'saveFiles', 'saveUiState', 'clear']) {
     const contractKey = `duplicateCheck.${method}`;
-    const pendingDuplicateCheckRes = await statusPayload({ namespace: 'duplicateCheck', method, args: [{ file_path: '/outside/workspace.txt', content_path: '/outside/content.txt' }] });
-    assert(pendingDuplicateCheckRes.response.statusCode === 501, `${contractKey} 返回 501`);
-    assert(pendingDuplicateCheckRes.payload.code === 'WEB_CAPABILITY_PENDING', `${contractKey} code 为 WEB_CAPABILITY_PENDING`);
+    const removedDuplicateCheckRes = await statusPayload({ namespace: 'duplicateCheck', method, args: [{ file_path: '/outside/workspace.txt', content_path: '/outside/content.txt' }] });
+    assert(removedDuplicateCheckRes.response.statusCode === 410, `${contractKey} 返回 410`);
+    assert(removedDuplicateCheckRes.payload.code === 'WEB_BRIDGE_REMOVED', `${contractKey} code 为 WEB_BRIDGE_REMOVED`);
     const bindingSpec = bindingMetadata.get(contractKey);
     assert(!bindingSpec, `${contractKey} 无 binding spec`);
     assert(
@@ -1440,21 +1468,11 @@ async function runBridgeBehavior(inject, context) {
     );
   }
 
-  const protectedDuplicateCheckRes = await statusPayload({
-    namespace: 'duplicateCheck',
-    method: 'saveFiles',
-    args: [{ tenderFileIds: [], bidFileIds: [], file_path: '/outside/workspace.txt', content_path: '/outside/content.txt' }],
-  });
-  assert(protectedDuplicateCheckRes.response.statusCode === 400, 'duplicateCheck.saveFiles 拒绝空 file ID 列表');
-  assert(protectedDuplicateCheckRes.payload.code === 'UPLOAD_FILE_ID_INVALID', 'duplicateCheck.saveFiles 不接受浏览器路径字段');
-  assert(Boolean(bindingMetadata.get('duplicateCheck.saveFiles')), 'duplicateCheck.saveFiles 有 binding spec');
-  assert(typeof routeDispatchers?.duplicateCheck?.saveFiles === 'function', 'duplicateCheck.saveFiles 有 route dispatcher');
-
   for (const method of KB_PENDING_METHODS) {
     const contractKey = `knowledgeBase.${method}`;
-    const pendingKnowledgeRes = await statusPayload({ namespace: 'knowledgeBase', method, args: [] });
-    assert(pendingKnowledgeRes.response.statusCode === 501, `${contractKey} 返回 501`);
-    assert(pendingKnowledgeRes.payload.code === 'WEB_CAPABILITY_PENDING', `${contractKey} code 为 WEB_CAPABILITY_PENDING`);
+    const removedKnowledgeRes = await statusPayload({ namespace: 'knowledgeBase', method, args: [] });
+    assert(removedKnowledgeRes.response.statusCode === 410, `${contractKey} 返回 410`);
+    assert(removedKnowledgeRes.payload.code === 'WEB_BRIDGE_REMOVED', `${contractKey} code 为 WEB_BRIDGE_REMOVED`);
 
     const bindingSpec = bindingMetadata.get(contractKey);
     assert(!bindingSpec, `${contractKey} 无 binding spec`);
@@ -1473,7 +1491,10 @@ async function runBridgeBehavior(inject, context) {
   }
 
   for (const removedEntry of removedProductEntries.values()) {
-    const [namespace, method] = removedEntry.contractRef.split('.');
+    if (removedEntry.transport === 'event') continue;
+    const parts = removedEntry.contractRef.split('.');
+    if (parts.length !== 2) continue;
+    const [namespace, method] = parts;
     const removedRes = await statusPayload({ namespace, method, args: [] });
     assert(removedRes.response.statusCode === 410, `${removedEntry.contractRef} 返回 410`);
     assert(removedRes.payload.code === 'WEB_BRIDGE_REMOVED', `${removedEntry.contractRef} 返回 WEB_BRIDGE_REMOVED`);
@@ -1528,31 +1549,31 @@ async function runBridgeBehavior(inject, context) {
   });
 
   try {
-    const wsPendingRes = await statusPayload({ namespace: 'tasks', method: 'startBidSectionExtraction', args: [] });
-    assert(wsPendingRes.response.statusCode === 501, 'pending 能力返回 501，且不触发 workspace');
-    assert(workspaceResolved === 0, 'pending 能力未初始化 workspace');
+    const wsRemovedRes = await statusPayload({ namespace: 'tasks', method: 'startBidSectionExtraction', args: [] });
+    assert(wsRemovedRes.response.statusCode === 410, 'removed 能力返回 410，且不触发 workspace');
+    assert(workspaceResolved === 0, 'removed 能力未初始化 workspace');
 
     for (const method of ['updateState']) {
-      const wsDuplicateCheckPendingRes = await statusPayload({ namespace: 'duplicateCheck', method, args: [{ file_path: '/outside/workspace.txt', content_path: '/outside/content.txt' }] });
-      assert(wsDuplicateCheckPendingRes.response.statusCode === 501, `duplicateCheck.${method} 返回 501 且不触发 workspace`);
+      const wsDuplicateCheckRemovedRes = await statusPayload({ namespace: 'duplicateCheck', method, args: [{ file_path: '/outside/workspace.txt', content_path: '/outside/content.txt' }] });
+      assert(wsDuplicateCheckRemovedRes.response.statusCode === 410, `duplicateCheck.${method} 返回 410 且不触发 workspace`);
       assert(workspaceResolved === 0, `duplicateCheck.${method} 不初始化 workspace`);
     }
 
     for (const method of KB_PENDING_METHODS) {
-      const wsKnowledgePendingRes = await statusPayload({ namespace: 'knowledgeBase', method, args: [] });
-      assert(wsKnowledgePendingRes.response.statusCode === 501, `knowledgeBase.${method} 返回 501 且不触发 workspace`);
+      const wsKnowledgeRemovedRes = await statusPayload({ namespace: 'knowledgeBase', method, args: [] });
+      assert(wsKnowledgeRemovedRes.response.statusCode === 410, `knowledgeBase.${method} 返回 410 且不触发 workspace`);
       assert(workspaceResolved === 0, `knowledgeBase.${method} 不初始化 workspace`);
     }
 
     for (const entryName of DESKTOP_ONLY_CAPABILITIES) {
       const [namespace, method] = entryName.split('.');
-      const wsRemovedRes = await statusPayload({ namespace, method, args: [] });
-      assert(wsRemovedRes.response.statusCode === 410, `${entryName} 返回 410，且不触发 workspace`);
+      const wsDesktopOnlyRes = await statusPayload({ namespace, method, args: [] });
+      assert(wsDesktopOnlyRes.response.statusCode === 410, `${entryName} 返回 410，且不触发 workspace`);
       assert(workspaceResolved === 0, `${entryName} 不初始化 workspace`);
     }
 
-    const wsRemovedRes = await statusPayload({ namespace: 'resources', method: 'list', args: [] });
-    assert(wsRemovedRes.response.statusCode === 410, 'removed 能力返回 410，且不触发 workspace');
+    const wsResourceRemovedRes = await statusPayload({ namespace: 'resources', method: 'list', args: [] });
+    assert(wsResourceRemovedRes.response.statusCode === 410, 'removed 能力返回 410，且不触发 workspace');
     assert(workspaceResolved === 0, 'removed 能力未初始化 workspace');
   } finally {
     if (typeof oldResolver === 'function') {
@@ -1640,6 +1661,13 @@ async function runBridgeBehavior(inject, context) {
     assert(!routerText.has(removedId), `AppRouter 不再声明 ${removedId}`);
     assert(!navigationText.has(removedId), `navigation 不再声明 ${removedId}`);
     assert(!sidebarText.has(removedId), `Sidebar 不再声明 ${removedId}`);
+  }
+
+  for (const retainedId of ['technical-plan', 'existing-plan-expansion', 'my-templates', 'settings']) {
+    const navigationHas = navigationText.has(retainedId);
+    const routerHas = routerText.has(retainedId);
+    const sidebarHas = sidebarText.has(retainedId);
+    assert(navigationHas || sidebarHas || routerHas, `${retainedId} 至少在 navigation/router/sidebar 之一可达`);
   }
 
   for (const targetPath of DELETED_FEATURE_PATHS) {

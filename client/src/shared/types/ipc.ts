@@ -1,11 +1,27 @@
 import type { AiHttpErrorPayload, ChatCompletionRequest, JsonCompletionRequest } from './ai';
-import type { DuplicateCheckSaveFilesRequest, DuplicateCheckWorkspaceState, FileSelectionResult } from './bid';
+import type { FileSelectionResult } from './bid';
 import type { ClientConfig, ConfigSaveResult, ImageModelTestResult, ModelListConfig, ModelListResult, UpdateChannel } from './config';
-import type { KnowledgeAnalysisSnapshot, KnowledgeBaseEvent, KnowledgeBaseIndex, KnowledgeBaseIndexMutationResult, KnowledgeBaseMigrationResult, KnowledgeBaseMigrationStatus, KnowledgeBaseMutationResult, KnowledgeBaseRetryDocumentResult, KnowledgeBaseStartMatchingResult, KnowledgeBaseUploadResult, KnowledgeDocument, KnowledgeFolder, KnowledgeItem } from '../../features/knowledge-base/types';
-import type { RejectionCheckWorkspaceState, RejectionDocumentRole } from '../../features/rejection-check/types';
 import type { BackgroundTaskState, BidAnalysisMode, BidAnalysisTaskState, BidSectionMode, ContentGenerationOptions, ContentGenerationPlanState, ContentGenerationRuntimeState, ContentGenerationSectionState, DetectedBidSection, GlobalFactGroupState, SaveOutlineRequest, StartBidAnalysisInput, TechnicalPlanImportResult, TechnicalPlanState, TechnicalPlanStep, TechnicalPlanWorkflowKind } from '../../features/technical-plan/types';
 import type { ExportFormatConfig, ExportTemplateRecord } from './exportFormat';
 import type { OutlineData, OutlineExpansionMode, OutlineWordControlOptions } from './outline';
+
+type DuplicateCheckSaveFilesRequest = any;
+type DuplicateCheckWorkspaceState = any;
+type KnowledgeAnalysisSnapshot = any;
+type KnowledgeBaseEvent = any;
+type KnowledgeBaseIndex = any;
+type KnowledgeBaseIndexMutationResult = any;
+type KnowledgeBaseMigrationResult = any;
+type KnowledgeBaseMigrationStatus = any;
+type KnowledgeBaseMutationResult = any;
+type KnowledgeBaseRetryDocumentResult = any;
+type KnowledgeBaseStartMatchingResult = any;
+type KnowledgeBaseUploadResult = any;
+type KnowledgeDocument = any;
+type KnowledgeFolder = any;
+type KnowledgeItem = any;
+type RejectionCheckWorkspaceState = any;
+type RejectionDocumentRole = any;
 
 export interface TaskEvent<TState = unknown, TRejectionCheckState = unknown, TDuplicateCheckState = unknown> {
   task: unknown;

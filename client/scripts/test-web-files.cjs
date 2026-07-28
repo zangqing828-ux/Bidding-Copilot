@@ -184,7 +184,7 @@ async function runTests() {
     assert(parsed?.data?.state?.tenderFile?.fileName === '招标文件.txt', '技术方案 Store 保存上传文件结果');
   }
 
-  // 0d. 其余三个业务入口复用同一个账号 registry，不接收浏览器路径。
+  // 0d. 退出能力（查重、废标检查、知识库）统一返回 410 + WEB_BRIDGE_REMOVED。
   {
     const { boundary, body } = multipartFile('file', '投标文件.txt', 'text/plain', '第二章 投标响应', '----bidfile');
     const uploadRes = await httpRequest('POST', '/api/uploads', {
@@ -194,55 +194,40 @@ async function runTests() {
     bidFileId = parseJson(uploadRes.body)?.fileId || '';
     assert(uploadRes.statusCode === 200 && /^[0-9a-f-]{36}$/i.test(bidFileId), '投标文件取得独立 file ID');
 
-    const duplicateRes = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
-      namespace: 'duplicateCheck',
-      method: 'saveFiles',
-      args: [{ tenderFileIds: [uploadedFileId], bidFileIds: [bidFileId], step: 'upload', activeAnalysisTab: 'metadata' }],
-    });
-    const duplicate = parseJson(duplicateRes.body);
-    assert(duplicateRes.statusCode === 200, '查重文件通过 file ID 保存成功');
-    assert(duplicate?.data?.tenderFiles?.length === 1 && duplicate?.data?.bidFiles?.length === 1, '查重 Store 只保存当前账号文件');
-    const duplicatePayload = JSON.stringify(duplicate?.data || {});
-    assert(!duplicatePayload.includes(tmpDir) && !duplicatePayload.includes('/uploads/'), '查重状态不返回服务器绝对路径');
-    assert(duplicatePayload.includes(`upload:${uploadedFileId}`), '查重状态仅保留不可解析的上传引用');
+    for (const [ns, method] of [
+      ['duplicateCheck', 'saveFiles'],
+      ['rejectionCheck', 'importDocument'],
+      ['knowledgeBase', 'createFolder'],
+      ['knowledgeBase', 'uploadDocuments'],
+      ['knowledgeBase', 'list'],
+    ]) {
+      const removedRes = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
+        namespace: ns,
+        method,
+        args: [],
+      });
+      const removed = parseJson(removedRes.body);
+      assert(removedRes.statusCode === 410, `${ns}.${method} 返回 410 已下线`);
+      assert(removed?.code === 'WEB_BRIDGE_REMOVED', `${ns}.${method} 返回 WEB_BRIDGE_REMOVED`);
+    }
+  }
 
-    const rejectionTenderRes = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
-      namespace: 'rejectionCheck',
-      method: 'importDocument',
-      args: ['tender', [uploadedFileId]],
-    });
-    const rejectionTender = parseJson(rejectionTenderRes.body);
-    assert(rejectionTenderRes.statusCode === 200 && rejectionTender?.data?.success === true, '废标检查招标文件通过 file ID 导入成功');
-
-    const rejectionBidRes = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
-      namespace: 'rejectionCheck',
-      method: 'importDocument',
-      args: ['bid', [bidFileId]],
-    });
-    const rejectionBid = parseJson(rejectionBidRes.body);
-    assert(rejectionBidRes.statusCode === 200 && rejectionBid?.data?.state?.bidDocuments?.length === 1, '废标检查投标文件通过 file ID 导入成功');
-
-    const folderRes = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
-      namespace: 'knowledgeBase',
-      method: 'createFolder',
-      args: ['测试知识库'],
-    });
-    const folder = parseJson(folderRes.body)?.data;
-    assert(folderRes.statusCode === 200 && typeof folder?.id === 'string', '知识库文件夹创建成功');
-    const knowledgeUploadRes = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
-      namespace: 'knowledgeBase',
-      method: 'uploadDocuments',
-      args: [folder?.id, [uploadedFileId]],
-    });
-    const knowledgeUpload = parseJson(knowledgeUploadRes.body);
-    assert(knowledgeUploadRes.statusCode === 200 && knowledgeUpload?.data?.success === true, '知识库通过 file ID 导入成功');
-    const knowledgeListRes = await httpRequest('POST', '/api/bridge', { cookie: cookieStr }, {
-      namespace: 'knowledgeBase',
-      method: 'list',
-      args: [],
-    });
-    const knowledgeList = parseJson(knowledgeListRes.body);
-    assert(knowledgeList?.data?.documents?.length === 1, '知识库导入后可从 Store 恢复');
+  // 0d-2. 范围外格式（DOC/XLSX）上传被允许列表拒绝。
+  {
+    for (const removed of [
+      { fileName: '历史.doc', contentType: 'application/msword', content: 'fake OLE content' },
+      { fileName: '旧表.xls', contentType: 'application/vnd.ms-excel', content: 'fake XLS content' },
+      { fileName: '报价.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: 'fake XLSX content' },
+    ]) {
+      const { boundary, body } = multipartFile('file', removed.fileName, removed.contentType, removed.content, `----${removed.fileName.replace(/\W/g, '')}`);
+      const res = await httpRequest('POST', '/api/uploads', {
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+        cookie: cookieStr,
+      }, body);
+      const parsed = parseJson(res.body);
+      assert(res.statusCode === 400, `${removed.fileName} 上传被拒（400，范围外格式）`);
+      assert(/不支持的文件类型/.test(String(parsed?.message || '')), `${removed.fileName} 范围外格式提示`);
+    }
   }
 
   // 0f. 多文件批次任一文件不合法时，Registry 与物理文件一起回滚。

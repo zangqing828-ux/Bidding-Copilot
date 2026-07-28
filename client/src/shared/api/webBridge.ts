@@ -5,21 +5,24 @@ import { httpClient } from './httpClient';
 
 type ErrorWithCode = Error & { code?: string };
 
-function createWebBridgeEventError(code: string, message: string): ErrorWithCode {
+function createWebBridgeError(code: string, message: string): ErrorWithCode {
   const error: ErrorWithCode = new Error(message);
   error.code = code;
   return error;
 }
 
-function throwWebBridgeEventError(code: string, message: string) {
+function throwWebBridgeError(code: string, message: string) {
   return () => {
-    throw createWebBridgeEventError(code, message);
+    throw createWebBridgeError(code, message);
   };
 }
 
-// 通用 invoke 包装：透传 namespace.method 调用，pending 能力由服务端返回 501。
-// 返回 Promise<unknown>；实际状态与错误口径以 bridge contract manifest 为准。
-// 对象用 as YibiaoBridge 断言，因为 httpClient.invoke 的返回类型无法从接口方法签名反向推断。
+function throwWebBridgeEventError(code: string, message: string) {
+  return () => {
+    throw createWebBridgeError(code, message);
+  };
+}
+
 function bridgeMethod(namespace: string, method: string) {
   return (...args: unknown[]) => httpClient.invoke(namespace, method, args);
 }
@@ -38,7 +41,6 @@ export const webBridge = {
   getLatestVersion: bridgeMethod('app', 'getLatestVersion'),
   getUpdateDownloadUrl: bridgeMethod('app', 'getUpdateDownloadUrl'),
   openExternal: async (url: string) => {
-    // 浏览器降级：与 Sidebar 现有 fallback 一致。
     window.open(url, '_blank', 'noopener,noreferrer');
     return { success: true };
   },
@@ -49,9 +51,8 @@ export const webBridge = {
   onUpdateDownloaded: throwWebBridgeEventError('WEB_BRIDGE_DESKTOP_ONLY', '更新下载完成事件仅桌面端可用'),
   onUpdateError: throwWebBridgeEventError('WEB_BRIDGE_DESKTOP_ONLY', '更新错误事件仅桌面端可用'),
   database: {
-    // Web 端无本地数据库：直接返回就绪状态，WorkspaceDatabaseGate 放行进入工作台。
-    getStatus: async () => ({ phase: 'ready', ready: true, message: '本地数据库已就绪', updatedAt: new Date().toISOString() }),
-    onStatus: throwWebBridgeEventError('WEB_CAPABILITY_PENDING', '数据库状态事件暂未在 Web 提供'),
+    getStatus: throwWebBridgeError('WEB_BRIDGE_REMOVED', '桌面数据库能力已下线'),
+    onStatus: throwWebBridgeEventError('WEB_BRIDGE_REMOVED', '桌面数据库能力已下线'),
   },
   config: {
     load: bridgeMethod('config', 'load'),
@@ -69,7 +70,7 @@ export const webBridge = {
     chat: bridgeMethod('ai', 'chat'),
     requestJson: bridgeMethod('ai', 'requestJson'),
     testImageModel: bridgeMethod('ai', 'testImageModel'),
-    onHttpError: throwWebBridgeEventError('WEB_CAPABILITY_PENDING', 'AI HTTP 错误事件暂未在 Web 提供'),
+    onHttpError: throwWebBridgeEventError('WEB_BRIDGE_REMOVED', 'AI HTTP 错误事件已下线'),
   },
   agent: {
     listRuntimes: bridgeMethod('agent', 'listRuntimes'),
@@ -78,13 +79,13 @@ export const webBridge = {
     exportSelfCheckReport: bridgeMethod('agent', 'exportSelfCheckReport'),
     getStatus: bridgeMethod('agent', 'getStatus'),
     restart: bridgeMethod('agent', 'restart'),
-    onStatus: throwWebBridgeEventError('WEB_CAPABILITY_PENDING', 'Agent 状态事件暂未在 Web 提供'),
+    onStatus: throwWebBridgeEventError('WEB_BRIDGE_REMOVED', 'Agent 状态事件已下线'),
   },
   developerTokenStats: {
     openWindow: bridgeMethod('developerTokenStats', 'openWindow'),
     get: bridgeMethod('developerTokenStats', 'get'),
     reset: bridgeMethod('developerTokenStats', 'reset'),
-    onChanged: throwWebBridgeEventError('WEB_CAPABILITY_PENDING', '开发者 Token 统计事件暂未在 Web 提供'),
+    onChanged: throwWebBridgeEventError('WEB_BRIDGE_REMOVED', '开发者 Token 统计事件已下线'),
   },
   developerExpansionReplaceTest: {
     run: bridgeMethod('developerExpansionReplaceTest', 'run'),
@@ -108,7 +109,7 @@ export const webBridge = {
     readMarkdown: bridgeMethod('knowledgeBase', 'readMarkdown'),
     readItems: bridgeMethod('knowledgeBase', 'readItems'),
     readAnalysis: bridgeMethod('knowledgeBase', 'readAnalysis'),
-    onEvent: throwWebBridgeEventError('WEB_CAPABILITY_PENDING', '知识库增量事件暂未在 Web 提供'),
+    onEvent: throwWebBridgeEventError('WEB_BRIDGE_REMOVED', '知识库增量事件已下线'),
   },
   technicalPlan: {
     loadState: bridgeMethod('technicalPlan', 'loadState'),
@@ -167,7 +168,6 @@ export const webBridge = {
     onTaskEvent: <TState = unknown, TRejectionCheckState = unknown, TDuplicateCheckState = unknown>(
       callback: (event: { task: unknown; technicalPlanPatch?: Partial<TState>; rejectionCheck?: TRejectionCheckState; duplicateCheck?: TDuplicateCheckState; bidItem?: unknown; outlineData?: unknown; contentSection?: unknown; contentPlan?: unknown; contentRuntime?: unknown }) => void
     ): (() => void) => {
-      // Web 环境：通过 SSE 订阅任务事件
       const eventSource = new EventSource('/api/tasks/events');
       eventSource.onmessage = (messageEvent) => {
         try {
@@ -177,11 +177,8 @@ export const webBridge = {
           // 忽略解析错误
         }
       };
-      // EventSource error 时浏览器会自动重连（约 3s 间隔）。
-      // 重连后 sse.cjs 的 subscribeCallback 会重放 activeTasks 快照，恢复语义成立。
-      // 会话过期（401）时 EventSource 会持续重连，由调用方在卸载时 close() 终止。
       eventSource.onerror = () => {
-        // 依赖浏览器自动重连，不做额外处理
+        // 依赖浏览器自动重连
       };
       return () => {
         eventSource.close();
@@ -191,7 +188,7 @@ export const webBridge = {
   export: {
     exportWord: bridgeMethod('export', 'exportWord'),
     openFile: bridgeMethod('export', 'openFile'),
-    onWordExportProgress: throwWebBridgeEventError('WEB_CAPABILITY_PENDING', '导出进度事件暂未在 Web 提供'),
+    onWordExportProgress: throwWebBridgeEventError('WEB_BRIDGE_REMOVED', '导出进度事件已下线'),
   },
   systemFonts: {
     list: bridgeMethod('systemFonts', 'list'),

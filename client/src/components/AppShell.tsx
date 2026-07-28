@@ -1,27 +1,23 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ReactNode } from 'react';
-import AgentRuntimeStatusBar from '../app/AgentRuntimeStatusBar';
 import type { SectionId } from '../shared/types/navigation';
 import Sidebar from './Sidebar';
 
 interface AppShellProps {
   activeSection: SectionId;
   children: ReactNode;
-  developerMode: boolean;
   onSectionChange: (section: SectionId) => void;
 }
 
-function AppShell({ activeSection, children, developerMode, onSectionChange }: AppShellProps) {
+function AppShell({ activeSection, children, onSectionChange }: AppShellProps) {
   const isMac = navigator.platform.toLowerCase().includes('mac');
-  const isWeb = window.yibiao?.platform === 'web';
 
   return (
     <Tooltip.Provider delayDuration={120} skipDelayDuration={80}>
       <div className={`app-shell${isMac ? ' is-mac' : ''}`}>
-        <Sidebar activeSection={activeSection} developerMode={developerMode} onSectionChange={onSectionChange} />
+        <Sidebar activeSection={activeSection} onSectionChange={onSectionChange} />
 
         <main className="main-area">
-          {!isWeb && <AgentRuntimeStatusBar />}
           <section className="content-shell" aria-label="主内容">
             {children}
           </section>

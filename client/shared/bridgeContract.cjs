@@ -33,6 +33,10 @@ const COMMON_IMPLEMENTED_BRIDGE_ERRORS = Object.freeze([
   'INTERNAL_ERROR',
 ]);
 
+const REMOVED_BRIDGE_ERRORS = Object.freeze(['WEB_BRIDGE_REMOVED']);
+const REMOVED_DESKTOP_ERRORS = Object.freeze(['WEB_BRIDGE_DESKTOP_ONLY']);
+const PENDING_ERRORS = Object.freeze(['WEB_CAPABILITY_PENDING']);
+
 const contractEnums = Object.freeze({
   TechnicalPlanStep: Object.freeze([
     'document-analysis',
@@ -83,6 +87,60 @@ function implementedBridgeContract({
     input,
     output: { type: output },
     errors: [...COMMON_IMPLEMENTED_BRIDGE_ERRORS, ...errors],
+  });
+}
+
+function removedBridgeContract(contractRef, owner, workPackage) {
+  return createContractEntry({
+    status: 'removed',
+    owner,
+    workPackage,
+    source: 'deleted-product',
+    transport: 'bridge',
+    contractRef,
+    input: [],
+    output: null,
+    errors: [...REMOVED_BRIDGE_ERRORS],
+  });
+}
+
+function removedEventContract(contractRef, owner, workPackage) {
+  return createContractEntry({
+    status: 'removed',
+    owner,
+    workPackage,
+    source: 'deleted-product',
+    transport: 'event',
+    contractRef,
+    input: [],
+    output: { type: 'void' },
+    errors: [...REMOVED_BRIDGE_ERRORS],
+  });
+}
+
+function removedLocalContract(contractRef, owner, workPackage) {
+  return createContractEntry({
+    status: 'removed',
+    owner,
+    workPackage,
+    source: 'deleted-product',
+    transport: 'local',
+    contractRef,
+    input: [],
+    output: null,
+    errors: [...REMOVED_BRIDGE_ERRORS],
+  });
+}
+
+function pendingContract(contractRef, owner, workPackage) {
+  return createContractEntry({
+    status: 'pending',
+    owner,
+    workPackage,
+    contractRef,
+    input: [],
+    output: null,
+    errors: [...PENDING_ERRORS],
   });
 }
 
@@ -151,20 +209,7 @@ const rawMethods = {
       output: { type: 'object' },
     }),
     database: {
-      getStatus: createContractEntry({
-        status: 'implemented',
-        owner: 'runtime',
-        workPackage: 'WP-A',
-        transport: 'local',
-        contractRef: 'locals.database.getStatus',
-        input: [],
-        output: {
-          phase: 'ready',
-          ready: true,
-          message: 'string',
-          updatedAt: 'string',
-        },
-      }),
+      getStatus: removedLocalContract('locals.database.getStatus', 'runtime', 'WR-01'),
     },
   },
   events: {
@@ -199,59 +244,19 @@ const rawMethods = {
       output: { type: 'void' },
     }),
     database: {
-      onStatus: createContractEntry({
-        status: 'pending',
-        owner: 'runtime',
-        workPackage: 'WP-A',
-        transport: 'event',
-        contractRef: 'events.database.onStatus',
-        output: { type: 'void' },
-        errors: ['WEB_CAPABILITY_PENDING'],
-      }),
+      onStatus: removedEventContract('events.database.onStatus', 'runtime', 'WR-01'),
     },
     ai: {
-      onHttpError: createContractEntry({
-        status: 'pending',
-        owner: 'runtime',
-        workPackage: 'WP-C',
-        transport: 'event',
-        contractRef: 'events.ai.onHttpError',
-        output: { type: 'void' },
-        errors: ['WEB_CAPABILITY_PENDING'],
-      }),
+      onHttpError: removedEventContract('events.ai.onHttpError', 'runtime', 'WR-01'),
     },
     agent: {
-      onStatus: createContractEntry({
-        status: 'pending',
-        owner: 'workflow',
-        workPackage: 'WP-E',
-        transport: 'event',
-        contractRef: 'events.agent.onStatus',
-        output: { type: 'void' },
-        errors: ['WEB_CAPABILITY_PENDING'],
-      }),
+      onStatus: removedEventContract('events.agent.onStatus', 'workflow', 'WR-01'),
     },
     developerTokenStats: {
-      onChanged: createContractEntry({
-        status: 'pending',
-        owner: 'developer',
-        workPackage: 'WP-B',
-        transport: 'event',
-        contractRef: 'events.developerTokenStats.onChanged',
-        output: { type: 'void' },
-        errors: ['WEB_CAPABILITY_PENDING'],
-      }),
+      onChanged: removedEventContract('events.developerTokenStats.onChanged', 'developer', 'WR-01'),
     },
     knowledgeBase: {
-      onEvent: createContractEntry({
-        status: 'pending',
-        owner: 'knowledge',
-        workPackage: 'WP-A',
-        transport: 'event',
-        contractRef: 'events.knowledgeBase.onEvent',
-        output: { type: 'void' },
-        errors: ['WEB_CAPABILITY_PENDING'],
-      }),
+      onEvent: removedEventContract('events.knowledgeBase.onEvent', 'knowledge', 'WR-01'),
     },
     tasks: {
       onTaskEvent: createContractEntry({
@@ -265,24 +270,11 @@ const rawMethods = {
       }),
     },
     export: {
-      onWordExportProgress: createContractEntry({
-        status: 'pending',
-        owner: 'export',
-        workPackage: 'WP-F',
-        transport: 'event',
-        contractRef: 'events.export.onWordExportProgress',
-        output: { type: 'void' },
-        errors: ['WEB_CAPABILITY_PENDING'],
-      }),
+      onWordExportProgress: removedEventContract('events.export.onWordExportProgress', 'export', 'WR-01'),
     },
   },
   app: {
-    getVersion: createContractEntry({
-      status: 'pending',
-      owner: 'web-shell',
-      workPackage: 'WP-G',
-      contractRef: 'app.getVersion',
-    }),
+    getVersion: pendingContract('app.getVersion', 'web-shell', 'WR-06A'),
     getGpuHardwareAccelerationStatus: createContractEntry({
       status: 'removed',
       owner: 'desktop',
@@ -366,7 +358,7 @@ const rawMethods = {
     }),
   },
   requiredOnlineServices: {
-    getStatus: createContractEntry({ status: 'pending', owner: 'runtime', workPackage: 'WP-G', contractRef: 'requiredOnlineServices.getStatus' }),
+    getStatus: removedBridgeContract('requiredOnlineServices.getStatus', 'runtime', 'WR-01'),
   },
   config: {
     load: implementedBridgeContract({
@@ -414,23 +406,23 @@ const rawMethods = {
     }),
   },
   license: {
-    getStatus: createContractEntry({ status: 'pending', owner: 'settings', workPackage: 'WP-G', contractRef: 'license.getStatus' }),
-    refresh: createContractEntry({ status: 'pending', owner: 'settings', workPackage: 'WP-G', contractRef: 'license.refresh' }),
-    importOfflineFile: createContractEntry({ status: 'pending', owner: 'settings', workPackage: 'WP-G', contractRef: 'license.importOfflineFile' }),
-    activateOfflineCode: createContractEntry({ status: 'pending', owner: 'settings', workPackage: 'WP-G', contractRef: 'license.activateOfflineCode' }),
+    getStatus: removedBridgeContract('license.getStatus', 'settings', 'WR-01'),
+    refresh: removedBridgeContract('license.refresh', 'settings', 'WR-01'),
+    importOfflineFile: removedBridgeContract('license.importOfflineFile', 'settings', 'WR-01'),
+    activateOfflineCode: removedBridgeContract('license.activateOfflineCode', 'settings', 'WR-01'),
   },
   ai: {
-    chat: createContractEntry({ status: 'pending', owner: 'runtime', workPackage: 'WP-C', contractRef: 'ai.chat' }),
-    requestJson: createContractEntry({ status: 'pending', owner: 'runtime', workPackage: 'WP-C', contractRef: 'ai.requestJson' }),
-    testImageModel: createContractEntry({ status: 'pending', owner: 'runtime', workPackage: 'WP-C', contractRef: 'ai.testImageModel' }),
+    chat: pendingContract('ai.chat', 'runtime', 'WR-06A'),
+    requestJson: removedBridgeContract('ai.requestJson', 'runtime', 'WR-01'),
+    testImageModel: pendingContract('ai.testImageModel', 'runtime', 'WR-04'),
   },
   agent: {
-    listRuntimes: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-I-D', contractRef: 'agent.listRuntimes', input: [], output: 'AgentRuntimeDescriptor[]', errors: ['WEB_CAPABILITY_PENDING'] }),
-    run: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-I-D', contractRef: 'agent.run', input: [contractArg('payload', 'AgentRunPayload'), contractArg('runtimeId', 'string', { required: false })], output: { type: 'AgentRunResult' }, errors: ['WEB_CAPABILITY_PENDING'] }),
-    selfCheck: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-I-D', contractRef: 'agent.selfCheck', input: [contractArg('runtimeId', 'string', { required: false })], output: 'AgentSelfCheckResult', errors: ['WEB_CAPABILITY_PENDING'] }),
-    exportSelfCheckReport: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-I-D', contractRef: 'agent.exportSelfCheckReport' }),
-    getStatus: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-I-D', contractRef: 'agent.getStatus', input: [contractArg('runtimeId', 'string', { required: false })], output: 'AgentRuntimeStatus', errors: ['WEB_CAPABILITY_PENDING'] }),
-    restart: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-I-D', contractRef: 'agent.restart', input: [contractArg('reason', 'string', { required: false }), contractArg('runtimeId', 'string', { required: false })], output: 'AgentRuntimeStatus', errors: ['WEB_CAPABILITY_PENDING'] }),
+    listRuntimes: removedBridgeContract('agent.listRuntimes', 'workflow', 'WR-01'),
+    run: removedBridgeContract('agent.run', 'workflow', 'WR-01'),
+    selfCheck: removedBridgeContract('agent.selfCheck', 'workflow', 'WR-01'),
+    exportSelfCheckReport: removedBridgeContract('agent.exportSelfCheckReport', 'workflow', 'WR-01'),
+    getStatus: removedBridgeContract('agent.getStatus', 'workflow', 'WR-01'),
+    restart: removedBridgeContract('agent.restart', 'workflow', 'WR-01'),
   },
   developerTokenStats: {
     openWindow: createContractEntry({
@@ -442,74 +434,31 @@ const rawMethods = {
       contractRef: 'developerTokenStats.openWindow',
       errors: ['WEB_BRIDGE_DESKTOP_ONLY'],
     }),
-    get: createContractEntry({ status: 'pending', owner: 'developer', workPackage: 'WP-B', contractRef: 'developerTokenStats.get' }),
-    reset: createContractEntry({ status: 'pending', owner: 'developer', workPackage: 'WP-B', contractRef: 'developerTokenStats.reset' }),
+    get: removedBridgeContract('developerTokenStats.get', 'developer', 'WR-01'),
+    reset: removedBridgeContract('developerTokenStats.reset', 'developer', 'WR-01'),
   },
   developerExpansionReplaceTest: {
-    run: createContractEntry({ status: 'pending', owner: 'developer', workPackage: 'WP-B', contractRef: 'developerExpansionReplaceTest.run' }),
+    run: removedBridgeContract('developerExpansionReplaceTest.run', 'developer', 'WR-01'),
   },
   file: {
-    selectDuplicateCheckFiles: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-D', contractRef: 'file.selectDuplicateCheckFiles' }),
+    selectDuplicateCheckFiles: removedBridgeContract('file.selectDuplicateCheckFiles', 'workflow', 'WR-01'),
   },
   knowledgeBase: {
-    getMigrationStatus: implementedBridgeContract({
-      owner: 'knowledge',
-      workPackage: 'WP-A',
-      contractRef: 'knowledgeBase.getMigrationStatus',
-      input: [],
-      output: 'KnowledgeBaseMigrationStatus',
-      errors: ['KNOWLEDGE_PATH_OUTSIDE_WORKSPACE'],
-    }),
-    migrateLegacy: implementedBridgeContract({
-      owner: 'knowledge',
-      workPackage: 'WP-A',
-      contractRef: 'knowledgeBase.migrateLegacy',
-      input: [],
-      output: 'KnowledgeBaseMigrationResult',
-      errors: ['KNOWLEDGE_PATH_OUTSIDE_WORKSPACE'],
-    }),
-    list: implementedBridgeContract({ owner: 'knowledge', workPackage: 'WP-D', contractRef: 'knowledgeBase.list', input: [], output: 'KnowledgeBaseIndex' }),
-    createFolder: implementedBridgeContract({ owner: 'knowledge', workPackage: 'WP-D', contractRef: 'knowledgeBase.createFolder', input: [contractArg('name', 'string')], output: 'KnowledgeFolder' }),
-    renameFolder: implementedBridgeContract({
-      owner: 'knowledge',
-      workPackage: 'WP-A',
-      contractRef: 'knowledgeBase.renameFolder',
-      input: [
-        contractArg('folderId', 'string'),
-        contractArg('name', 'string'),
-      ],
-      output: 'KnowledgeFolder',
-    }),
-    reorderFolder: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.reorderFolder' }),
-    deleteFolder: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.deleteFolder' }),
-    deleteDocument: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.deleteDocument' }),
-    moveDocument: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.moveDocument' }),
-    uploadDocuments: implementedBridgeContract({ owner: 'knowledge', workPackage: 'WP-D', contractRef: 'knowledgeBase.uploadDocuments', input: [contractArg('folderId', 'string'), contractArg('fileIds', 'string[]', { required: false })], output: 'KnowledgeBaseUploadResult' }),
-    retryDocument: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.retryDocument' }),
-    startMatching: createContractEntry({ status: 'pending', owner: 'knowledge', workPackage: 'WP-C', contractRef: 'knowledgeBase.startMatching' }),
-    readMarkdown: implementedBridgeContract({
-      owner: 'knowledge',
-      workPackage: 'WP-A',
-      contractRef: 'knowledgeBase.readMarkdown',
-      input: [contractArg('documentId', 'string')],
-      output: 'string',
-      errors: ['KNOWLEDGE_PATH_OUTSIDE_WORKSPACE'],
-    }),
-    readItems: implementedBridgeContract({
-      owner: 'knowledge',
-      workPackage: 'WP-A',
-      contractRef: 'knowledgeBase.readItems',
-      input: [contractArg('documentId', 'string')],
-      output: 'KnowledgeItem[]',
-    }),
-    readAnalysis: implementedBridgeContract({
-      owner: 'knowledge',
-      workPackage: 'WP-A',
-      contractRef: 'knowledgeBase.readAnalysis',
-      input: [contractArg('documentId', 'string')],
-      output: 'KnowledgeAnalysisSnapshot',
-      errors: ['KNOWLEDGE_PATH_OUTSIDE_WORKSPACE'],
-    }),
+    getMigrationStatus: removedBridgeContract('knowledgeBase.getMigrationStatus', 'knowledge', 'WR-01'),
+    migrateLegacy: removedBridgeContract('knowledgeBase.migrateLegacy', 'knowledge', 'WR-01'),
+    list: removedBridgeContract('knowledgeBase.list', 'knowledge', 'WR-01'),
+    createFolder: removedBridgeContract('knowledgeBase.createFolder', 'knowledge', 'WR-01'),
+    renameFolder: removedBridgeContract('knowledgeBase.renameFolder', 'knowledge', 'WR-01'),
+    reorderFolder: removedBridgeContract('knowledgeBase.reorderFolder', 'knowledge', 'WR-01'),
+    deleteFolder: removedBridgeContract('knowledgeBase.deleteFolder', 'knowledge', 'WR-01'),
+    deleteDocument: removedBridgeContract('knowledgeBase.deleteDocument', 'knowledge', 'WR-01'),
+    moveDocument: removedBridgeContract('knowledgeBase.moveDocument', 'knowledge', 'WR-01'),
+    uploadDocuments: removedBridgeContract('knowledgeBase.uploadDocuments', 'knowledge', 'WR-01'),
+    retryDocument: removedBridgeContract('knowledgeBase.retryDocument', 'knowledge', 'WR-01'),
+    startMatching: removedBridgeContract('knowledgeBase.startMatching', 'knowledge', 'WR-01'),
+    readMarkdown: removedBridgeContract('knowledgeBase.readMarkdown', 'knowledge', 'WR-01'),
+    readItems: removedBridgeContract('knowledgeBase.readItems', 'knowledge', 'WR-01'),
+    readAnalysis: removedBridgeContract('knowledgeBase.readAnalysis', 'knowledge', 'WR-01'),
   },
   technicalPlan: {
     loadState: implementedBridgeContract({
@@ -521,20 +470,8 @@ const rawMethods = {
     }),
     importTenderDocument: implementedBridgeContract({ owner: 'technical-plan', workPackage: 'WP-D', contractRef: 'technicalPlan.importTenderDocument', input: [contractArg('fileIds', 'string[]', { required: false })], output: 'TechnicalPlanImportResult' }),
     importOriginalPlanDocument: implementedBridgeContract({ owner: 'technical-plan', workPackage: 'WP-D', contractRef: 'technicalPlan.importOriginalPlanDocument', input: [contractArg('fileIds', 'string[]', { required: false })], output: 'TechnicalPlanImportResult' }),
-    checkBidSections: implementedBridgeContract({
-      owner: 'technical-plan',
-      workPackage: 'WP-A',
-      contractRef: 'technicalPlan.checkBidSections',
-      input: [],
-      output: '{ hasMultiple: boolean; totalDeclared?: number | null }',
-    }),
-    selectBidSection: implementedBridgeContract({
-      owner: 'technical-plan',
-      workPackage: 'WP-A',
-      contractRef: 'technicalPlan.selectBidSection',
-      input: [contractArg('selectedSection', 'DetectedBidSection')],
-      output: '{ success: boolean; message?: string; state: TechnicalPlanState; markdown: string }',
-    }),
+    checkBidSections: removedBridgeContract('technicalPlan.checkBidSections', 'technical-plan', 'WR-01'),
+    selectBidSection: removedBridgeContract('technicalPlan.selectBidSection', 'technical-plan', 'WR-01'),
     readTenderMarkdown: implementedBridgeContract({
       owner: 'technical-plan',
       workPackage: 'WP-A',
@@ -645,80 +582,20 @@ const rawMethods = {
     }),
   },
   duplicateCheck: {
-    loadState: implementedBridgeContract({
-      owner: 'workflow',
-      workPackage: 'WP-A',
-      contractRef: 'duplicateCheck.loadState',
-      input: [],
-      output: 'DuplicateCheckWorkspaceState',
-    }),
-    saveFiles: implementedBridgeContract({
-      owner: 'workflow', workPackage: 'WP-D', contractRef: 'duplicateCheck.saveFiles',
-      input: [contractArg('payload', 'DuplicateCheckSaveFilesRequest')], output: 'DuplicateCheckWorkspaceState',
-    }),
-    saveUiState: implementedBridgeContract({
-      owner: 'workflow',
-      workPackage: 'WP-A',
-      contractRef: 'duplicateCheck.saveUiState',
-      input: [contractArg('payload', 'Partial<Pick<DuplicateCheckWorkspaceState, "step" | "activeAnalysisTab">>')],
-      output: 'DuplicateCheckWorkspaceState',
-    }),
-    updateState: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-D', contractRef: 'duplicateCheck.updateState' }),
-    clear: implementedBridgeContract({
-      owner: 'workflow',
-      workPackage: 'WP-A',
-      contractRef: 'duplicateCheck.clear',
-      input: [],
-      output: '{ success: boolean; message?: string; state: DuplicateCheckWorkspaceState }',
-    }),
+    loadState: removedBridgeContract('duplicateCheck.loadState', 'workflow', 'WR-01'),
+    saveFiles: removedBridgeContract('duplicateCheck.saveFiles', 'workflow', 'WR-01'),
+    saveUiState: removedBridgeContract('duplicateCheck.saveUiState', 'workflow', 'WR-01'),
+    updateState: removedBridgeContract('duplicateCheck.updateState', 'workflow', 'WR-01'),
+    clear: removedBridgeContract('duplicateCheck.clear', 'workflow', 'WR-01'),
   },
   rejectionCheck: {
-    loadState: implementedBridgeContract({
-      owner: 'workflow',
-      workPackage: 'WP-A',
-      contractRef: 'rejectionCheck.loadState',
-      input: [],
-      output: 'RejectionCheckWorkspaceState',
-    }),
-    importDocument: implementedBridgeContract({ owner: 'workflow', workPackage: 'WP-D', contractRef: 'rejectionCheck.importDocument', input: [contractArg('role', 'RejectionDocumentRole', { enum: contractEnums.RejectionDocumentRole }), contractArg('fileIds', 'string[]', { required: false })], output: '{ success: boolean; message?: string; state: RejectionCheckWorkspaceState }' }),
-    importTenderFromTechnicalPlan: implementedBridgeContract({
-      owner: 'workflow',
-      workPackage: 'WP-A',
-      contractRef: 'rejectionCheck.importTenderFromTechnicalPlan',
-      input: [],
-      output: '{ success: boolean; message?: string; state: RejectionCheckWorkspaceState }',
-    }),
-    removeDocument: implementedBridgeContract({
-      owner: 'workflow',
-      workPackage: 'WP-A',
-      contractRef: 'rejectionCheck.removeDocument',
-      input: [
-        contractArg('role', 'RejectionDocumentRole', { enum: contractEnums.RejectionDocumentRole }),
-        contractArg('documentId', 'string', { required: false }),
-      ],
-      output: 'RejectionCheckWorkspaceState',
-    }),
-    saveUiState: implementedBridgeContract({
-      owner: 'workflow',
-      workPackage: 'WP-A',
-      contractRef: 'rejectionCheck.saveUiState',
-      input: [contractArg('payload', 'Partial<Pick<RejectionCheckWorkspaceState, "step" | "activeDocumentTab" | "activeResultTab" | "activeCheckResultTab" | "customCheckItems" | "checkOptions">>')],
-      output: 'RejectionCheckWorkspaceState',
-    }),
-    updateState: implementedBridgeContract({
-      owner: 'workflow',
-      workPackage: 'WP-A',
-      contractRef: 'rejectionCheck.updateState',
-      input: [contractArg('partial', 'Partial<Pick<RejectionCheckWorkspaceState, "rejectionCheckResult" | "typoCheckResult" | "logicCheckResult">>')],
-      output: 'RejectionCheckWorkspaceState',
-    }),
-    clear: implementedBridgeContract({
-      owner: 'workflow',
-      workPackage: 'WP-A',
-      contractRef: 'rejectionCheck.clear',
-      input: [],
-      output: '{ success: boolean; message?: string; state: RejectionCheckWorkspaceState }',
-    }),
+    loadState: removedBridgeContract('rejectionCheck.loadState', 'workflow', 'WR-01'),
+    importDocument: removedBridgeContract('rejectionCheck.importDocument', 'workflow', 'WR-01'),
+    importTenderFromTechnicalPlan: removedBridgeContract('rejectionCheck.importTenderFromTechnicalPlan', 'workflow', 'WR-01'),
+    removeDocument: removedBridgeContract('rejectionCheck.removeDocument', 'workflow', 'WR-01'),
+    saveUiState: removedBridgeContract('rejectionCheck.saveUiState', 'workflow', 'WR-01'),
+    updateState: removedBridgeContract('rejectionCheck.updateState', 'workflow', 'WR-01'),
+    clear: removedBridgeContract('rejectionCheck.clear', 'workflow', 'WR-01'),
   },
   templates: {
     list: implementedBridgeContract({
@@ -761,7 +638,7 @@ const rawMethods = {
     }),
   },
   tasks: {
-    startBidSectionExtraction: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startBidSectionExtraction' }),
+    startBidSectionExtraction: removedBridgeContract('tasks.startBidSectionExtraction', 'workflow', 'WR-01'),
     startBidAnalysis: implementedBridgeContract({
       owner: 'workflow',
       workPackage: 'WP-I',
@@ -777,13 +654,13 @@ const rawMethods = {
       output: 'BackgroundTaskState',
       errors: ['TASK_INVALID_INPUT', 'TASK_ITEM_NOT_FOUND', 'TASK_INPUT_CHANGED', 'TASK_CONFLICT'],
     }),
-    startOutlineGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startOutlineGeneration' }),
-    startGlobalFactsGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startGlobalFactsGeneration' }),
-    startContentGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startContentGeneration' }),
-    pauseContentGeneration: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.pauseContentGeneration' }),
-    startRejectionItemsExtraction: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startRejectionItemsExtraction' }),
-    startRejectionCheck: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startRejectionCheck' }),
-    startDuplicateAnalysis: createContractEntry({ status: 'pending', owner: 'workflow', workPackage: 'WP-C', contractRef: 'tasks.startDuplicateAnalysis' }),
+    startOutlineGeneration: pendingContract('tasks.startOutlineGeneration', 'workflow', 'WR-03'),
+    startGlobalFactsGeneration: pendingContract('tasks.startGlobalFactsGeneration', 'workflow', 'WR-03'),
+    startContentGeneration: pendingContract('tasks.startContentGeneration', 'workflow', 'WR-03'),
+    pauseContentGeneration: pendingContract('tasks.pauseContentGeneration', 'workflow', 'WR-03'),
+    startRejectionItemsExtraction: removedBridgeContract('tasks.startRejectionItemsExtraction', 'workflow', 'WR-01'),
+    startRejectionCheck: removedBridgeContract('tasks.startRejectionCheck', 'workflow', 'WR-01'),
+    startDuplicateAnalysis: removedBridgeContract('tasks.startDuplicateAnalysis', 'workflow', 'WR-01'),
     getActiveTasks: implementedBridgeContract({
       owner: 'workflow',
       workPackage: 'WP-A',
@@ -805,7 +682,7 @@ const rawMethods = {
     }),
   },
   systemFonts: {
-    list: createContractEntry({ status: 'pending', owner: 'web-shell', workPackage: 'WP-F', contractRef: 'systemFonts.list' }),
+    list: pendingContract('systemFonts.list', 'web-shell', 'WR-05'),
   },
   resources: {
     list: createContractEntry({

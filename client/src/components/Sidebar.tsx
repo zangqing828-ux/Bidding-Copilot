@@ -7,7 +7,6 @@ import logoUrl from '../../assets/icon_256.png';
 
 interface SidebarProps {
   activeSection: SectionId;
-  developerMode: boolean;
   onSectionChange: (section: SectionId) => void;
 }
 
@@ -15,40 +14,20 @@ const navigationIcons: Record<SectionId, ComponentType<SVGProps<SVGSVGElement>>>
   'bid-generation': BidGenerationIcon,
   'technical-plan': DocumentIcon,
   'existing-plan-expansion': DocumentIcon,
-  'business-bid': BriefcaseIcon,
-  'knowledge-base': ArchiveIcon,
-  'document-knowledge-base': ArchiveIcon,
-  'image-knowledge-base': ArchiveIcon,
-  'bid-check': BidCheckIcon,
-  'duplicate-check': CompareIcon,
-  'rejection-check': ShieldIcon,
-  'ai-evaluation': BidCheckIcon,
   'template-settings': DocumentIcon,
   'my-templates': DocumentIcon,
   'new-template': DocumentIcon,
   'export-format': DocumentIcon,
-  'developer-test': FlaskIcon,
-  'developer-json-test': FlaskIcon,
-  'developer-prompt-lab': FlaskIcon,
-  'developer-parser-sandbox': FlaskIcon,
-  'developer-export-preview': FlaskIcon,
-  'developer-expansion-replace-test': FlaskIcon,
-  'developer-agent-test': FlaskIcon,
   settings: GearIcon,
 };
 
 const USER_GUIDE_URL = 'https://wiki.agnet.top/';
 
-function Sidebar({ activeSection, developerMode, onSectionChange }: SidebarProps) {
+function Sidebar({ activeSection, onSectionChange }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const { showToast } = useToast();
-  const isWeb = window.yibiao?.platform === 'web';
-  const menuItems = getAppMenuItems(developerMode)
-    .map((item) => ({
-      ...item,
-      children: isWeb ? item.children?.filter((child) => child.id !== 'developer-agent-test') : item.children,
-    }));
-  const activeParent = getParentMenuItemBySection(activeSection, developerMode);
+  const menuItems = getAppMenuItems();
+  const activeParent = getParentMenuItemBySection(activeSection);
 
   const handleMenuItemClick = (item: AppMenuItem) => {
     if (!item.notice) {
@@ -211,74 +190,6 @@ function DocumentIcon(props: SVGProps<SVGSVGElement>) {
       <path d="M13.5 4v4.35h4.25" />
       <path d="M9.5 12.2h5" />
       <path d="M9.5 15.7h4" />
-    </svg>
-  );
-}
-
-function BriefcaseIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path d="M5 8h14v11.5H5z" />
-      <path d="M9 8V5.5h6V8" />
-      <path d="M5 12.5h14" />
-      <path d="M10.5 12.5v2h3v-2" />
-    </svg>
-  );
-}
-
-function ArchiveIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path d="M5 7.5h14v12H5z" />
-      <path d="M4 4.5h16v3H4z" />
-      <path d="M9 11.2h6" />
-    </svg>
-  );
-}
-
-function BidCheckIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path d="M7 4.2h10v15.6H7z" />
-      <path d="M9.5 8h5" />
-      <path d="m9.5 12.3 1.5 1.5 3.7-4" />
-      <path d="M9.5 17h5" />
-      <path d="M5 6.2v15h10" />
-    </svg>
-  );
-}
-
-function CompareIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path d="M7 5.5h7.5" />
-      <path d="M7 9h5.5" />
-      <path d="M5 15.5h7.5" />
-      <path d="M5 19h5.5" />
-      <path d="M16.5 13.5l2 2 2-2" />
-      <path d="M18.5 15.5V5" />
-      <path d="M7.5 8.5l-2-2 2-2" />
-      <path d="M5.5 6.5V17" />
-    </svg>
-  );
-}
-
-function ShieldIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path d="M12 3.5 18.5 6v5.4c0 4.25-2.55 7.55-6.5 9.1-3.95-1.55-6.5-4.85-6.5-9.1V6z" />
-      <path d="m9 12.2 2 2 4-4.5" />
-    </svg>
-  );
-}
-
-function FlaskIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path d="M9 3.8h6" />
-      <path d="M10.5 3.8v5.4l-4.2 7.4c-.85 1.5.24 3.4 1.96 3.4h7.48c1.72 0 2.81-1.9 1.96-3.4l-4.2-7.4V3.8" />
-      <path d="M8.5 15.8h7" />
-      <path d="M10 12.5h4" />
     </svg>
   );
 }

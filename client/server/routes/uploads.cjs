@@ -64,16 +64,13 @@ async function validateUploadedFile(file) {
   const extension = path.extname(file.originalname || '').toLowerCase();
   const probe = await fs.readFile(file.path).then((buffer) => buffer.subarray(0, 8192));
   const isZip = startsWith(probe, [0x50, 0x4b, 0x03, 0x04]) || startsWith(probe, [0x50, 0x4b, 0x05, 0x06]);
-  const isCompoundDocument = startsWith(probe, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
   const valid = extension === '.pdf'
     ? startsWith(probe, '%PDF-')
-    : extension === '.docx' || extension === '.xlsx'
+    : extension === '.docx'
       ? isZip
-      : extension === '.doc'
-        ? isCompoundDocument
-        : extension === '.txt' || extension === '.md'
-          ? isTextContent(probe)
-          : false;
+      : extension === '.txt' || extension === '.md'
+        ? isTextContent(probe)
+        : false;
   if (!valid) {
     const error = new Error('文件内容与扩展名不匹配');
     error.code = 'UPLOAD_FILE_CONTENT_INVALID';
