@@ -7,6 +7,7 @@
 当前实施文档：
 
 - Web 单租户首发基线：`.planning/web-single-tenant-release/baseline.md`
+- Web 单租户发布 Spec Pack：`.planning/web-single-tenant-release/spec-pack/README.md`
 - Web 架构收敛：`.planning/web-architecture-convergence/architecture-convergence.spec.md`
 - 品牌清理：`.planning/yibiao-brand-cleanup/brand-cleanup.spec.md`
 
@@ -43,7 +44,7 @@
 4. **UI 范围固定。** v1 不换组件、不改页面结构和交互，只应用 MainQuest MQDS 浅色配色；不做深色模式。
 5. **删减范围固定。** 资源下载、投标机会、插件管理及其产品侧前端入口、路由和运行入口保持删除。
 6. **品牌目标固定。** 用户可见产品名统一为 `BidMaster`，代码仓库统一指向 `zangqing828-ux/Bidding-Copilot`，旧品牌域名、推广链接和 Star 诱导清除。
-7. **品牌清理不是全局替换。** 用户可见文案、发布元数据、外链先清理；持久化协议、数据库、环境变量、OAuth/CI、云资源和历史档案按兼容与迁移策略处理。没有迁移、回滚和验证证据，不得重命名。
+7. **品牌清理禁止全局替换。** 用户可见文案、发布元数据、外链先清理；持久化协议、数据库、环境变量、OAuth/CI、云资源和历史档案按兼容与迁移策略处理。没有迁移、回滚和验证证据，不得重命名。
 8. **完成口径固定。** mock 可通过、接口存在、容器能启动或错误码可解释都不等于业务完成。只有真实成功路径、失败路径、账号隔离、重启恢复和交付验收全部通过，才可标记完成。
 
 ## PR #3 后的事实基线
