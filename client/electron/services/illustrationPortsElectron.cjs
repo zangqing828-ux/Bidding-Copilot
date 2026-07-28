@@ -6,9 +6,7 @@ const {
 const { runWithRemoteImageRetry } = require('../utils/remoteImageRetry.cjs');
 const { HTML_DESIGN_WIDTH, getLocalImageRenderService } = require('./localImageRenderService.cjs');
 
-const HTML_AGENT_THRESHOLD_CHARS = 50000;
 const MERMAID_REPAIR_ATTEMPTS = 3;
-const GENERATED_ILLUSTRATION_PATTERN = /<!-- yibiao-illustration:start\b[^>]*-->[\s\S]*?<!-- yibiao-illustration:end -->/gi;
 
 function singleLine(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -41,25 +39,6 @@ function validateHtmlCode(value) {
   return html;
 }
 
-// 从最终正文中构建图片生成参考材料。
-function buildIllustrationReference(planItem, contextById, sections) {
-  return planItem.section_ids.map((sectionId) => {
-    const context = contextById.get(sectionId);
-    const item = context?.item || {};
-    const content = String(sections?.[sectionId]?.content || item.content || '').trim();
-    return `## ${sectionId} ${singleLine(item.title || '未命名章节')}\n\n${content}`;
-  }).join('\n\n');
-}
-
-function buildIllustrationExecutionContexts(plan, leafContexts, sections) {
-  const contextById = new Map((leafContexts || []).map((context) => [context.item.id, context]));
-  return (plan?.items || []).map((planItem) => ({
-    planItem,
-    contexts: planItem.section_ids.map((id) => contextById.get(id)).filter(Boolean),
-    reference: buildIllustrationReference(planItem, contextById, sections),
-  }));
-}
-
 function getPlannedTitle(execution) {
   const title = singleLine(execution.planItem.title);
   if (!title) throw new Error(`图片计划缺少 title：${execution.planItem.item_id || 'unknown'}`);
@@ -87,21 +66,6 @@ function buildHtmlImagePrompt(execution) {
 不要有太多文字描述，专业商务风格。这是一个类图片的html，所以注意仔细检查显示效果、文字换行、拥挤等问题。宽度固定${HTML_DESIGN_WIDTH}px，高度自适应。参考内容如下：
 
 ${execution.reference}`;
-}
-
-function buildHtmlAgentPrompt(execution) {
-  const title = getPlannedTitle(execution);
-  return `请读取当前工作目录中的 reference.md，阅读并理解全部内容，用 HTML 绘制一张${execution.planItem.image_type}。
-
-最终图题：${title}
-
-要求：
-1. 必须围绕最终图题限定的对象、范围和关系重点设计图形，不要生成泛化的章节概览。
-2. 不要有太多文字描述，使用专业商务风格。
-3. 这是一个类图片的 HTML，必须仔细检查显示效果、文字换行和内容拥挤问题。
-  4. 页面宽度固定为 ${HTML_DESIGN_WIDTH}px，高度自适应。
-5. 生成完整 HTML 文档，包含 html、head、body，不依赖本地文件。
-6. 只创建 illustration.html，不要修改 reference.md，不要创建其他结果文件。`;
 }
 
 function buildMermaidGenerationMessages(execution) {
@@ -243,8 +207,8 @@ async function generateAiIllustration(aiService, execution) {
   return { asset_url: generated.asset_url, attempts: 1 };
 }
 
-// 使用文本模型基于最终正文生成并校验 Mermaid。
-async function generateMermaidIllustrationInternal(aiService, execution, isPauseLikeError) {
+// 生成并校验可本地渲染的 Mermaid 配图。
+async function generateMermaidIllustration(aiService, execution, isPauseLikeError) {
   const generated = await aiService.collectJsonResponse({
     messages: buildMermaidGenerationMessages(execution),
     temperature: 0.2,
@@ -255,11 +219,6 @@ async function generateMermaidIllustrationInternal(aiService, execution, isPause
     validator: validateMermaidGenerationResult,
   });
   return prepareRenderableMermaid({ aiService, execution, mermaidPlan: generated, isPauseLikeError });
-}
-
-// 生成并校验可本地渲染的 Mermaid 配图。
-async function generateMermaidIllustration(aiService, execution, isPauseLikeError) {
-  return generateMermaidIllustrationInternal(aiService, execution, isPauseLikeError);
 }
 
 // 本地将 HTML 截取为 PNG，失败按统一策略重试。
@@ -286,8 +245,8 @@ async function requestHtmlScreenshot(html, onRetry, pauseControl = {}) {
   return { ...result, attempts: requestAttempts };
 }
 
-// 生成 HTML 源文件并本地转换为 PNG。
-async function generateHtmlIllustrationInternal({ aiService, execution, plan, workspaceStore, runAgentHtml, onSourceSaved, onRenderRetry, isPauseRequested, createPauseError }) {
+// 生成 HTML 配图（普通模型生成源码 + 本地截图）。
+async function generateHtmlIllustration({ aiService, execution, plan, workspaceStore, onSourceSaved, onRenderRetry, isPauseRequested, createPauseError }) {
   const recordedPath = execution.planItem.generation?.source_path;
   let sourcePath = recordedPath;
   let html = sourcePath ? workspaceStore.readIllustrationHtml(sourcePath) : '';
@@ -298,133 +257,43 @@ async function generateHtmlIllustrationInternal({ aiService, execution, plan, wo
       html = recovered.content;
     }
   }
-  const mode = execution.reference.length > HTML_AGENT_THRESHOLD_CHARS ? 'agent' : 'normal';
   const sourceAlreadyPersisted = Boolean(html && sourcePath && sourcePath === recordedPath);
   if (!html) {
-    if (mode === 'agent') {
-      html = await runAgentHtml({
-        title: `HTML配图-${execution.planItem.item_id}-${getPlannedTitle(execution)}`,
-        prompt: buildHtmlAgentPrompt(execution),
-        outputFile: 'illustration.html',
-        files: [{ path: 'reference.md', content: execution.reference }],
-        validateOutput: (result) => validateHtmlCode(result?.output_content || ''),
-      });
-    } else {
-      const response = await aiService.chat({
-        messages: [{ role: 'user', content: `${buildHtmlImagePrompt(execution)}\n\n仅返回html代码，不要返回任何其他内容。` }],
-        temperature: 0.2,
-        logTitle: `HTML配图-${execution.planItem.item_id}-${getPlannedTitle(execution)}`,
-      });
-      html = validateHtmlCode(response);
-    }
-    html = validateHtmlCode(html);
+    const response = await aiService.chat({
+      messages: [{ role: 'user', content: `${buildHtmlImagePrompt(execution)}\n\n仅返回html代码，不要返回任何其他内容。` }],
+      temperature: 0.2,
+      logTitle: `HTML配图-${execution.planItem.item_id}-${getPlannedTitle(execution)}`,
+    });
+    html = validateHtmlCode(response);
   }
 
   const savedHtml = workspaceStore.saveIllustrationHtml({ revision: plan.revision, itemId: execution.planItem.item_id, content: html });
   if (!sourceAlreadyPersisted) {
-    onSourceSaved?.({ mode, source_path: savedHtml.relativePath });
+    onSourceSaved?.({ mode: 'normal', source_path: savedHtml.relativePath });
   }
   let screenshot;
   try {
     screenshot = await requestHtmlScreenshot(html, onRenderRetry, { isPauseRequested, createPauseError });
   } catch (error) {
-    error.illustrationGeneration = { mode, source_path: savedHtml.relativePath };
+    error.illustrationGeneration = { mode: 'normal', source_path: savedHtml.relativePath };
     throw error;
   }
   const savedPng = workspaceStore.saveIllustrationPng({ revision: plan.revision, itemId: execution.planItem.item_id, buffer: screenshot.buffer });
   return {
-    mode,
+    mode: 'normal',
     source_path: savedHtml.relativePath,
     asset_url: savedPng.assetUrl,
     attempts: screenshot.attempts,
   };
 }
 
-// 生成 HTML 配图（源码 + 本地截图）。
-async function generateHtmlIllustration(options) {
-  return generateHtmlIllustrationInternal(options);
-}
-
-function stripGeneratedIllustrations(content) {
-  return String(content || '').replace(GENERATED_ILLUSTRATION_PATTERN, '\n').replace(/\n{3,}/g, '\n\n').trim();
-}
-
-function buildGeneratedIllustrationMarkdown(planItem) {
-  const generation = planItem.generation || {};
-  const caption = singleLine(planItem.title);
-  if (!caption) throw new Error(`图片计划缺少 title：${planItem.item_id || 'unknown'}`);
-  let body = '';
-  if (planItem.kind === 'mermaid' && generation.code) {
-    body = `\`\`\`mermaid\n${normalizeMermaidCode(generation.code)}\n\`\`\`\n\n*图：${caption}*`;
-  } else if (generation.asset_url) {
-    body = `![${caption}](${generation.asset_url})\n\n*图：${caption}*`;
-  }
-  if (!body) return '';
-  return `<!-- yibiao-illustration:start id="${planItem.item_id}" -->\n${body}\n<!-- yibiao-illustration:end -->`;
-}
-
-function mapOutlineContent(items, contentById) {
-  return (items || []).map((item) => ({
-    ...item,
-    ...(contentById.has(item.id) ? { content: contentById.get(item.id) } : {}),
-    ...(item.children?.length ? { children: mapOutlineContent(item.children, contentById) } : {}),
-  }));
-}
-
-// 清除旧生成块，确保重新编排时只参考纯正文。
-function stripGeneratedIllustrationsFromDocument(outlineData, sections) {
-  const nextSections = { ...(sections || {}) };
-  const contentById = new Map();
-  for (const [itemId, section] of Object.entries(nextSections)) {
-    const content = stripGeneratedIllustrations(section?.content || '');
-    nextSections[itemId] = { ...section, content };
-    contentById.set(itemId, content);
-  }
+// Electron 环境的图片渲染端口：本地渲染服务 + workspace 资产持久化。
+function createElectronIllustrationPorts() {
   return {
-    sections: nextSections,
-    outlineData: outlineData ? { ...outlineData, outline: mapOutlineContent(outlineData.outline, contentById) } : outlineData,
+    generateAiIllustration,
+    generateHtmlIllustration,
+    generateMermaidIllustration,
   };
 }
 
-// 按最终计划顺序把成功图片一次性插入权威正文。
-function applyGeneratedIllustrationsToDocument(plan, outlineData, sections) {
-  const nextSections = { ...(sections || {}) };
-  const contentById = new Map();
-  for (const [itemId, section] of Object.entries(nextSections)) {
-    const content = stripGeneratedIllustrations(section?.content || '');
-    nextSections[itemId] = { ...section, content };
-    contentById.set(itemId, content);
-  }
-
-  for (const planItem of plan?.items || []) {
-    if (planItem.generation?.status !== 'success') continue;
-    const block = buildGeneratedIllustrationMarkdown(planItem);
-    if (!block) continue;
-    const targetId = planItem.kind === 'html' && planItem.placement === 'before'
-      ? planItem.section_ids[0]
-      : planItem.section_ids[planItem.section_ids.length - 1];
-    const current = String(nextSections[targetId]?.content || '').trim();
-    const content = planItem.placement === 'before' ? `${block}\n\n${current}`.trim() : `${current}\n\n${block}`.trim();
-    nextSections[targetId] = { ...nextSections[targetId], content, status: 'success', error: undefined, updated_at: new Date().toISOString() };
-    contentById.set(targetId, content);
-  }
-
-  return {
-    sections: nextSections,
-    outlineData: outlineData ? { ...outlineData, outline: mapOutlineContent(outlineData.outline, contentById) } : outlineData,
-  };
-}
-
-module.exports = {
-  HTML_AGENT_THRESHOLD_CHARS,
-  applyGeneratedIllustrationsToDocument,
-  buildAiImagePrompt,
-  buildHtmlImagePrompt,
-  buildIllustrationExecutionContexts,
-  generateAiIllustration,
-  generateHtmlIllustration,
-  generateMermaidIllustration,
-  normalizeHtmlCode,
-  stripGeneratedIllustrationsFromDocument,
-  validateHtmlCode,
-};
+module.exports = { createElectronIllustrationPorts };

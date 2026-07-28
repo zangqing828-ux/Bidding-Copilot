@@ -202,7 +202,7 @@ function createTask(type, payload) {
   };
 }
 
-function createTaskService({ aiService, agentService, technicalPlanStore, rejectionCheckStore, duplicateCheckStore, knowledgeBaseService, duplicateCheckService, taskRunners = {} }) {
+function createTaskService({ aiService, technicalPlanStore, rejectionCheckStore, duplicateCheckStore, knowledgeBaseService, duplicateCheckService, taskRunners = {}, illustrationPorts }) {
   let orchestrator;
   let activeTasks;
   let activeTaskControls;
@@ -738,13 +738,13 @@ function createTaskService({ aiService, agentService, technicalPlanStore, reject
           : duplicateCheckStore;
       return {
         aiService: aiService?.withQueueScope ? aiService.withQueueScope(queueScopeId) : aiService,
-        agentService: agentService.bindSelectedRuntime(),
         workspaceStore,
         knowledgeBaseService,
         updateTask,
         payload,
         taskControl,
         previousState,
+        ...(definition.field === 'contentGenerationTask' && illustrationPorts ? { illustrationPorts } : {}),
       };
     },
     releaseRunnerContext(context) {
