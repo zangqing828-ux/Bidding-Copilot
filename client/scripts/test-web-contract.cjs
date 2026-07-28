@@ -152,6 +152,12 @@ const REQUIRED_WEB_BRIDGE_META_KEYS = [
 
 const requiredMetaFields = ['status', 'owner', 'workPackage', 'transport', 'contractRef', 'input', 'output', 'errors'];
 const IMPLEMENTED_BRIDGE_RPC_COUNT = 27;
+const CONTRACT_STATUS_TOTALS = Object.freeze({
+  implemented: 31,
+  removed: 74,
+  pending: 8,
+  total: 113,
+});
 const COMMON_IMPLEMENTED_BRIDGE_ERRORS = [
   'UNAUTHORIZED',
   'INVALID_BRIDGE_ARGUMENTS',
@@ -480,6 +486,19 @@ function collectContractDescriptors(descriptor, result = []) {
 }
 
 function assertImplementedContractCompleteness(contractMap, contractEnums) {
+  const statusCounts = { implemented: 0, removed: 0, pending: 0, total: 0 };
+  for (const entry of contractMap.values()) {
+    if (!entry || typeof entry !== 'object') continue;
+    statusCounts.total += 1;
+    if (Object.prototype.hasOwnProperty.call(statusCounts, entry.status)) {
+      statusCounts[entry.status] += 1;
+    }
+  }
+  assert(statusCounts.total === CONTRACT_STATUS_TOTALS.total, `Contract 总数冻结为 ${CONTRACT_STATUS_TOTALS.total}`);
+  assert(statusCounts.implemented === CONTRACT_STATUS_TOTALS.implemented, `implemented 总数冻结为 ${CONTRACT_STATUS_TOTALS.implemented}`);
+  assert(statusCounts.removed === CONTRACT_STATUS_TOTALS.removed, `removed 总数冻结为 ${CONTRACT_STATUS_TOTALS.removed}`);
+  assert(statusCounts.pending === CONTRACT_STATUS_TOTALS.pending, `pending 总数冻结为 ${CONTRACT_STATUS_TOTALS.pending}`);
+
   const implementedBridgeEntries = Array.from(contractMap.entries()).filter(([, entry]) => (
     entry.status === 'implemented' && entry.transport === 'bridge'
   ));
@@ -1034,26 +1053,8 @@ async function runBridgeBehavior(inject, context) {
     /const isWebPlatform = window\.yibiao\?\.platform === ['"]web['"]/,
     'SettingsPage 识别 web 平台',
   );
-  assertSourceContains(
-    settingsPageSource,
-    /if \(!isWebPlatform\)\s*{[\s\S]*?void window\.yibiao\?\.getVersion\(\)\.then\(setAppVersion\)/,
-    'web 平台不会调用 getVersion',
-  );
-  assertSourceContains(
-    settingsPageSource,
-    /if \(isWebPlatform\) {\s*setUpdateStatus\('disabled'\);\s*return;\s*}/s,
-    'SettingsPage web 分支跳过 checkForUpdates 执行',
-  );
-  assertSourceContains(
-    settingsPageSource,
-    /if \(isWebPlatform\) {\s*return;\s*}\s*try {\s*const result = await window\.yibiao\?\.quitAndInstall\(\);/s,
-    'SettingsPage web 分支不调用 quitAndInstall',
-  );
-  assertSourceContains(
-    settingsPageSource,
-    /{\s*!isWebPlatform \? \(\s*<article className="about-update-card">[\s\S]*?<\/article>\s*\)\s*:\s*null}/,
-    'SettingsPage web 平台不渲染自动更新卡片',
-  );
+  assert(!/about-update-card|自动更新渠道|GPU 硬件加速|开发者模式|Token 统计小窗|离线激活授权|智能体配置/.test(settingsPageSource), 'SettingsPage 已移除退出能力 UI');
+  assert(!/developerTokenStats\.openWindow|config\.openConfigFolder|startGpuHardwareAccelerationTrial|license\?\.getStatus/.test(settingsPageSource), 'SettingsPage 已移除退出 Bridge 调用');
 
   assertRemovedProductWhitelist(removedProductEntries);
 
@@ -1664,11 +1665,41 @@ async function runBridgeBehavior(inject, context) {
   }
 
   for (const retainedId of ['technical-plan', 'existing-plan-expansion', 'my-templates', 'settings']) {
-    const navigationHas = navigationText.has(retainedId);
-    const routerHas = routerText.has(retainedId);
-    const sidebarHas = sidebarText.has(retainedId);
-    assert(navigationHas || sidebarHas || routerHas, `${retainedId} 至少在 navigation/router/sidebar 之一可达`);
+    assert(navigationText.has(retainedId), `navigation 声明 ${retainedId}`);
+    assert(routerText.has(retainedId) || retainedId === 'settings', `AppRouter 声明 ${retainedId}`);
   }
+  assert(menuApiText.has('technical-plan') && menuApiText.has('existing-plan-expansion'), 'menuConfig 包含两个技术方案入口');
+  assert(menuApiText.has('my-templates'), 'menuConfig 包含模板入口');
+  assert(sidebarText.has('settings'), 'Sidebar 包含设置入口');
+
+  const appSource = readSource('src/App.tsx');
+  const mainSource = readSource('src/main.tsx');
+  const gateSource = readSource('src/app/WorkspaceDatabaseGate.tsx');
+  assertSourceContains(mainSource, /WorkspaceDatabaseGate/, 'main 仍挂载 WorkspaceDatabaseGate');
+  assertSourceContains(mainSource, /<App\s*\/>/, 'main 挂载 App');
+  assertSourceContains(appSource, /AppRouter/, 'App 挂载 AppRouter');
+  assertSourceContains(
+    gateSource,
+    /const isWeb = window\.yibiao\?\.platform === ['"]web['"]/,
+    'WorkspaceDatabaseGate 识别 web 平台',
+  );
+  assertSourceContains(
+    gateSource,
+    /if \(isWeb\) {\s*return undefined;\s*}/s,
+    'WorkspaceDatabaseGate web 平台跳过 desktop database 检查',
+  );
+  assert(!/GpuHardwareAccelerationPrompt|LicenseStatusPrompt|RequiredOnlineServicesPrompt|UpdateNotifier|AgentRuntimeStatusBar/.test(appSource), 'App 不再挂载退出 Prompt');
+  assert(!/GpuHardwareAccelerationPrompt|LicenseStatusPrompt|RequiredOnlineServicesPrompt|UpdateNotifier/.test(mainSource), 'main 不再挂载退出 Prompt');
+
+  const settingsSource = readSource('src/features/settings/pages/SettingsPage.tsx');
+  assert(!/自动更新渠道|GPU 硬件加速|开发者模式|Token 统计小窗|打开配置文件夹|离线激活授权|智能体配置/.test(settingsSource), 'Settings 不再展示退出能力文案');
+  assert(!/developerTokenStats\.openWindow|config\.openConfigFolder|startGpuHardwareAccelerationTrial|license\?\.getStatus/.test(settingsSource), 'Settings 不再调用退出 Bridge');
+
+  const outlineSource = readSource('src/features/technical-plan/pages/OutlineEditPage.tsx');
+  assert(!/knowledgeBase\.list|debug_force_outline_agent_repair|强制 Agent 修复目录|参考知识库/.test(outlineSource), '目录页不再调用知识库/Agent 修复');
+
+  const stylesSource = readSource('src/styles.css');
+  assert(!/feature-duplicate-check|feature-rejection-check|feature-knowledge-base|feature-developer/.test(stylesSource), 'styles.css 不再导入退出功能 CSS');
 
   for (const targetPath of DELETED_FEATURE_PATHS) {
     const absolutePath = path.join(__dirname, '..', targetPath);

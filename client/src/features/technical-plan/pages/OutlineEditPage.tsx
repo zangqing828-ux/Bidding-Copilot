@@ -378,10 +378,8 @@ function OutlineEditPage({
     let cancelled = false;
     window.yibiao?.config.load().then((cfg) => {
       if (cancelled) return;
-      setDeveloperMode(Boolean(cfg?.developer_mode));
-      if (!cfg?.developer_mode) {
-        setDraftForceOutlineAgentRepair(false);
-      }
+      setDeveloperMode(false);
+      setDraftForceOutlineAgentRepair(false);
       if (cfg?.export_format) {
         setExportFormat(cfg.export_format);
       }
@@ -434,27 +432,14 @@ function OutlineEditPage({
     }
 
     setDraftOutlineExpansionMode(isExpansionWorkflow ? outlineExpansionMode : 'ai-complement');
-    setDraftKnowledgeDocumentIds(referenceKnowledgeDocumentIds);
+    setDraftKnowledgeDocumentIds([]);
     initializeWordControlDraft();
     setDraftForceOutlineAgentRepair(false);
     setKnowledgeSearch('');
-    void loadKnowledgeIndex();
-  }, [generationDialogOpen, isExpansionWorkflow, outlineExpansionMode, outlineWordControlOptions, referenceKnowledgeDocumentIds]);
-
-  const loadKnowledgeIndex = async () => {
-    try {
-      setLoadingKnowledge(true);
-      const data = await window.yibiao?.knowledgeBase.list();
-      setKnowledgeIndex(data || emptyKnowledgeIndex);
-      setExpandedKnowledgeFolderIds(getInitialExpandedKnowledgeFolders(data || emptyKnowledgeIndex));
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : '读取知识库失败', 'error');
-      setKnowledgeIndex(emptyKnowledgeIndex);
-      setExpandedKnowledgeFolderIds(new Set());
-    } finally {
-      setLoadingKnowledge(false);
-    }
-  };
+    setKnowledgeIndex(emptyKnowledgeIndex);
+    setExpandedKnowledgeFolderIds(new Set());
+    setLoadingKnowledge(false);
+  }, [generationDialogOpen, isExpansionWorkflow, outlineExpansionMode, outlineWordControlOptions]);
 
   const openGenerationDialog = () => {
     if (sorting) {
@@ -499,7 +484,7 @@ function OutlineEditPage({
       const wordControlOptions = getNormalizedWordControlOptions();
       setSavingOutlineConfig(true);
       await onOutlineConfigChange({
-        referenceKnowledgeDocumentIds: draftKnowledgeDocumentIds,
+        referenceKnowledgeDocumentIds: [],
         outlineExpansionMode: isExpansionWorkflow ? draftOutlineExpansionMode : 'ai-complement',
         wordControlOptions,
       });
@@ -531,16 +516,15 @@ function OutlineEditPage({
       setNowTick(startedNow);
       const nextOutlineExpansionMode = isExpansionWorkflow ? draftOutlineExpansionMode : 'ai-complement';
       await onOutlineConfigChange({
-        referenceKnowledgeDocumentIds: draftKnowledgeDocumentIds,
+        referenceKnowledgeDocumentIds: [],
         outlineExpansionMode: nextOutlineExpansionMode,
         wordControlOptions,
       });
       setGenerationDialogOpen(false);
       await window.yibiao?.tasks.startOutlineGeneration({
-        reference_knowledge_document_ids: draftKnowledgeDocumentIds,
+        reference_knowledge_document_ids: [],
         outline_expansion_mode: nextOutlineExpansionMode,
         word_control_options: wordControlOptions,
-        debug_force_outline_agent_repair: developerMode && draftForceOutlineAgentRepair,
       });
       trackConfigUsage({
         outline_mode: isExpansionWorkflow ? nextOutlineExpansionMode : 'aligned',
@@ -1081,7 +1065,7 @@ function OutlineEditPage({
         <div>
           <span className="section-kicker">STEP 03</span>
           <strong>目录生成</strong>
-          <p>{isExpansionWorkflow ? `当前原方案目录使用方式：${outlineExpansionModeLabels[outlineExpansionMode]}；参考知识库：${referenceKnowledgeDocumentIds.length ? `已选择 ${referenceKnowledgeDocumentIds.length} 个文档` : '未选择'}。` : `生成前选择参考知识库；当前参考知识库：${referenceKnowledgeDocumentIds.length ? `已选择 ${referenceKnowledgeDocumentIds.length} 个文档` : '未选择'}。`}</p>
+          <p>{isExpansionWorkflow ? `当前原方案目录使用方式：${outlineExpansionModeLabels[outlineExpansionMode]}。` : '配置字数控制后生成目录。'}</p>
         </div>
         <div className="outline-command-actions">
           <button
@@ -1241,30 +1225,10 @@ function OutlineEditPage({
           <Dialog.Overlay className="content-regenerate-modal" />
           <Dialog.Content className="outline-generation-config-card">
             <Dialog.Title className="sr-only">{outlineData ? '重新生成目录' : '生成目录'}</Dialog.Title>
-            <Dialog.Description className="sr-only">选择本次目录生成方式、字数控制和参考知识库。</Dialog.Description>
+            <Dialog.Description className="sr-only">选择本次目录生成方式和字数控制。</Dialog.Description>
 
-            <div className={`outline-generation-config-body${isExpansionWorkflow ? ' has-expansion-mode' : ''}${developerMode ? ' has-dev-tools' : ''}`}>
+            <div className={`outline-generation-config-body${isExpansionWorkflow ? ' has-expansion-mode' : ''}`}>
               {renderOutlineExpansionModePicker()}
-              {developerMode && (
-                <section className="outline-generation-config-section outline-agent-debug-section">
-                  <label className="outline-agent-debug-option">
-                    <span>
-                      <strong>强制 Agent 修复目录</strong>
-                      <small>本次目录生成会在最终保存前强制进入智能体修复链路，用于验证 Agent workspace、结果 JSON 和程序校验。</small>
-                    </span>
-                    <span className="yb-switch-control">
-                      <input
-                        type="checkbox"
-                        checked={draftForceOutlineAgentRepair}
-                        onChange={(event) => setDraftForceOutlineAgentRepair(event.target.checked)}
-                      />
-                      <span className="yb-switch-track" aria-hidden="true">
-                        <span className="yb-switch-thumb" />
-                      </span>
-                    </span>
-                  </label>
-                </section>
-              )}
               <section className="outline-generation-config-section outline-word-control-section">
                 <div className="content-generation-config-row">
                   <span>
@@ -1323,13 +1287,6 @@ function OutlineEditPage({
                     {outlineWordControlSnapshot ? '生成目录后若修改了字数设置，需要重新生成目录才能生效！' : '当前目录缺少字数控制生效配置，请重新生成目录。'}
                   </div>
                 )}
-              </section>
-              <section className="outline-generation-config-section outline-knowledge-picker">
-                <div className="outline-generation-config-head">
-                  <strong>参考知识库</strong>
-                  <span>已选择 {draftKnowledgeDocumentIds.length} 个文档</span>
-                </div>
-                {renderKnowledgePicker()}
               </section>
             </div>
 

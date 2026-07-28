@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState } from 'react';
 import { trackConfigUsage } from '../../../shared/analytics/analytics';
-import { DetailHelpLink, FloatingToolbar, InputWithAction, OfflineLicenseActivationDialog, useToast } from '../../../shared/ui';
+import { DetailHelpLink, FloatingToolbar, InputWithAction, useToast } from '../../../shared/ui';
 import { showUpdateReadyToast } from '../../../shared/updateToast';
 import type { FloatingToolbarGroup } from '../../../shared/ui';
 import type { AgentModeScenariosConfig, AgentRuntimeDescriptor, AgentSelfCheckResult, AgentSelfCheckStepStatus, AiRequestMode, ClientConfig, ComponentsConfig, ConfiguredTextModelProvider, FileParserProvider, ImageModelConfig, ImageModelProfiles, ImageModelProvider, ImageModelSize, ImageModelStatus, LicenseRuntimeStatus, TextModelConfig, TextModelProfiles, TextModelProvider, UpdateChannel } from '../../../shared/types';
@@ -15,7 +15,6 @@ const settingsTabs: Array<{ id: SettingsTab; label: string }> = [
   { id: 'text-model', label: '文本模型' },
   { id: 'image-model', label: '生图模型' },
   { id: 'components', label: '组件设置' },
-  { id: 'agent', label: '智能体配置' },
   { id: 'about', label: '关于' },
 ];
 
@@ -573,33 +572,6 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
     if (!isWebPlatform) {
       void window.yibiao?.getVersion().then(setAppVersion);
     }
-    void window.yibiao?.license?.getStatus().then(setLicenseStatus).catch(() => setLicenseStatus(null));
-
-    const unsubs: Array<() => void> = [];
-    if (!isWebPlatform) {
-      unsubs.push(
-        window.yibiao?.onUpdateProgress(({ percent }) => {
-          setUpdateStatus('downloading');
-          setUpdatePercent(Math.round(percent));
-        }) ?? (() => {})
-      );
-      unsubs.push(
-        window.yibiao?.onUpdateDownloaded(({ version }) => {
-          if (version) {
-            setUpdateVersion(version);
-          }
-          setUpdateStatus('downloaded');
-        }) ?? (() => {})
-      );
-      unsubs.push(
-        window.yibiao?.onUpdateError(({ message }) => {
-          setUpdateStatus('error');
-          setUpdateError(message);
-        }) ?? (() => {})
-      );
-    }
-
-    return () => { unsubs.forEach((unsub) => unsub()); };
   }, []);
 
   const loadTextConfig = async () => {
@@ -1108,15 +1080,6 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
     await saveClientConfig(createClientConfig());
   };
 
-  const openConfigFolder = async () => {
-    try {
-      await window.yibiao?.config.openConfigFolder();
-      showToast('已打开配置文件夹', 'success');
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : '打开配置文件夹失败', 'error');
-    }
-  };
-
   const fetchTextModels = async () => {
     try {
       setLoadingModels('text');
@@ -1289,67 +1252,9 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
     return false;
   };
 
-  const openDeveloperTokenStatsWindow = async () => {
-    const nextConfig = createClientConfig();
-    if (!nextConfig.developer_mode) {
-      showToast('请先开启开发者模式', 'info');
-      return;
-    }
-
-    if (!savedConfig?.developer_mode || isActiveTabDirty()) {
-      const saved = await saveClientConfig(nextConfig);
-      if (!saved) {
-        return;
-      }
-    }
-
-    try {
-      const result = await window.yibiao?.developerTokenStats.openWindow();
-      showToast(result?.success ? '已打开 Token 统计小窗' : '打开 Token 统计小窗失败', result?.success ? 'success' : 'error');
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : '打开 Token 统计小窗失败', 'error');
-    }
-  };
-
   const saveActiveTabConfig = async () => {
     if (activeTab === 'general') {
-      const nextConfig = createClientConfig();
-      const previousGpuEnabled = Boolean(savedConfig?.gpu_hardware_acceleration_enabled);
-      const nextGpuEnabled = Boolean(state.general.gpu_hardware_acceleration_enabled);
-
-      if (!previousGpuEnabled && nextGpuEnabled) {
-        const saved = await saveClientConfig({
-          ...nextConfig,
-          gpu_hardware_acceleration_enabled: false,
-          gpu_hardware_acceleration_configured: true,
-        });
-        if (saved) {
-          try {
-            const result = await window.yibiao?.startGpuHardwareAccelerationTrial();
-            if (!result?.success) {
-              throw new Error('GPU 硬件加速试启用失败');
-            }
-            showToast('即将重启试用 GPU 硬件加速', 'info');
-          } catch (error) {
-            setState((prev) => ({
-              ...prev,
-              general: {
-                ...prev.general,
-                gpu_hardware_acceleration_enabled: false,
-                gpu_hardware_acceleration_configured: true,
-              },
-            }));
-            const message = error instanceof Error ? error.message : 'GPU 硬件加速试启用失败';
-            showToast(`${message}，已保持关闭，请稍后重试。`, 'error');
-          }
-        }
-        return;
-      }
-
-      const saved = await saveClientConfig(nextConfig);
-      if (saved && previousGpuEnabled !== nextGpuEnabled) {
-        showToast(nextGpuEnabled ? 'GPU 硬件加速将在重启后启用' : 'GPU 硬件加速将在重启后关闭', 'info');
-      }
+      await saveClientConfig(createClientConfig());
       return;
     }
     if (activeTab === 'text-model') {
@@ -1362,14 +1267,10 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
     }
     if (activeTab === 'components') {
       await saveComponentsConfig();
-      return;
-    }
-    if (activeTab === 'agent') {
-      await saveClientConfig(createClientConfig({ includeAgentState: true }));
     }
   };
 
-  const canSaveActiveTab = activeTab === 'general' || activeTab === 'text-model' || activeTab === 'image-model' || activeTab === 'components' || activeTab === 'agent';
+  const canSaveActiveTab = activeTab === 'general' || activeTab === 'text-model' || activeTab === 'image-model' || activeTab === 'components';
   const activeTabDirty = isActiveTabDirty();
   const currentTextProviderDefault = textProviderDefaults[state.textModel.provider];
   const imageModelStatus: ImageModelStatus = state.imageModel.status || 'untested';
@@ -1473,94 +1374,6 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
                 <option value="classic">经典布局</option>
               </select>
             </div>
-            <label className="settings-row">
-              <div className="settings-row-copy">
-                <strong>自动更新渠道</strong>
-                <span>{updateChannelOptions.find((option) => option.value === state.general.update_channel)?.description || '选择自动检查更新和下载客户端安装包的来源'}</span>
-              </div>
-              <select
-                value={state.general.update_channel}
-                onChange={(event) => updateUpdateChannel(event.target.value as UpdateChannel)}
-              >
-                {updateChannelOptions.map((option) => (
-                  <option value={option.value} key={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="settings-row">
-              <div className="settings-row-copy">
-                <strong>GPU 硬件加速</strong>
-                <span>启用后界面可能更流畅；极少数电脑启用后会闪退，关闭后兼容性更好。修改后需重启生效。</span>
-              </div>
-              <span className="yb-switch-control">
-                <input
-                  type="checkbox"
-                  checked={state.general.gpu_hardware_acceleration_enabled}
-                  onChange={(event) => updateGpuHardwareAcceleration(event.target.checked)}
-                />
-                <span className="yb-switch-track" aria-hidden="true">
-                  <span className="yb-switch-thumb" />
-                </span>
-              </span>
-            </label>
-            <label className="settings-row">
-              <div className="settings-row-copy">
-                <strong>开发者模式</strong>
-                <span>会打乱既有工作流，生成大量日志占用磁盘空间，<strong>非专业人士请勿开启</strong></span>
-              </div>
-              <span className="yb-switch-control">
-                <input
-                  type="checkbox"
-                  checked={state.general.developer_mode}
-                  onChange={(event) => updateDeveloperMode(event.target.checked)}
-                />
-                <span className="yb-switch-track" aria-hidden="true">
-                  <span className="yb-switch-thumb" />
-                </span>
-              </span>
-            </label>
-            {state.general.developer_mode && (
-              <>
-                <label className="settings-row">
-                  <div className="settings-row-copy">
-                    <strong>默认打开 Token 统计小窗</strong>
-                    <span>开启后，应用下次启动时自动打开开发者 Token 统计悬浮窗</span>
-                  </div>
-                  <span className="yb-switch-control">
-                    <input
-                      type="checkbox"
-                      checked={state.general.developer_token_stats_auto_open}
-                      onChange={(event) => updateDeveloperTokenStatsAutoOpen(event.target.checked)}
-                    />
-                    <span className="yb-switch-track" aria-hidden="true">
-                      <span className="yb-switch-thumb" />
-                    </span>
-                  </span>
-                </label>
-                <div className="settings-row">
-                  <div className="settings-row-copy">
-                    <strong>Token 统计小窗</strong>
-                    <span>半透明悬浮展示文本模型输入、输出、总量、缓存命中和请求次数</span>
-                  </div>
-                  <div className="settings-action-cell">
-                    <button type="button" className="inline-action" onClick={openDeveloperTokenStatsWindow}>
-                      打开 Token 统计小窗
-                    </button>
-                  </div>
-                </div>
-                <div className="settings-row">
-                  <div className="settings-row-copy">
-                    <strong>配置文件夹</strong>
-                    <span>打开本机配置、工作区缓存和开发者日志所在目录</span>
-                  </div>
-                  <div className="settings-action-cell">
-                    <button type="button" className="inline-action" onClick={openConfigFolder}>
-                      打开配置文件夹
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
           </div>
         </section>
       )}
@@ -1999,150 +1812,6 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
         </section>
       )}
 
-      {activeTab === 'agent' && (
-        <section className="settings-page-section">
-          <div className="settings-section-title">
-            <span />
-            <strong>智能体配置</strong>
-          </div>
-          <div className="settings-list">
-            <label className="settings-row">
-              <div className="settings-row-copy">
-                <strong>智能体运行时</strong>
-                <span>选择后点击保存生效；运行中的任务继续使用启动时绑定的运行时。</span>
-              </div>
-              <select value={state.agentRuntime} onChange={(event) => updateAgentRuntime(event.target.value)}>
-                {agentRuntimes.map((runtime) => (
-                  <option value={runtime.id} key={runtime.id}>{runtime.display_name}</option>
-                ))}
-              </select>
-            </label>
-            {state.agentRuntime && (
-              <div className="settings-row">
-                <div className="settings-row-copy">
-                  <strong>运行时说明</strong>
-                  <span>{agentRuntimes.find((runtime) => runtime.id === state.agentRuntime)?.description || '正在读取运行时信息'}</span>
-                </div>
-              </div>
-            )}
-          </div>
-          <div className={`agent-self-check-status is-${agentSelfCheckStatus}`}>
-            <div>
-              <strong>智能体自检</strong>
-              <span>{currentAgentSelfCheckStatus.description}</span>
-            </div>
-            <em>{currentAgentSelfCheckStatus.label}</em>
-          </div>
-          <div className="settings-list">
-            <div className="settings-row">
-              <div className="settings-row-copy">
-                <strong>自检</strong>
-                <span>{savedConfig?.agent_runtime === 'pi'
-                  ? '检查 Pi Agent 的模型普通/流式/工具调用、本地 AI Proxy、运行环境、工具和输出链路；失败时自动诊断并尝试安全修复。'
-                  : `检查当前已保存的 ${savedAgentRuntime?.display_name || '智能体运行时'}，覆盖运行环境、AI Proxy、工具、当前文本模型和输出文件链路。`}</span>
-              </div>
-              <div className="settings-action-cell">
-                <button type="button" className="inline-action" onClick={runAgentSelfCheck} disabled={agentSelfCheckStatus === 'checking'}>
-                  {agentSelfCheckStatus === 'checking' && <span className="inline-spinner" aria-hidden="true" />}
-                  {agentSelfCheckStatus === 'checking' ? '自检中' : '自检'}
-                </button>
-              </div>
-            </div>
-          </div>
-          <div className="settings-section-title">
-            <span />
-            <strong>在以下场景启用智能体模式</strong>
-          </div>
-          <div className="settings-list">
-            <label className="settings-row">
-              <div className="settings-row-copy">
-                <strong>已有方案扩写-旧目录提取</strong>
-                <span>开启后，已有方案扩写会把原方案交给智能体完成旧目录提取和补漏；关闭后使用原有分段提取流程。</span>
-              </div>
-              <span className="yb-switch-control">
-                <input
-                  type="checkbox"
-                  checked={state.agentModeScenarios.existing_plan_expansion_original_outline_extraction}
-                  onChange={(event) => updateAgentModeScenario('existing_plan_expansion_original_outline_extraction', event.target.checked)}
-                />
-                <span className="yb-switch-track" aria-hidden="true">
-                  <span className="yb-switch-thumb" />
-                </span>
-              </span>
-            </label>
-          </div>
-          {agentSelfCheckResult && (
-            <div className={`agent-self-check-result is-${agentSelfCheckResult.success ? 'normal' : agentSelfCheckResult.status === 'busy' ? 'busy' : 'error'}`}>
-              <div className="agent-self-check-result-head">
-                <div>
-                  <strong>{agentSelfCheckResult.runtime_name}：{agentSelfCheckResult.success ? agentSelfCheckResult.repaired ? '自检通过（已自动修复）' : '自检通过' : agentSelfCheckResult.status === 'busy' ? '自检跳过' : '自检失败'}</strong>
-                  <span>{agentSelfCheckResult.message}</span>
-                </div>
-                <div className="agent-self-check-result-actions">
-                  <small>{agentSelfCheckResult.duration_ms ? `${Math.round(agentSelfCheckResult.duration_ms / 1000)} 秒` : agentSelfCheckResult.checked_at}</small>
-                  <button type="button" className="inline-action" onClick={exportAgentSelfCheckReport} disabled={exportingAgentSelfCheckReport}>
-                    {exportingAgentSelfCheckReport && <span className="inline-spinner" aria-hidden="true" />}
-                    {exportingAgentSelfCheckReport ? '导出中' : '导出报告'}
-                  </button>
-                </div>
-              </div>
-              {agentSelfCheckResult.steps.length > 0 && (
-                <div className="agent-self-check-steps">
-                  {agentSelfCheckResult.steps.map((step) => (
-                    <div className={`agent-self-check-step is-${step.status}`} key={step.id}>
-                      <strong>{step.label}</strong>
-                      <span>{step.message || step.status}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {agentSelfCheckResult.sections.map((section) => {
-                const sectionMeta = agentDiagnosticStatusMeta[section.status];
-                return (
-                  <div className={`agent-isolation-check is-${section.status}`} key={section.id}>
-                    <div className="agent-isolation-check-head">
-                      <div>
-                        <strong>{section.title}</strong>
-                        <span>{section.summary || sectionMeta.description}</span>
-                      </div>
-                      <em>{sectionMeta.label}</em>
-                    </div>
-                    {Boolean(section.details?.length) && (
-                      <div className="agent-isolation-check-grid">
-                        {section.details?.map((item) => (
-                          <div key={`${section.id}-${item.label}`}>
-                            <span>{item.label}</span>
-                            <strong title={item.value}>{item.value || '-'}</strong>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {Boolean(section.items?.length) && (
-                      <div className="agent-tool-check-grid">
-                        {section.items?.map((item) => {
-                          const itemMeta = agentDiagnosticStatusMeta[item.status];
-                          return (
-                            <div className={`agent-tool-check-item is-${item.status}`} key={item.id} title={item.detail || item.message}>
-                              <div>
-                                <strong>{item.label}</strong>
-                                <em>{itemMeta.label}</em>
-                              </div>
-                              <span>{item.message || itemMeta.description}</span>
-                              {item.detail && <small>{item.detail}</small>}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              <pre>{agentSelfCheckResult.detail_text}</pre>
-            </div>
-          )}
-        </section>
-      )}
-
       {activeTab === 'about' && (
         <section className="settings-page-section about-section">
           <div className="settings-section-title">
@@ -2150,41 +1819,18 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
             <strong>关于</strong>
           </div>
           <div className="about-overview">
-            {!isWebPlatform ? (
-              <article className="about-update-card">
-                <div className="about-card-head">
-                  <span>自动更新</span>
-                  <strong>当前版本 {appVersion || '...'}</strong>
-                </div>
-                <p>{updateStatusText}</p>
-                <button
-                  type="button"
-                  className="update-button"
-                  disabled={updateBusy}
-                  onClick={() => {
-                    if (updateStatus === 'downloaded') {
-                      void installDownloadedUpdate();
-                      return;
-                    }
-                    void checkForUpdates();
-                  }}
-                >
-                  {updateStatus === 'downloaded' ? '安装并重启' : updateBusy ? '检查中...' : '检查更新'}
-                </button>
-              </article>
-            ) : null}
             <article className="about-info-card about-links-card">
-              <span>信息与授权</span>
+              <span>产品信息</span>
               <ul className="about-links-list">
                 <li className="about-links-item">
                   <span className="about-links-label">GitHub 仓库</span>
                   <a
                     className="about-links-value is-link"
-                    href="https://github.com/FB208/OpenBidKit_Yibiao"
+                    href="https://github.com/zangqing828-ux/Bidding-Copilot"
                     target="_blank"
                     rel="noreferrer"
                   >
-                    FB208/OpenBidKit_Yibiao
+                    zangqing828-ux/Bidding-Copilot
                   </a>
                 </li>
                 <li className="about-links-item">
@@ -2198,16 +1844,7 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
                     wiki.agnet.top
                   </a>
                 </li>
-                <li className="about-links-item">
-                  <span className="about-links-label">客户端授权状态</span>
-                  <span className={`about-links-value ${licenseStatus?.sourceTrusted ? 'is-trusted' : 'is-untrusted'}`}>
-                    {licenseSourceLabel}
-                  </span>
-                </li>
               </ul>
-              <button type="button" className="about-links-activate" onClick={() => setOfflineLicenseDialogOpen(true)}>
-                离线激活授权
-              </button>
             </article>
           </div>
           <div className="privacy-statement">
@@ -2237,11 +1874,6 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
         </section>
       )}
       </div>
-      <OfflineLicenseActivationDialog
-        open={offlineLicenseDialogOpen}
-        onOpenChange={setOfflineLicenseDialogOpen}
-        onActivated={setLicenseStatus}
-      />
       <FloatingToolbar groups={settingsToolbarGroups} label="设置保存工具条" />
     </div>
   );

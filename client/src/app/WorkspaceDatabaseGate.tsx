@@ -17,7 +17,10 @@ const phaseLabels: Record<WorkspaceDatabasePhase, string> = {
 };
 
 function WorkspaceDatabaseGate({ children }: WorkspaceDatabaseGateProps) {
-  const [status, setStatus] = useState<WorkspaceDatabaseStatus | null>(null);
+  const isWeb = window.yibiao?.platform === 'web';
+  const [status, setStatus] = useState<WorkspaceDatabaseStatus | null>(
+    isWeb ? { phase: 'ready', ready: true, message: '本地数据库已就绪' } : null,
+  );
   const [showGate, setShowGate] = useState(false);
 
   const openReleasePage = async () => {
@@ -28,21 +31,28 @@ function WorkspaceDatabaseGate({ children }: WorkspaceDatabaseGateProps) {
   };
 
   useEffect(() => {
+    if (isWeb) {
+      return undefined;
+    }
+
     const database = window.yibiao?.database;
     if (!database) {
       setStatus({ phase: 'ready', ready: true, message: '本地数据库已就绪' });
-      return;
+      return undefined;
     }
 
     let mounted = true;
-    const isWeb = window.yibiao?.platform === 'web';
-    const unsubscribe = !isWeb
-      ? database.onStatus((nextStatus) => {
+    let unsubscribe: (() => void) | undefined;
+    try {
+      unsubscribe = database.onStatus((nextStatus) => {
         if (mounted) setStatus(nextStatus);
-      })
-      : undefined;
+      });
+    } catch {
+      // desktop-only event may throw after removal; ignore and fall back to getStatus
+    }
 
-    database.getStatus()
+    Promise.resolve()
+      .then(() => database.getStatus())
       .then((nextStatus) => {
         if (mounted) setStatus(nextStatus);
       })
@@ -59,7 +69,7 @@ function WorkspaceDatabaseGate({ children }: WorkspaceDatabaseGateProps) {
       mounted = false;
       unsubscribe?.();
     };
-  }, []);
+  }, [isWeb]);
 
   const ready = status?.ready === true || status?.phase === 'ready';
   const failed = status?.phase === 'error';
