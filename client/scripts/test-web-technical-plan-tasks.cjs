@@ -10,6 +10,7 @@ const { createSqliteDatabase } = require('../core/sqliteDatabase.cjs');
 const { createTechnicalPlanStore } = require('../core/stores/technicalPlanStore.cjs');
 const { createWorkspaceMutationExecutor } = require('../server/workspace/workspaceMutationExecutor.cjs');
 const { createTechnicalPlanTaskService } = require('../server/workspace/technicalPlanTaskService.cjs');
+const { normalizeCanonicalOutlineInput } = require('../core/technical-plan/outline/outlineGenerationTask.cjs');
 
 const passed = [];
 const failed = [];
@@ -334,6 +335,28 @@ async function main() {
     } finally {
       await harness.close();
     }
+  });
+
+  await run('目录 runner 入参剥离编排 envelope 字段后通过严格校验', async () => {
+    // 回归：任务编排层向 runner payload 注入 input_revision / payload_signature，
+    // 真实目录 runner 的严格校验曾因此拒绝（startOutlineGeneration 不允许字段：input_revision）。
+    const business = {
+      reference_knowledge_document_ids: [],
+      outline_expansion_mode: 'ai-complement',
+      word_control_options: { enabled: false, minimumWords: 0, maximumWords: 0, sectionWords: 0, strictSectionWords: false },
+    };
+    const normalized = normalizeCanonicalOutlineInput({
+      ...business,
+      input_revision: 2,
+      payload_signature: JSON.stringify(business),
+    });
+    assert.equal(normalized.outline_expansion_mode, 'ai-complement');
+    assert.deepEqual(normalized.reference_knowledge_document_ids, []);
+    // 真正的未知业务字段仍应被拒绝，保持严格校验语义。
+    assert.throws(
+      () => normalizeCanonicalOutlineInput({ ...business, input_revision: 2, bogus_field: 1 }),
+      /不允许字段：bogus_field/,
+    );
   });
 
   console.log(`\nWeb 技术方案任务编排测试：${passed.length} 通过，${failed.length} 失败`);

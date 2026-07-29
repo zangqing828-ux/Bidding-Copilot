@@ -189,7 +189,11 @@ function countReadableWords(content) {
 }
 
 function normalizeCanonicalOutlineInput(payload) {
-  return validateStartOutlineGenerationInput(payload);
+  // 任务编排层会在 runner payload 上注入 input_revision / payload_signature 等
+  // 传输 envelope 元数据；它们不属于业务入参，严格校验前需剥离，否则会被
+  // validateStartOutlineGenerationInput 当作未知字段拒绝。
+  const { input_revision: _inputRevision, payload_signature: _payloadSignature, ...businessInput } = payload || {};
+  return validateStartOutlineGenerationInput(businessInput);
 }
 
 function createTaskAcceptanceAbortError(signal) {
@@ -3041,4 +3045,4 @@ async function runOutlineGenerationTask({
   }
 }
 
-module.exports = { runOutlineGenerationTask };
+module.exports = { runOutlineGenerationTask, normalizeCanonicalOutlineInput };
