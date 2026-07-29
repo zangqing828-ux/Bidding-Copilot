@@ -70,21 +70,22 @@ RUN case "${TARGETARCH:-amd64}" in \
        OPENCODE_ASSET_SHA256="${OPENCODE_ASSET_SHA256}" \
        node scripts/prepare-opencode-binary.cjs --platform linux --arch "${agent_arch}"
 
-# 创建非 root 用户
-RUN useradd -r -s /bin/false yibiao && \
+# 创建非 root 用户；固定数字 UID/GID，保证持久卷属主跨镜像重建稳定
+RUN groupadd -r -g 10001 bidmaster && \
+    useradd -r -u 10001 -g bidmaster -s /bin/false bidmaster && \
     mkdir -p /data && \
-    chown -R yibiao:yibiao /app /data
+    chown -R 10001:10001 /app /data
 
-USER yibiao
+USER bidmaster
 
 # 环境变量默认值
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOST=0.0.0.0
-ENV YIBIAO_DATA_DIR=/data
+ENV BIDMASTER_DATA_DIR=/data
 ENV BIDMASTER_TENANT_ID=bidmaster
 ENV OAUTH_MODE=mainquest
-ENV YIBIAO_CHROMIUM_PATH=/usr/bin/chromium
+ENV BIDMASTER_CHROMIUM_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 EXPOSE 3000
@@ -102,8 +103,8 @@ CMD ["node", "server/index.cjs"]
 FROM runtime AS agent-e2e
 USER root
 COPY client/scripts/test-web-agent-docker.cjs ./scripts/test-web-agent-docker.cjs
-RUN chown yibiao:yibiao ./scripts/test-web-agent-docker.cjs
-USER yibiao
+RUN chown 10001:10001 ./scripts/test-web-agent-docker.cjs
+USER bidmaster
 ENV NODE_ENV=test
 CMD ["node", "scripts/test-web-agent-docker.cjs"]
 

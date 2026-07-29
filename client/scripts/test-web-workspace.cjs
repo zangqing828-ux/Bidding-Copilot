@@ -19,8 +19,8 @@ function assert(condition, message) {
 }
 
 // 用临时目录做隔离测试
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-test-'));
-process.env.YIBIAO_DATA_DIR = tmpDir;
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bidmaster-test-'));
+process.env.BIDMASTER_DATA_DIR = tmpDir;
 process.env.CONFIG_ENCRYPTION_KEY = 'test-encryption-key-for-testing';
 process.env.BIDMASTER_TENANT_ID = 'workspace-test';
 

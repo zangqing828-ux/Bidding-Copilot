@@ -28,7 +28,7 @@ function bridgeMethod(namespace: string, method: string) {
 }
 
 export const webBridge = {
-  appName: '易标投标工具箱',
+  appName: 'BidMaster 投标工具箱',
   platform: 'web',
   getVersion: bridgeMethod('app', 'getVersion'),
   getGpuHardwareAccelerationStatus: bridgeMethod('app', 'getGpuHardwareAccelerationStatus'),

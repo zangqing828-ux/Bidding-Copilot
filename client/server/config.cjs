@@ -4,7 +4,7 @@ const path = require('node:path');
 const pkg = require('../package.json');
 
 function resolveDistDir() {
-  const env = process.env.YIBIAO_WEB_DIST_DIR;
+  const env = process.env.BIDMASTER_WEB_DIST_DIR;
   if (env) {
     return path.resolve(__dirname, '..', env);
   }
@@ -12,7 +12,7 @@ function resolveDistDir() {
 }
 
 function resolveDataDir() {
-  const env = process.env.YIBIAO_DATA_DIR;
+  const env = process.env.BIDMASTER_DATA_DIR;
   if (env) {
     return path.resolve(env);
   }
@@ -127,7 +127,7 @@ const config = {
   distDir: resolveDistDir(),
   dataDir: resolveDataDir(),
   version: pkg.version,
-  appName: pkg.build?.productName || '易标投标工具箱',
+  appName: pkg.build?.productName || 'BidMaster 投标工具箱',
   bodyLimit: '2mb',
   oauth,
   sessionSecret,

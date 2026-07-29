@@ -2,7 +2,7 @@
 const crypto = require('node:crypto');
 const { getSystemDb } = require('../database/systemDatabase.cjs');
 
-const SESSION_COOKIE_NAME = 'yibiao_session';
+const SESSION_COOKIE_NAME = 'bidmaster_session';
 const DEFAULT_TTL_DAYS = 7;
 
 function getSessionTtlMs() {

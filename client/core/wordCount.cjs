@@ -14,7 +14,7 @@ function keepMarkdownLinkText(content) {
 }
 
 function stripUrls(content) {
-  return content.replace(/\b(?:https?|file|yibiao-asset):\/\/\S+/gi, ' ');
+  return content.replace(/\b(?:https?|file|bidmaster-asset):\/\/\S+/gi, ' ');
 }
 
 function stripHtml(content) {

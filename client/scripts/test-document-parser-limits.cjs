@@ -4,7 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { parseDocumentWithConfig } = require('../core/documentParser.cjs');
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-document-parser-'));
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bidmaster-document-parser-'));
 const config = { components: { file_parser: { provider: 'local' } } };
 
 async function main() {

@@ -890,8 +890,8 @@ function collectWorkspaceCloseWarnings() {
 function parseLoginState(authLocation, setCookies) {
   const stateValue = authLocation?.match(/state=([^&]+)/)?.[1] || '';
   const loginCookies = Array.isArray(setCookies) ? setCookies : (setCookies ? [setCookies] : []);
-  const stateCookie = loginCookies.find((item) => item.startsWith('yibiao_oauth_state='));
-  const stateCookieValue = stateCookie?.match(/yibiao_oauth_state=([^;]+)/)?.[1] || '';
+  const stateCookie = loginCookies.find((item) => item.startsWith('bidmaster_oauth_state='));
+  const stateCookieValue = stateCookie?.match(/bidmaster_oauth_state=([^;]+)/)?.[1] || '';
   return { stateValue, stateCookieValue };
 }
 
@@ -905,7 +905,7 @@ async function createSessionCookie(inject, userEmail = 'contract@test.com', user
     url: '/api/auth/mock-callback',
     headers: {
       'content-type': 'application/x-www-form-urlencoded',
-      cookie: `yibiao_oauth_state=${stateCookieValue}`,
+      cookie: `bidmaster_oauth_state=${stateCookieValue}`,
     },
     payload: `email=${encodeURIComponent(userEmail)}&name=${encodeURIComponent(userName)}&state=${stateValue}`,
   });
@@ -914,11 +914,11 @@ async function createSessionCookie(inject, userEmail = 'contract@test.com', user
   const callbackCookies = Array.isArray(callbackRes.headers['set-cookie'])
     ? callbackRes.headers['set-cookie']
     : (callbackRes.headers['set-cookie'] ? [callbackRes.headers['set-cookie']] : []);
-  const sessionCookie = callbackCookies.find((item) => item.startsWith('yibiao_session='));
-  const sessionValue = sessionCookie?.match(/yibiao_session=([^;]+)/)?.[1] || '';
+  const sessionCookie = callbackCookies.find((item) => item.startsWith('bidmaster_session='));
+  const sessionValue = sessionCookie?.match(/bidmaster_session=([^;]+)/)?.[1] || '';
   assert(Boolean(sessionValue), 'mock 登录返回 session cookie');
 
-  return `yibiao_session=${sessionValue}`;
+  return `bidmaster_session=${sessionValue}`;
 }
 
 async function assertContractFieldPresence(entry, manifestKey) {
@@ -1815,8 +1815,8 @@ async function closeServer() {
   };
 
   try {
-    tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-contract-test-'));
-    process.env.YIBIAO_DATA_DIR = tmpDataDir;
+    tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bidmaster-contract-test-'));
+    process.env.BIDMASTER_DATA_DIR = tmpDataDir;
     process.env.CONFIG_ENCRYPTION_KEY = 'test-key';
     process.env.OAUTH_MODE = 'mock';
     process.env.SESSION_SECRET = 'dev-secret';

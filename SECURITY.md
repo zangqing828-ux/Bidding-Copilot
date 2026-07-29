@@ -1,6 +1,6 @@
 # 安全策略
 
-感谢你关注易标 AI（OpenBidKit_Yibiao）的安全问题。
+感谢你关注 BidMaster 的安全问题。
 
 ## 支持版本
 
@@ -10,10 +10,10 @@
 
 如果你发现安全漏洞或敏感问题，请不要公开提交 Issue。
 
-请通过邮件反馈：
+请通过 GitHub 私密渠道反馈：
 
 ```text
-fb208@outlook.com
+https://github.com/zangqing828-ux/Bidding-Copilot/security/advisories/new
 ````
 
 反馈时建议说明：

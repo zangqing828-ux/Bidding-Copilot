@@ -56,7 +56,7 @@ function verifyChecksum(filePath, expected) {
 
 function requestJson(url) {
   return new Promise((resolve, reject) => {
-    const headers = { 'User-Agent': 'yibiao-opencode-binary-preparer', Accept: 'application/vnd.github+json' };
+    const headers = { 'User-Agent': 'bidmaster-opencode-binary-preparer', Accept: 'application/vnd.github+json' };
     if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
     https.get(url, { headers }, (res) => {
       let body = '';
@@ -78,7 +78,7 @@ function downloadFile(url, targetPath) {
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
     const file = fs.createWriteStream(targetPath);
     const request = (currentUrl, redirectCount = 0) => {
-      https.get(currentUrl, { headers: { 'User-Agent': 'yibiao-opencode-binary-preparer' } }, (res) => {
+      https.get(currentUrl, { headers: { 'User-Agent': 'bidmaster-opencode-binary-preparer' } }, (res) => {
         if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
           if (redirectCount > 5) return reject(new Error('下载 OpenCode binary 重定向过多'));
           request(new URL(res.headers.location, currentUrl).toString(), redirectCount + 1);

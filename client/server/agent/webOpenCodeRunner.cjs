@@ -27,7 +27,7 @@ function normalizeTimeoutMs(value) {
 }
 
 function getPrlimitBinary(env = process.env) {
-  return String(env.YIBIAO_WEB_PRLIMIT_BIN || '/usr/bin/prlimit').trim();
+  return String(env.BIDMASTER_WEB_PRLIMIT_BIN || '/usr/bin/prlimit').trim();
 }
 
 function isExecutable(filePath) {
@@ -119,8 +119,8 @@ function createWebOpenCodeRunner({ env = process.env } = {}) {
       `--nproc=${limits.processes}:${limits.processes}`,
       `--cpu=${limits.cpuSeconds}:${limits.cpuSeconds}`,
       '--', binary, 'run', '--format', 'json',
-      ...(env.YIBIAO_WEB_OPENCODE_LOG_LEVEL
-        ? ['--print-logs', '--log-level', String(env.YIBIAO_WEB_OPENCODE_LOG_LEVEL)]
+      ...(env.BIDMASTER_WEB_OPENCODE_LOG_LEVEL
+        ? ['--print-logs', '--log-level', String(env.BIDMASTER_WEB_OPENCODE_LOG_LEVEL)]
         : []),
       '--dir', taskWorkspace.workDir, prompt,
     ];
@@ -143,7 +143,7 @@ function createWebOpenCodeRunner({ env = process.env } = {}) {
           OPENCODE_DISABLE_EXTERNAL_SKILLS: 'true',
           OPENCODE_DISABLE_AUTOUPDATE: 'true',
           OPENCODE_DISABLE_DEFAULT_PLUGINS: 'true',
-          YIBIAO_WEB_AGENT_PROXY_TOKEN: proxyToken,
+          BIDMASTER_WEB_AGENT_PROXY_TOKEN: proxyToken,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       });

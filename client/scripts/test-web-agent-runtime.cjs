@@ -7,7 +7,7 @@ const { MAX_OUTPUT_BYTES, OUTPUT_FILE, createOpenCodeTaskWorkspace, readSafeOutp
 const { STDERR_RING_BYTES, STDOUT_RING_BYTES, createRingBuffer } = require('../server/agent/webOpenCodeRunner.cjs');
 const { createAgentOpenAiProxy } = require('../server/agent/agentOpenAiProxy.cjs');
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-web-agent-'));
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bidmaster-web-agent-'));
 const binaryPath = path.join(root, 'fake-opencode');
 const prlimitPath = path.join(root, 'fake-prlimit');
 const workspaceRoot = path.join(root, 'workspace-a');
@@ -59,7 +59,7 @@ async function run() {
   const service = createWebAgentService({
     workspaceId: 'account-a',
     workspaceRoot,
-    env: { YIBIAO_WEB_OPENCODE_BIN: binaryPath, YIBIAO_WEB_PRLIMIT_BIN: prlimitPath, YIBIAO_WEB_AGENT_TOOLS: '' },
+    env: { BIDMASTER_WEB_OPENCODE_BIN: binaryPath, BIDMASTER_WEB_PRLIMIT_BIN: prlimitPath, BIDMASTER_WEB_AGENT_TOOLS: '' },
     aiService: {
       captureTextModelSnapshot: () => ({
         provider: 'test',
@@ -237,7 +237,7 @@ async function run() {
   const missingPrlimitService = createWebAgentService({
     workspaceId: 'account-prlimit',
     workspaceRoot,
-    env: { YIBIAO_WEB_OPENCODE_BIN: binaryPath, YIBIAO_WEB_PRLIMIT_BIN: path.join(root, 'missing-prlimit'), YIBIAO_WEB_AGENT_TOOLS: '' },
+    env: { BIDMASTER_WEB_OPENCODE_BIN: binaryPath, BIDMASTER_WEB_PRLIMIT_BIN: path.join(root, 'missing-prlimit'), BIDMASTER_WEB_AGENT_TOOLS: '' },
     aiService: {
       captureTextModelSnapshot: () => ({ provider: 'test', baseUrl: 'http://127.0.0.1:1/v1', modelName: 'test-model', apiKey: 'test-key' }),
       chatCompletionsRaw: async () => ({}),
@@ -252,7 +252,7 @@ async function run() {
   const shutdownService = createWebAgentService({
     workspaceId: 'account-shutdown',
     workspaceRoot,
-    env: { YIBIAO_WEB_OPENCODE_BIN: binaryPath, YIBIAO_WEB_PRLIMIT_BIN: prlimitPath, YIBIAO_WEB_AGENT_TOOLS: '' },
+    env: { BIDMASTER_WEB_OPENCODE_BIN: binaryPath, BIDMASTER_WEB_PRLIMIT_BIN: prlimitPath, BIDMASTER_WEB_AGENT_TOOLS: '' },
     aiService: {
       captureTextModelSnapshot: () => ({ provider: 'test', baseUrl: 'http://127.0.0.1:1/v1', modelName: 'test-model', apiKey: 'test-key' }),
       chatCompletionsRaw: async () => ({}),
@@ -275,7 +275,7 @@ async function run() {
   const lifecycleService = createWebAgentService({
     workspaceId: 'account-close',
     workspaceRoot,
-    env: { YIBIAO_WEB_OPENCODE_BIN: binaryPath, YIBIAO_WEB_PRLIMIT_BIN: prlimitPath, YIBIAO_WEB_AGENT_TOOLS: '' },
+    env: { BIDMASTER_WEB_OPENCODE_BIN: binaryPath, BIDMASTER_WEB_PRLIMIT_BIN: prlimitPath, BIDMASTER_WEB_AGENT_TOOLS: '' },
     aiService: { captureTextModelSnapshot: () => ({}), withQueueScope: () => ({ chatCompletionsRaw: async () => ({}) }) },
     agentCoordinator: {
       getWorkspaceSnapshot: () => ({ reserved: 0, admitting: 0, active: 1, queued: 0, cleanup: 0 }),

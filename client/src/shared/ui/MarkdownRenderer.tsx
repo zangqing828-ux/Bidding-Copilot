@@ -27,12 +27,12 @@ function isExternalHttpUrl(value: string) {
   return /^https?:\/\//i.test(value);
 }
 
-// Web 环境下把 yibiao-asset://generated-images/<rel> 解析为可下载的 /api/assets 路径；
+// Web 环境下把 bidmaster-asset://generated-images/<rel> 解析为可下载的 /api/assets 路径；
 // Electron 环境由自定义协议处理，原样返回。
 function resolveImageSrc(value: string) {
   const raw = String(value || '');
-  if (window.yibiao?.platform === 'web' && /^yibiao-asset:\/\/generated-images\//i.test(raw)) {
-    return raw.replace(/^yibiao-asset:\/\/generated-images\//i, '/api/assets/generated-images/');
+  if (window.yibiao?.platform === 'web' && /^bidmaster-asset:\/\/generated-images\//i.test(raw)) {
+    return raw.replace(/^bidmaster-asset:\/\/generated-images\//i, '/api/assets/generated-images/');
   }
   return raw;
 }

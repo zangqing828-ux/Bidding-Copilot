@@ -141,7 +141,7 @@ function keepMarkdownLinkText(content) {
 }
 
 function stripUrls(content) {
-  return String(content || '').replace(/\b(?:https?|file|yibiao-asset):\/\/\S+/gi, ' ');
+  return String(content || '').replace(/\b(?:https?|file|bidmaster-asset):\/\/\S+/gi, ' ');
 }
 
 function stripHtml(content) {

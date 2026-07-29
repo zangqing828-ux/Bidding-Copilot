@@ -58,7 +58,7 @@ function parseOfflineLicenseInput() {
 function buildOfflineLicenseFileName() {
   const clientId = state.licenseOfflineClientId.value.trim().replace(/[^a-zA-Z0-9._-]/g, '_') || 'client';
   const expiresAt = state.licenseOfflineExpiresAt.value.trim() || 'license';
-  return `yibiao-offline-license-${clientId}-${expiresAt}.json`;
+  return `bidmaster-offline-license-${clientId}-${expiresAt}.json`;
 }
 
 export async function loadLicenseConfig(options = {}) {

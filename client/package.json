@@ -1,5 +1,5 @@
 {
-  "name": "yibiao-client",
+  "name": "bidmaster-web",
   "version": "0.1.0",
   "private": true,
   "description": "BidMaster Web 客户端与服务端",
@@ -29,6 +29,7 @@
     "test:web-agent-executor": "node scripts/test-web-agent-executor.cjs",
     "test:web-agent-docker": "node scripts/test-web-agent-docker.cjs",
     "test:opencode-checksum": "node scripts/test-opencode-checksum.cjs",
+    "check:brand-allowlist": "node scripts/check-brand-allowlist.cjs",
     "test:document-parser-limits": "node scripts/test-document-parser-limits.cjs",
     "test:web-graceful-shutdown": "node scripts/test-web-server-graceful-shutdown.cjs",
     "test:web-contract": "node scripts/test-web-contract.cjs",

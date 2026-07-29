@@ -18,8 +18,8 @@ function assert(condition, message) {
 }
 
 // 用临时目录做隔离测试
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-task-test-'));
-process.env.YIBIAO_DATA_DIR = tmpDir;
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bidmaster-task-test-'));
+process.env.BIDMASTER_DATA_DIR = tmpDir;
 process.env.CONFIG_ENCRYPTION_KEY = 'test-encryption-key-for-testing';
 process.env.OAUTH_MODE = 'mock';
 process.env.SESSION_SECRET = 'dev-secret';
@@ -103,21 +103,21 @@ async function runTests() {
   const loginRes = await httpRequest('GET', '/api/auth/login');
   const setCookies = loginRes.headers['set-cookie'];
   const loginCookies = Array.isArray(setCookies) ? setCookies : (setCookies ? [setCookies] : []);
-  const stateCookie = loginCookies.find((c) => c.startsWith('yibiao_oauth_state='));
+  const stateCookie = loginCookies.find((c) => c.startsWith('bidmaster_oauth_state='));
   const stateValue = new URL(loginRes.headers.location, 'http://localhost').searchParams.get('state');
-  const stateCookieValue = stateCookie?.match(/yibiao_oauth_state=([^;]+)/)?.[1];
+  const stateCookieValue = stateCookie?.match(/bidmaster_oauth_state=([^;]+)/)?.[1];
 
   const mockCallbackRes = await httpRequest('POST', '/api/auth/mock-callback', {
     'content-type': 'application/x-www-form-urlencoded',
-    cookie: `yibiao_oauth_state=${stateCookieValue}`,
+    cookie: `bidmaster_oauth_state=${stateCookieValue}`,
   }, `email=tasks@test.com&name=TaskTester&state=${stateValue}`);
 
   const setCookieHeader = mockCallbackRes.headers['set-cookie'];
   const cookies = Array.isArray(setCookieHeader) ? setCookieHeader : (setCookieHeader ? [setCookieHeader] : []);
-  const sessionCookieMatch = cookies.find((c) => c.startsWith('yibiao_session='));
-  const sessionCookie = sessionCookieMatch?.match(/yibiao_session=([^;]+)/)?.[1];
+  const sessionCookieMatch = cookies.find((c) => c.startsWith('bidmaster_session='));
+  const sessionCookie = sessionCookieMatch?.match(/bidmaster_session=([^;]+)/)?.[1];
   assert(sessionCookie, 'mock 登录获取 session cookie');
-  const cookieStr = `yibiao_session=${sessionCookie}`;
+  const cookieStr = `bidmaster_session=${sessionCookie}`;
 
   // 2. bridge tasks.getActiveTasks → 200（空数组，无活动任务）
   {
@@ -215,20 +215,20 @@ async function runTests() {
     const login2Res = await httpRequest('GET', '/api/auth/login');
     const setCookies2 = login2Res.headers['set-cookie'];
     const loginCookies2 = Array.isArray(setCookies2) ? setCookies2 : (setCookies2 ? [setCookies2] : []);
-    const stateCookie2 = loginCookies2.find((c) => c.startsWith('yibiao_oauth_state='));
+    const stateCookie2 = loginCookies2.find((c) => c.startsWith('bidmaster_oauth_state='));
     const stateValue2 = new URL(login2Res.headers.location, 'http://localhost').searchParams.get('state');
-    const stateCookieValue2 = stateCookie2?.match(/yibiao_oauth_state=([^;]+)/)?.[1];
+    const stateCookieValue2 = stateCookie2?.match(/bidmaster_oauth_state=([^;]+)/)?.[1];
 
     const mock2Res = await httpRequest('POST', '/api/auth/mock-callback', {
       'content-type': 'application/x-www-form-urlencoded',
-      cookie: `yibiao_oauth_state=${stateCookieValue2}`,
+      cookie: `bidmaster_oauth_state=${stateCookieValue2}`,
     }, `email=other@test.com&name=OtherUser&state=${stateValue2}`);
 
     const setCookies2b = mock2Res.headers['set-cookie'];
     const cookies2 = Array.isArray(setCookies2b) ? setCookies2b : (setCookies2b ? [setCookies2b] : []);
-    const sessionCookie2Match = cookies2.find((c) => c.startsWith('yibiao_session='));
-    const sessionCookie2 = sessionCookie2Match?.match(/yibiao_session=([^;]+)/)?.[1];
-    const cookieStr2 = `yibiao_session=${sessionCookie2}`;
+    const sessionCookie2Match = cookies2.find((c) => c.startsWith('bidmaster_session='));
+    const sessionCookie2 = sessionCookie2Match?.match(/bidmaster_session=([^;]+)/)?.[1];
+    const cookieStr2 = `bidmaster_session=${sessionCookie2}`;
 
     // 两个 session 分别建立 SSE 连接
     const sse1 = await connectSSE(cookieStr);

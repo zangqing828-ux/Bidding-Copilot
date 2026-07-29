@@ -1043,7 +1043,7 @@ function describeImageSourceForLog(source) {
   if (/^data:/i.test(value)) return { kind: 'data-url' };
   try {
     const url = new URL(value);
-    if (url.protocol === 'yibiao-asset:') {
+    if (url.protocol === 'bidmaster-asset:') {
       return { kind: 'asset', host: url.hostname, extension: path.extname(url.pathname || '').toLowerCase() };
     }
     if (url.protocol === 'http:' || url.protocol === 'https:') {
@@ -1081,7 +1081,7 @@ function normalizeImageForDocx(loaded, context = {}) {
   return { buffer: normalized.buffer, type: 'png' };
 }
 
-// yibiao-asset:// 解析交由运行环境注入的 assetResolver，只返回当前 tenant 边界内的绝对路径。
+// bidmaster-asset:// 解析交由运行环境注入的 assetResolver，只返回当前 tenant 边界内的绝对路径。
 function resolveAssetImagePath(url, context = {}) {
   const resolver = context.assetResolver;
   if (typeof resolver !== 'function') return null;
@@ -1112,7 +1112,7 @@ async function loadImage(source, context = {}) {
     };
   }
 
-  if (/^yibiao-asset:\/\//i.test(url)) {
+  if (/^bidmaster-asset:\/\//i.test(url)) {
     const assetPath = resolveAssetImagePath(url, context);
     if (!assetPath || !fs.existsSync(assetPath)) {
       return null;

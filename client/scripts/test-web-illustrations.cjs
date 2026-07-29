@@ -54,7 +54,7 @@ function createStubAiService({ imageBuffer } = {}) {
 }
 
 function createHarness() {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-wr04-illu-'));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bidmaster-wr04-illu-'));
   const sqliteDatabase = createSqliteDatabase({ databasePath: path.join(tmpDir, 'yibiao.sqlite') });
   const technicalPlanStore = createTechnicalPlanStore({ db: sqliteDatabase.db, workspaceRoot: tmpDir });
   technicalPlanStore.loadTechnicalPlan();
@@ -173,7 +173,7 @@ async function main() {
         plan: { revision: 'rev-1' },
         workspaceStore: harness.technicalPlanStore,
       });
-      assert.match(result.asset_url, /^yibiao-asset:\/\/generated-images\/technical-plan\/illustrations\//, '返回 asset URL');
+      assert.match(result.asset_url, /^bidmaster-asset:\/\/generated-images\/technical-plan\/illustrations\//, '返回 asset URL');
       assert.ok(result.source_path, 'HTML 源文件已落盘');
     } finally {
       harness.close();
@@ -189,8 +189,8 @@ async function main() {
         plan: { revision: 'rev-1' },
         workspaceStore: harness.technicalPlanStore,
       });
-      assert.match(result.asset_url, /^yibiao-asset:\/\/generated-images\/technical-plan\/illustrations\/.*\.png$/, 'AI 图片落盘为 PNG asset URL');
-      const relative = result.asset_url.replace('yibiao-asset://generated-images/', '');
+      assert.match(result.asset_url, /^bidmaster-asset:\/\/generated-images\/technical-plan\/illustrations\/.*\.png$/, 'AI 图片落盘为 PNG asset URL');
+      const relative = result.asset_url.replace('bidmaster-asset://generated-images/', '');
       const decoded = relative.split('/').map((part) => decodeURIComponent(part)).join('/');
       const filePath = path.join(harness.tmpDir, 'generated-images', decoded);
       assert.ok(fs.existsSync(filePath), '资产文件确实落盘');

@@ -60,7 +60,7 @@ your-domain.com {
 ```bash
 # 备份数据卷
 docker run --rm -v web-data:/data -v $(pwd):/backup alpine \
-    tar czf /backup/yibiao-data-$(date +%Y%m%d).tar.gz /data
+    tar czf /backup/bidmaster-data-$(date +%Y%m%d).tar.gz /data
 ```
 
 ### 回滚
@@ -83,7 +83,7 @@ docker run --rm -v web-data:/data -v $(pwd):/backup alpine \
 | `NODE_ENV` | 是 | 生产环境设为 `production` |
 | `PORT` | 否 | 默认 3000 |
 | `PUBLIC_BASE_URL` | 是 | HTTPS 域名 |
-| `YIBIAO_DATA_DIR` | 否 | 默认 `/data` |
+| `BIDMASTER_DATA_DIR` | 否 | 默认 `/data` |
 | `BIDMASTER_TENANT_ID` | 否 | 默认 `bidmaster`，一个部署固定一个值 |
 | `OAUTH_MODE` | 是 | 生产必须 `mainquest` |
 | `MAINQUEST_AUTH_BASE_URL` | 是 | MainQuest Auth 地址 |

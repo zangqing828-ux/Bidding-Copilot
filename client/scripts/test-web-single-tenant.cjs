@@ -5,7 +5,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bidmaster-single-tenant-'));
-process.env.YIBIAO_DATA_DIR = tmpDir;
+process.env.BIDMASTER_DATA_DIR = tmpDir;
 process.env.CONFIG_ENCRYPTION_KEY = 'single-tenant-test-key';
 process.env.BIDMASTER_TENANT_ID = 'tenant-test';
 process.env.OAUTH_MODE = 'mock';

@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { readExpectedChecksum, verifyChecksum } = require('./prepare-opencode-binary.cjs');
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-opencode-checksum-'));
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bidmaster-opencode-checksum-'));
 const archivePath = path.join(tmpDir, 'opencode.zip');
 
 try {
