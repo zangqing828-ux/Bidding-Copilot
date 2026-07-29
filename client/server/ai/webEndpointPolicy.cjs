@@ -304,25 +304,34 @@ function pickSafeRecord(records, familyHint) {
   return records[0];
 }
 
-async function resolveSafeConnectRecord(lookup, hostname, options) {
+async function resolveSafeConnectRecords(lookup, hostname, options) {
   const records = filterSafeLookupResults(await promiseFromLookup(lookup, hostname, { all: true, verbatim: true }));
-  const familyHint = normalizeFamilyHint(options);
-  const record = pickSafeRecord(records, familyHint);
-  return {
+  const normalized = records.map((record) => ({
     address: record.address,
-    family: record.family || familyHint || 0,
-  };
+    family: Number(record.family) > 0 ? Number(record.family) : 4,
+  }));
+  // 非 all 回调仍按 family hint 优选单条；all 回调返回全部安全记录交由 undici 选择。
+  const preferred = pickSafeRecord(normalized, normalizeFamilyHint(options));
+  return [preferred, ...normalized.filter((record) => record !== preferred)];
 }
 
 function createConnectLookup(lookup) {
   return (hostname, options, callback) => {
-    const result = resolveSafeConnectRecord(lookup, hostname, options);
+    const result = resolveSafeConnectRecords(lookup, hostname, options);
     if (typeof callback !== 'function') {
       return result;
     }
 
     result.then(
-      (record) => callback(null, record.address, record.family),
+      (records) => {
+        // undici 连接器以 { all: true } 调用 lookup 并期望数组形式 [{ address, family }]；
+        // 仅按单值 (address, family) 回调会被 undici 当作数组解构，得到 undefined 地址。
+        if (options && options.all) {
+          callback(null, records);
+        } else {
+          callback(null, records[0].address, records[0].family);
+        }
+      },
       (error) => callback(error),
     );
     return undefined;
@@ -421,6 +430,7 @@ function createWebEndpointPolicy(options = {}) {
 module.exports = {
   ENDPOINT_NOT_ALLOWED,
   createWebEndpointPolicy,
+  createConnectLookup,
   isBlockedAddress,
   isBlockedHostname,
 };
