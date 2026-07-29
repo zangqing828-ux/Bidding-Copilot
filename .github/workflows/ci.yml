@@ -87,13 +87,25 @@ jobs:
       - name: Build renderer
         run: npm run build
 
+      - name: Install Playwright Chromium
+        run: |
+          npx playwright install --with-deps chromium
+          CHROMIUM_BIN="$(npx playwright install --dry-run chromium 2>/dev/null | grep -oE '/[^ ]*chrome-linux[^ ]*/chrome' | head -1 || true)"
+          if [ -z "$CHROMIUM_BIN" ]; then
+            CHROMIUM_BIN="$(find "${HOME}/.cache/ms-playwright" -type f -name chrome -path '*chrome-linux*' 2>/dev/null | head -1 || true)"
+          fi
+          if [ -n "$CHROMIUM_BIN" ] && [ -f "$CHROMIUM_BIN" ]; then
+            echo "YIBIAO_CHROMIUM_PATH=$CHROMIUM_BIN" >> "$GITHUB_ENV"
+            echo "Resolved Chromium: $CHROMIUM_BIN"
+          else
+            echo "未定位到 Playwright Chromium 可执行文件" >&2
+            exit 1
+          fi
+
       - name: Run complete Web gate
         run: npm run test:web
         env:
           CONFIG_ENCRYPTION_KEY: ci-test-encryption-key
-
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
 
       - name: Run browser Web export gate
         run: npm run test:web-browser

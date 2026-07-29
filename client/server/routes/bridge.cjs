@@ -3,9 +3,11 @@
 // pending / removed 能力统一返回明确错误码，不执行真实业务。
 const express = require('express');
 const { getWorkspaceContext } = require('../workspace/workspaceRegistry.cjs');
+const { createSystemFontService } = require('../export/systemFontService.cjs');
 const { methods: bridgeMethods = {} } = require('../../shared/bridgeContract.cjs');
 
 const router = express.Router();
+const systemFontService = createSystemFontService();
 const FORBIDDEN_IDENTIFIERS = new Set([
   '__proto__',
   'prototype',
@@ -179,6 +181,10 @@ const bridgeBindingMetadata = Object.freeze({
 
   ai: Object.freeze({
     testImageModel: createDirectBinding((ctx, args, options) => ctx.aiService.testImageModel(args[0], options), 'ai.testImageModel'),
+  }),
+
+  systemFonts: Object.freeze({
+    list: createDirectBinding(() => systemFontService.list(), 'systemFonts.list'),
   }),
 
   technicalPlan: Object.freeze({

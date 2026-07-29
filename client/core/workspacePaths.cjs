@@ -10,6 +10,7 @@ function resolveWorkspacePaths(workspaceRoot) {
   const importedImagesDir = path.join(workspaceRoot, 'imported-images');
   const knowledgeBaseDir = path.join(workspaceRoot, 'knowledge-base');
   const uploadsDir = path.join(workspaceRoot, 'uploads');
+  const exportsDir = path.join(workspaceRoot, 'exports');
 
   return {
     workspaceRoot,
@@ -32,6 +33,7 @@ function resolveWorkspacePaths(workspaceRoot) {
     importedImagesDir,
     knowledgeBaseDir,
     uploadsDir,
+    exportsDir,
   };
 }
 
