@@ -359,6 +359,30 @@ async function main() {
     );
   });
 
+  await run('commitOutlineGenerationResult 保留 task_id/input_revision/started_at', async () => {
+    // 回归（Codex 评审）：saveTask 整行替换，收尾提交若只写 status/progress/logs/stats
+    // 会清空任务标识与修订号，破坏中断恢复与单次原子提交语义。
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wr07-commit-outline-'));
+    const sqliteDatabase = createSqliteDatabase({ databasePath: path.join(tmpDir, 'yibiao.sqlite') });
+    const db = sqliteDatabase.db;
+    const store = createTechnicalPlanStore({ db, workspaceRoot: tmpDir });
+    db.prepare(`INSERT INTO technical_plan_tasks (type, task_id, status, progress, logs_json, stats_json, error, error_code, retryable, input_revision, pause_requested, started_at, updated_at)
+      VALUES ('outline-generation', 'task-outline-1', 'running', 50, '[]', NULL, NULL, NULL, 0, 7, 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`).run();
+    const state = store.commitOutlineGenerationResult(
+      { outlineData: { outline: [{ id: 'n1', title: '第一章', children: [] }] } },
+      { status: 'success', progress: 100, logs: ['目录生成完成。'], stats: { outline: { phase: 'done' } } },
+    );
+    const task = state.outlineGenerationTask;
+    assert.equal(task.task_id, 'task-outline-1', 'task_id 应保留');
+    assert.equal(task.input_revision, 7, 'input_revision 应保留');
+    assert.equal(task.started_at, '2026-01-01T00:00:00.000Z', 'started_at 应保留');
+    assert.equal(task.status, 'success', 'status 应更新');
+    assert.equal(task.progress, 100, 'progress 应更新');
+    assert.equal(state.outlineData.outline.length, 1, '目录结果应写入');
+    db.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
   console.log(`\nWeb 技术方案任务编排测试：${passed.length} 通过，${failed.length} 失败`);
   if (failed.length) {
     process.exitCode = 1;

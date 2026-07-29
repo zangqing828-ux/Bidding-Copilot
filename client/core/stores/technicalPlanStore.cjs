@@ -1712,7 +1712,24 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
   // 目录生成收尾：把目录结果 patch 与任务状态 patch 单次原子写入，
   // 供任务编排的 guarded store 以 revision 守卫调用（见 technicalPlanTaskService）。
   function commitOutlineGenerationResult(planPatch, taskPatch) {
-    return updateTechnicalPlan({ ...(planPatch || {}), outlineGenerationTask: taskPatch });
+    // saveTask 为整行替换：调用方 taskPatch 仅含 status/progress/logs/stats，
+    // 直接写入会清空 task_id/input_revision/started_at。合并现有任务行以保留
+    // 任务标识与修订号，确保中断恢复与“单次原子提交结果”的语义。
+    const existingRow = db.prepare("SELECT * FROM technical_plan_tasks WHERE type = 'outline-generation'").get();
+    const existing = taskFromRow(existingRow);
+    const patch = taskPatch || {};
+    const mergedTask = {
+      ...(existing || {}),
+      ...patch,
+      task_id: existing?.task_id || patch.task_id || '',
+      input_revision: existing?.input_revision ?? patch.input_revision,
+      started_at: existing?.started_at || patch.started_at,
+      error: patch.error ?? undefined,
+      error_code: patch.error_code ?? undefined,
+      retryable: patch.retryable ?? existing?.retryable ?? false,
+      pause_requested: patch.pause_requested ?? existing?.pause_requested ?? false,
+    };
+    return updateTechnicalPlan({ ...(planPatch || {}), outlineGenerationTask: mergedTask });
   }
 
   function updateStep(step) {
