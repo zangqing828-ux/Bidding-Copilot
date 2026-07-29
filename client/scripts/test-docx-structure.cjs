@@ -199,6 +199,46 @@ async function main() {
     }
   });
 
+  await run('本地文件 baseDir 为根目录时仍能读取边界内图片', async () => {
+    const localPngPath = path.join(env.root, 'local-absolute.png');
+    fs.writeFileSync(localPngPath, makePng(64, 64));
+    const localOutline = [{ id: '8', title: '本地图', content: `![](${localPngPath})` }];
+    const warnings = [];
+    // baseDir 固定为根目录 '/'，模拟 macOS Finder 启动时 cwd 为根的场景。
+    const localResult = await buildDocxResult(
+      { project_name: 'local', outline: localOutline, base_dir: path.parse(env.root).root },
+      { warnings, ...env.ports },
+    );
+    const localZip = new AdmZip(localResult.buffer);
+    const media = localZip.getEntries().map((e) => e.entryName).filter((n) => n.startsWith('word/media/'));
+    assert.ok(media.length >= 1, '根目录 baseDir 下边界内本地图片应被嵌入');
+  });
+
+  await run('注入 remoteImageFetcher 时 http 图片经抓取嵌入', async () => {
+    const remotePng = makePng(96, 96);
+    let fetchedUrl = null;
+    const fetcherPorts = { ...env.ports, remoteImageFetcher: async (url) => { fetchedUrl = url; return { buffer: remotePng, type: 'png' }; } };
+    const remoteOutline = [{ id: '7', title: '远程图', content: '![remote](https://cdn.example.com/pic.png)' }];
+    const warnings = [];
+    const remoteResult = await buildDocxResult({ project_name: 'remote', outline: remoteOutline }, { warnings, ...fetcherPorts });
+    assert.strictEqual(fetchedUrl, 'https://cdn.example.com/pic.png', '调用注入的抓取器');
+    const remoteZip = new AdmZip(remoteResult.buffer);
+    const media = remoteZip.getEntries().map((e) => e.entryName).filter((n) => n.startsWith('word/media/'));
+    assert.ok(media.length >= 1, '注入抓取器后 http 图片应被嵌入');
+  });
+
+  await run('无扩展名 URL 依据抓取器 content-type 推断并嵌入', async () => {
+    const remotePng = makePng(48, 48);
+    const fetcherPorts = { ...env.ports, remoteImageFetcher: async () => ({ buffer: remotePng, type: 'image/png' }) };
+    const remoteOutline = [{ id: '6', title: '签名图', content: '![signed](https://cdn.example.com/image?id=123)' }];
+    const warnings = [];
+    const remoteResult = await buildDocxResult({ project_name: 'signed', outline: remoteOutline }, { warnings, ...fetcherPorts });
+    const remoteZip = new AdmZip(remoteResult.buffer);
+    const media = remoteZip.getEntries().map((e) => e.entryName).filter((n) => n.startsWith('word/media/'));
+    assert.ok(media.length >= 1, '无扩展名 URL 应据 content-type 嵌入');
+    assert.strictEqual(warnings.length, 0, '不应产生图片警告');
+  });
+
   await run('release guard：发布路径不得引用 simpleDocxBuilder', async () => {
     const clientDir = path.join(__dirname, '..');
     const scanDirs = ['server', 'core', 'electron'];
