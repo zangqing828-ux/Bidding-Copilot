@@ -227,6 +227,18 @@ async function main() {
     assert.ok(media.length >= 1, '注入抓取器后 http 图片应被嵌入');
   });
 
+  await run('无扩展名 URL 依据抓取器 content-type 推断并嵌入', async () => {
+    const remotePng = makePng(48, 48);
+    const fetcherPorts = { ...env.ports, remoteImageFetcher: async () => ({ buffer: remotePng, type: 'image/png' }) };
+    const remoteOutline = [{ id: '6', title: '签名图', content: '![signed](https://cdn.example.com/image?id=123)' }];
+    const warnings = [];
+    const remoteResult = await buildDocxResult({ project_name: 'signed', outline: remoteOutline }, { warnings, ...fetcherPorts });
+    const remoteZip = new AdmZip(remoteResult.buffer);
+    const media = remoteZip.getEntries().map((e) => e.entryName).filter((n) => n.startsWith('word/media/'));
+    assert.ok(media.length >= 1, '无扩展名 URL 应据 content-type 嵌入');
+    assert.strictEqual(warnings.length, 0, '不应产生图片警告');
+  });
+
   await run('release guard：发布路径不得引用 simpleDocxBuilder', async () => {
     const clientDir = path.join(__dirname, '..');
     const scanDirs = ['server', 'core', 'electron'];

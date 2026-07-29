@@ -1134,7 +1134,9 @@ async function loadImage(source, context = {}) {
     if (!fetched?.buffer?.length) {
       throw new Error(`图片下载失败：${url}`);
     }
-    return { buffer: fetched.buffer, type: fetched.type || imageTypeFromPath(new URL(url).pathname) };
+    // 优先采用抓取器返回的 content-type，无扩展名/签名 URL 回退到路径推断。
+    const fetchedType = imageTypeFromMime(fetched.type);
+    return { buffer: fetched.buffer, type: fetchedType || imageTypeFromPath(new URL(url).pathname) };
   }
 
   // 本地文件读取受 baseDir 边界约束，禁止借相对/绝对路径越权读取目录外文件。

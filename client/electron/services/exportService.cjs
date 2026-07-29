@@ -48,12 +48,16 @@ function createElectronAssetResolver() {
 }
 
 // 桌面端远程图片抓取：由用户本机发起（等价浏览器行为），无服务端 SSRF 风险，保留原导出能力。
+// 同时返回 content-type，供无扩展名/签名 URL 推断图片类型。
 async function electronRemoteImageFetcher(url) {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`图片下载失败：${url}`);
   }
-  return { buffer: Buffer.from(await response.arrayBuffer()) };
+  return {
+    buffer: Buffer.from(await response.arrayBuffer()),
+    type: String(response.headers?.get?.('content-type') || '').split(';')[0].trim().toLowerCase(),
+  };
 }
 
 // 桌面端导出端口：注入原生图片归一化、资产解析、Mermaid 本地渲染/缓存与远程图片抓取。
