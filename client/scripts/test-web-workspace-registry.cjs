@@ -7,18 +7,7 @@ const { createWorkspaceRegistry } = require('../server/workspace/workspaceRegist
 const passed = [];
 const failed = [];
 
-function run(name, callback) {
-  try {
-    callback();
-    passed.push(name);
-    console.log(`  PASS: ${name}`);
-  } catch (error) {
-    failed.push(`${name}: ${error.message}`);
-    console.error(`  FAIL: ${name}: ${error.message}`);
-  }
-}
-
-async function runAsync(name, callback) {
+async function run(name, callback) {
   try {
     await callback();
     passed.push(name);
@@ -29,280 +18,199 @@ async function runAsync(name, callback) {
   }
 }
 
-function waitFor(predicate, timeoutMs = 1200) {
-  const startedAt = Date.now();
-  return new Promise((resolve, reject) => {
-    const check = () => {
-      if (predicate()) {
-        resolve();
-        return;
-      }
-      if (Date.now() - startedAt >= timeoutMs) {
-        reject(new Error('等待 workspace registry 状态超时'));
-        return;
-      }
-      setTimeout(check, 5);
-    };
-    check();
+function createTestRegistry() {
+  const state = {
+    active: false,
+    failClose: false,
+    closeGate: null,
+  };
+  const counters = {
+    create: 0,
+    close: 0,
+  };
+  const registry = createWorkspaceRegistry({
+    tenantId: 'tenant-test',
+    dataDir: '/tmp/bidmaster-tenant-context-test',
+    createContext({ workspaceId }) {
+      counters.create += 1;
+      const generation = counters.create;
+      return {
+        workspaceId,
+        generation,
+        getActivitySnapshot() {
+          return {
+            active: state.active,
+            unknown: false,
+          };
+        },
+        close() {
+          counters.close += 1;
+          if (state.failClose) {
+            return Promise.reject(new Error('tenant close failed'));
+          }
+          return state.closeGate || Promise.resolve();
+        },
+      };
+    },
   });
-}
-
-function createFakeContextFactory(states, closeCounts, createCounts) {
-  return ({ workspaceId }) => {
-    const generation = (createCounts.get(workspaceId) || 0) + 1;
-    createCounts.set(workspaceId, generation);
-    const state = {
-      taskCount: 0,
-      aiActive: 0,
-      aiQueued: 0,
-      failClose: false,
-      closeGate: null,
-      generation,
-    };
-    states.set(workspaceId, state);
-    const context = {
-      workspaceId,
-      generation,
-      getActivitySnapshot() {
-        return {
-          activeTaskCount: state.taskCount,
-          aiActiveCount: state.aiActive,
-          aiQueuedCount: state.aiQueued,
-          active: state.taskCount > 0 || state.aiActive > 0 || state.aiQueued > 0,
-          unknown: false,
-        };
-      },
-      close() {
-        closeCounts.set(workspaceId, (closeCounts.get(workspaceId) || 0) + 1);
-        if (state.failClose) {
-          return Promise.reject(new Error(`close failed: ${workspaceId}`));
-        }
-        return state.closeGate || Promise.resolve();
-      },
-    };
-    state.context = context;
-    return context;
-  };
-}
-
-function createTestRegistry(states = new Map(), closeCounts = new Map(), registryOptions = {}) {
-  const createCounts = new Map();
-  return {
-    registry: createWorkspaceRegistry({
-      dataDir: '/tmp/web-workspace-registry-test',
-      createContext: createFakeContextFactory(states, closeCounts, createCounts),
-      idleTtlMs: 25,
-      sweepIntervalMs: 5,
-      ...registryOptions,
-    }),
-    states,
-    closeCounts,
-    createCounts,
-  };
+  return { registry, state, counters };
 }
 
 function assertUnavailable(callback, expectedState) {
-  let error;
-  try {
-    callback();
-  } catch (caught) {
-    error = caught;
-  }
-  assert(error, `workspace ${expectedState} 时应拒绝分配`);
-  assert.equal(error.code, 'WORKSPACE_UNAVAILABLE');
-  assert.equal(error.state, expectedState);
-  assert.equal(error.retryable, true);
+  assert.throws(callback, (error) => (
+    error?.code === 'WORKSPACE_UNAVAILABLE'
+      && error?.state === expectedState
+      && error?.retryable === true
+  ));
 }
 
 async function main() {
-  await runAsync('registry 创建 100 个上下文并通过 TTL 自动回收', async () => {
-    const { registry, closeCounts } = createTestRegistry();
-    for (let index = 0; index < 100; index += 1) {
-      registry.getWorkspaceContext(`account-${index}`);
-    }
-    assert.equal(registry.getStatus().size, 100);
-    await waitFor(() => registry.getStatus().size === 0);
-    assert.equal(closeCounts.size, 100);
-    assert([...closeCounts.values()].every((count) => count === 1));
-    assert.equal(registry.getStatus().timerActive, false);
-  });
-
-  await runAsync('同一账号多 lease 在 SSE 断开前阻止回收，全部 release 后可回收', async () => {
-    const { registry } = createTestRegistry();
-    const first = registry.acquireWorkspaceContext('sse-account');
-    const second = registry.acquireWorkspaceContext('sse-account');
-    assert.equal(registry.getStatus().entries[0].leaseCount, 2);
-    first.release();
-    await new Promise((resolve) => setTimeout(resolve, 45));
+  await run('同一 tenant ID 始终复用唯一上下文且不启动 TTL 定时器', async () => {
+    const { registry, counters } = createTestRegistry();
+    const first = registry.getWorkspaceContext('tenant-test');
+    const second = registry.getWorkspaceContext('tenant-test');
+    const lease = registry.acquireWorkspaceContext('tenant-test');
+    assert.equal(first, second);
+    assert.equal(first, lease.context);
+    assert.equal(counters.create, 1);
     assert.equal(registry.getStatus().size, 1);
-    second.release();
-    await waitFor(() => registry.getStatus().size === 0);
-  });
-
-  await runAsync('active task、AI active 和 AI queued 均延后回收，清空后自动回收', async () => {
-    const { registry, states } = createTestRegistry();
-    const context = registry.getWorkspaceContext('active-account');
-    const state = states.get('active-account');
-    state.taskCount = 1;
-    await new Promise((resolve) => setTimeout(resolve, 45));
+    assert.equal(registry.getStatus().entries[0].leaseCount, 1);
+    assert.equal(lease.release(), true);
+    assert.equal(lease.release(), false);
     assert.equal(registry.getStatus().size, 1);
-    state.taskCount = 0;
-    state.aiActive = 1;
-    await new Promise((resolve) => setTimeout(resolve, 45));
-    assert.equal(registry.getStatus().size, 1);
-    state.aiActive = 0;
-    state.aiQueued = 1;
-    await new Promise((resolve) => setTimeout(resolve, 45));
-    assert.equal(registry.getStatus().size, 1);
-    state.aiQueued = 0;
-    assert.equal(context.workspaceId, 'active-account');
-    await waitFor(() => registry.getStatus().size === 0);
-  });
-
-  await runAsync('TTL sweep 关闭期间隔离旧 context，成功后才允许创建新 context', async () => {
-    let currentTime = 0;
-    const states = new Map();
-    const closeCounts = new Map();
-    const {
-      registry,
-      createCounts,
-    } = createTestRegistry(states, closeCounts, {
-      now: () => currentTime,
-      idleTtlMs: 25,
-      sweepIntervalMs: 10_000,
-    });
-    const originalContext = registry.getWorkspaceContext('closing-account');
-    let resolveClose;
-    states.get('closing-account').closeGate = new Promise((resolve) => {
-      resolveClose = resolve;
-    });
-    currentTime = 30;
-
-    const sweep = registry.sweepIdleContexts();
-    assert.equal(registry.getStatus().entries[0].state, 'closing');
-    assertUnavailable(() => registry.getWorkspaceContext('closing-account'), 'closing');
-    assertUnavailable(() => registry.acquireWorkspaceContext('closing-account'), 'closing');
-    assertUnavailable(() => registry.touchWorkspaceContext('closing-account'), 'closing');
-    assert.equal(registry.getStatus().entries[0].leaseCount, 0);
-    assert.equal(createCounts.get('closing-account'), 1);
-
-    resolveClose();
-    const closeResult = await sweep;
-    assert.equal(closeResult.closed, 1);
-    assert.equal(registry.getStatus().size, 0);
-
-    const replacementContext = registry.getWorkspaceContext('closing-account');
-    assert.notEqual(replacementContext, originalContext);
-    assert.equal(replacementContext.generation, 2);
-    assert.equal(createCounts.get('closing-account'), 2);
-    assert.equal(registry.getStatus().entries[0].state, 'active');
+    assert.equal('timerActive' in registry.getStatus(), false);
+    assert.equal('idleTtlMs' in registry.getStatus(), false);
     await registry.closeAll();
   });
 
-  await runAsync('close reject 后隔离 context，后续 sweep 优先重试并删除', async () => {
-    let currentTime = 0;
-    const states = new Map();
-    const closeCounts = new Map();
-    const { registry } = createTestRegistry(states, closeCounts, {
-      now: () => currentTime,
-      idleTtlMs: 25,
-      sweepIntervalMs: 10_000,
-    });
-    registry.getWorkspaceContext('close-failed-account');
-    states.get('close-failed-account').failClose = true;
-    currentTime = 30;
-
-    const failedSweep = await registry.sweepIdleContexts();
-    assert.equal(failedSweep.closed, 0);
-    assert.equal(failedSweep.failed, 1);
-    assert.equal(registry.getStatus().entries[0].state, 'close_failed');
-    assertUnavailable(() => registry.getWorkspaceContext('close-failed-account'), 'close_failed');
-    assertUnavailable(() => registry.acquireWorkspaceContext('close-failed-account'), 'close_failed');
-    assertUnavailable(() => registry.touchWorkspaceContext('close-failed-account'), 'close_failed');
-    assert.equal(registry.getStatus().entries[0].leaseCount, 0);
-
-    states.get('close-failed-account').failClose = false;
-    const retriedSweep = await registry.sweepIdleContexts();
-    assert.equal(retriedSweep.closed, 1);
-    assert.equal(retriedSweep.failed, 0);
-    assert.equal(closeCounts.get('close-failed-account'), 2);
-    assert.equal(registry.getStatus().size, 0);
-  });
-
-  await runAsync('close 失败保留上下文并可重试，closeAll 清理定时器', async () => {
-    const states = new Map();
-    const { registry } = createTestRegistry(states);
-    const context = registry.getWorkspaceContext('retry-account');
-    states.get('retry-account').failClose = true;
-    await new Promise((resolve) => setTimeout(resolve, 45));
-    const afterFailure = registry.getStatus();
-    assert.equal(afterFailure.size, 1);
-    assert.equal(afterFailure.entries[0].state, 'close_failed');
-    assert(afterFailure.entries[0].closeAttempts >= 1);
-    assert(afterFailure.entries[0].closeError.includes('close failed'));
-    states.get('retry-account').failClose = false;
-    const closeResult = await registry.closeAll();
-    assert.equal(closeResult.failed, 0);
-    assert.equal(registry.getStatus().size, 0);
-    assert.equal(registry.getStatus().timerActive, false);
-    assert.equal(context.workspaceId, 'retry-account');
-  });
-
-  await runAsync('closeAll 等待异步 close，失败准确计数并保留失败上下文', async () => {
-    const states = new Map();
-    const { registry } = createTestRegistry(states, new Map(), {
-      idleTtlMs: 10_000,
-      sweepIntervalMs: 10_000,
-    });
-    registry.getWorkspaceContext('async-failed-account');
-    registry.getWorkspaceContext('async-success-account');
-    states.get('async-failed-account').failClose = true;
-
-    const closeResult = await registry.closeAll();
-    assert.equal(closeResult.closed, 1);
-    assert.equal(closeResult.failed, 1);
+  await run('拒绝创建第二个 tenant 上下文', async () => {
+    const { registry, counters } = createTestRegistry();
+    registry.getWorkspaceContext('tenant-test');
+    assert.throws(
+      () => registry.getWorkspaceContext('tenant-other'),
+      (error) => error?.code === 'TENANT_CONTEXT_MISMATCH',
+    );
+    assert.throws(
+      () => registry.acquireWorkspaceContext('tenant-other'),
+      (error) => error?.code === 'TENANT_CONTEXT_MISMATCH',
+    );
+    assert.equal(counters.create, 1);
     assert.equal(registry.getStatus().size, 1);
-    assert.equal(registry.getStatus().entries[0].workspaceId, 'async-failed-account');
-    assert.equal(registry.getStatus().entries[0].state, 'close_failed');
-
-    states.get('async-failed-account').failClose = false;
-    assert.equal(await registry.closeWorkspaceContext('async-failed-account'), true);
-    assert.equal(registry.getStatus().size, 0);
+    await registry.closeAll();
   });
 
-  await runAsync('并发重复 close 共享同一异步关闭并避免双关', async () => {
-    const states = new Map();
-    const closeCounts = new Map();
-    const { registry } = createTestRegistry(states, closeCounts, {
-      idleTtlMs: 10_000,
-      sweepIntervalMs: 10_000,
-    });
-    registry.getWorkspaceContext('concurrent-account');
+  await run('非强制关闭会保护 SSE lease 和活动任务', async () => {
+    const { registry, state, counters } = createTestRegistry();
+    const lease = registry.acquireWorkspaceContext('tenant-test');
+    await assert.rejects(
+      registry.closeWorkspaceContext('tenant-test'),
+      (error) => error?.code === 'WORKSPACE_BUSY',
+    );
+    assert.equal(counters.close, 0);
+    lease.release();
+
+    state.active = true;
+    await assert.rejects(
+      registry.closeWorkspaceContext('tenant-test'),
+      (error) => error?.code === 'WORKSPACE_BUSY',
+    );
+    assert.equal(counters.close, 0);
+
+    state.active = false;
+    assert.equal(await registry.closeWorkspaceContext('tenant-test'), true);
+    assert.equal(counters.close, 1);
+  });
+
+  await run('关闭期间拒绝新请求，完成后可重建同一 tenant', async () => {
+    const { registry, state, counters } = createTestRegistry();
+    const original = registry.getWorkspaceContext('tenant-test');
     let resolveClose;
-    states.get('concurrent-account').closeGate = new Promise((resolve) => {
+    state.closeGate = new Promise((resolve) => {
       resolveClose = resolve;
     });
 
-    const first = registry.closeWorkspaceContext('concurrent-account');
-    const second = registry.closeWorkspaceContext('concurrent-account');
-    assert.equal(first, second);
+    const closing = registry.closeWorkspaceContext('tenant-test', { force: true });
     assert.equal(registry.getStatus().entries[0].state, 'closing');
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(closeCounts.get('concurrent-account'), 1);
+    assertUnavailable(() => registry.getWorkspaceContext('tenant-test'), 'closing');
+    assertUnavailable(() => registry.acquireWorkspaceContext('tenant-test'), 'closing');
+    assertUnavailable(() => registry.touchWorkspaceContext('tenant-test'), 'closing');
+
     resolveClose();
-    assert.equal(await first, true);
-    assert.equal(await second, true);
-    assert.equal(closeCounts.get('concurrent-account'), 1);
+    assert.equal(await closing, true);
+    assert.equal(registry.getStatus().size, 0);
+
+    state.closeGate = null;
+    const replacement = registry.getWorkspaceContext('tenant-test');
+    assert.notEqual(replacement, original);
+    assert.equal(replacement.generation, 2);
+    assert.equal(counters.create, 2);
+    await registry.closeAll();
+  });
+
+  await run('关闭失败会隔离上下文并允许显式重试', async () => {
+    const { registry, state, counters } = createTestRegistry();
+    registry.getWorkspaceContext('tenant-test');
+    state.failClose = true;
+
+    await assert.rejects(
+      registry.closeWorkspaceContext('tenant-test', { force: true }),
+      /tenant close failed/,
+    );
+    assert.equal(registry.getStatus().entries[0].state, 'close_failed');
+    assertUnavailable(() => registry.getWorkspaceContext('tenant-test'), 'close_failed');
+
+    state.failClose = false;
+    assert.equal(await registry.closeWorkspaceContext('tenant-test', { force: true }), true);
+    assert.equal(counters.close, 2);
     assert.equal(registry.getStatus().size, 0);
   });
 
-  run('SSE 路由通过 acquire/release lease 管理连接生命周期', () => {
-    const source = fs.readFileSync(path.join(__dirname, '../server/routes/sse.cjs'), 'utf8');
-    assert(source.includes('acquireWorkspaceContext'), 'SSE 必须 acquire workspace lease');
-    assert(source.includes('lease.release()'), 'SSE 断开必须 release workspace lease');
+  await run('并发 close 共享同一 Promise 且只关闭一次', async () => {
+    const { registry, state, counters } = createTestRegistry();
+    registry.getWorkspaceContext('tenant-test');
+    let resolveClose;
+    state.closeGate = new Promise((resolve) => {
+      resolveClose = resolve;
+    });
+
+    const first = registry.closeWorkspaceContext('tenant-test', { force: true });
+    const second = registry.closeWorkspaceContext('tenant-test', { force: true });
+    assert.equal(first, second);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(counters.close, 1);
+    resolveClose();
+    assert.equal(await first, true);
+    assert.equal(await second, true);
+    assert.equal(counters.close, 1);
   });
 
-  console.log(`\n=== Web workspace registry 测试结果 ===`);
+  await run('closeAll 准确报告失败并可在下一次调用恢复', async () => {
+    const { registry, state, counters } = createTestRegistry();
+    assert.deepEqual(await registry.closeAll(), { closed: 0, failed: 0, errors: [] });
+
+    registry.getWorkspaceContext('tenant-test');
+    state.failClose = true;
+    const failedClose = await registry.closeAll();
+    assert.equal(failedClose.closed, 0);
+    assert.equal(failedClose.failed, 1);
+    assert.equal(failedClose.errors.length, 1);
+    assert.equal(registry.getStatus().entries[0].state, 'close_failed');
+
+    state.failClose = false;
+    const recovered = await registry.closeAll();
+    assert.equal(recovered.closed, 1);
+    assert.equal(recovered.failed, 0);
+    assert.equal(counters.close, 2);
+    assert.equal(registry.getStatus().size, 0);
+  });
+
+  await run('SSE 路由继续通过 acquire/release 管理连接生命周期', async () => {
+    const source = fs.readFileSync(path.join(__dirname, '../server/routes/sse.cjs'), 'utf8');
+    assert(source.includes('acquireWorkspaceContext'));
+    assert(source.includes('lease.release()'));
+  });
+
+  console.log('\n=== Web 单例 TenantContext 测试结果 ===');
   console.log(`通过: ${passed.length}`);
   console.log(`失败: ${failed.length}`);
   if (failed.length) {

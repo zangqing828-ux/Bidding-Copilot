@@ -27,6 +27,16 @@ function isExternalHttpUrl(value: string) {
   return /^https?:\/\//i.test(value);
 }
 
+// Web 环境下把 yibiao-asset://generated-images/<rel> 解析为可下载的 /api/assets 路径；
+// Electron 环境由自定义协议处理，原样返回。
+function resolveImageSrc(value: string) {
+  const raw = String(value || '');
+  if (window.yibiao?.platform === 'web' && /^yibiao-asset:\/\/generated-images\//i.test(raw)) {
+    return raw.replace(/^yibiao-asset:\/\/generated-images\//i, '/api/assets/generated-images/');
+  }
+  return raw;
+}
+
 function openExternal(url: string) {
   if (window.yibiao?.openExternal) {
     void window.yibiao.openExternal(url);
@@ -162,7 +172,7 @@ function MarkdownRenderer({
       }
 
       if (tag === 'img') {
-        const src = element.getAttribute('src') || '';
+        const src = resolveImageSrc(element.getAttribute('src') || '');
         const alt = element.getAttribute('alt') || '正文图片';
         const previewEnabled = imageMode === 'preview' && Boolean(src) && Boolean(onPreviewImage);
         const handlePreview = () => {

@@ -4,9 +4,13 @@ const { createTextTokenStatsStore } = require('./textTokenStatsStore.cjs');
 const DEFAULT_TIMEOUTS = Object.freeze({
   text: 600000,
   listModels: 600000,
+  image: 600000,
 });
 const MAX_ATTEMPTS = 3;
 const MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024;
+const MAX_IMAGE_DOWNLOAD_BYTES = 20 * 1024 * 1024;
+const MAX_IMAGE_REDIRECTS = 3;
+const MAX_IMAGE_PIXEL_DIMENSION = 8000;
 const RETRYABLE_STATUS_CODES = new Set([408, 429]);
 const SAFE_ERROR_CODES = new Set([
   'AI_CONFIG_LOAD_FAILED',
@@ -84,6 +88,10 @@ function normalizeTimeouts(options) {
     listModels: normalizePositiveInteger(
       nested.listModels ?? nested.models ?? source.listModelsTimeoutMs,
       DEFAULT_TIMEOUTS.listModels,
+    ),
+    image: normalizePositiveInteger(
+      nested.image ?? source.imageTimeoutMs,
+      DEFAULT_TIMEOUTS.image,
     ),
   };
 }
@@ -751,10 +759,10 @@ function createAiRuntime(options = {}) {
     }
   }
 
-  function buildAnalyticsPayload(modelConfig, config, usage) {
+  function buildAnalyticsPayload(modelConfig, config, usage, requestType = 'text') {
     const tokenUsage = normalizeTokenUsage(usage);
     return {
-      ai_request_type: 'text',
+      ai_request_type: requestType,
       ai_model_provider: normalizeText(modelConfig.provider),
       prompt_tokens: tokenUsage.prompt_tokens,
       completion_tokens: tokenUsage.completion_tokens,
@@ -767,11 +775,11 @@ function createAiRuntime(options = {}) {
     };
   }
 
-  function trackSafely(modelConfig, config, usage) {
+  function trackSafely(modelConfig, config, usage, requestType = 'text') {
     if (!trackRequest) {
       return;
     }
-    const payload = buildAnalyticsPayload(modelConfig, config, usage);
+    const payload = buildAnalyticsPayload(modelConfig, config, usage, requestType);
     try {
       void Promise.resolve(trackRequest(payload)).catch(() => undefined);
     } catch {
@@ -988,6 +996,271 @@ function createAiRuntime(options = {}) {
     );
   }
 
+  // 生图提示词：补充与投标插图一致的风格约束。
+  function buildImagePrompt(request) {
+    const prompt = normalizeText(request?.prompt);
+    if (!prompt) {
+      throw createRuntimeError('生图提示词为空', 'AI_CONFIG_INVALID');
+    }
+    const styleHint = request?.style === 'realistic_photo'
+      ? '画面采用专业实景照片风格，真实、克制、适合投标技术方案插图。'
+      : '画面采用工程项目图示风格，结构清晰、专业克制、适合投标技术方案插图。';
+    return `${prompt}\n\n${styleHint}\n避免出现品牌标识、水印、夸张营销元素和无关文字。`;
+  }
+
+  function resolveImageSize(config, requestSize) {
+    // 归一化 ClientConfig 把用户选择存为 image_model.image_size，同时兼容旧 size 字段。
+    const size = normalizeText(requestSize)
+      || normalizeText(config?.image_model?.image_size)
+      || normalizeText(config?.image_model?.size);
+    return size && size !== 'auto' ? size : '';
+  }
+
+  function normalizeImageMimeType(value) {
+    const mime = normalizeText(value).toLowerCase();
+    return mime.startsWith('image/') ? mime : 'image/png';
+  }
+
+  // 流式读取图片响应体，边读边限字节数，避免无 Content-Length 时一次性读入超大响应。
+  async function readImageResponseBody(response, requestControl) {
+    if (response?.body && typeof response.body.getReader === 'function') {
+      const reader = response.body.getReader();
+      const chunks = [];
+      let total = 0;
+      try {
+        while (true) {
+          const { done, value } = await requestControl.race(reader.read());
+          if (done) break;
+          const chunk = Buffer.from(value);
+          total += chunk.length;
+          if (total > MAX_IMAGE_DOWNLOAD_BYTES) {
+            await reader.cancel();
+            throw createRuntimeError('图片体积超过下载上限', 'AI_RESPONSE_INVALID');
+          }
+          chunks.push(chunk);
+        }
+        return Buffer.concat(chunks, total);
+      } catch (error) {
+        await cancelResponseBody(response);
+        throw error;
+      }
+    }
+    return Buffer.from(await requestControl.race(response.arrayBuffer()));
+  }
+
+  // 像素尺寸上限：防止高压缩比超大分辨率图片绕过字节限制。
+  function assertImagePixelDimensions(buffer) {
+    let dimensions;
+    try {
+      const { imageSize } = require('image-size');
+      dimensions = imageSize(buffer);
+    } catch {
+      throw createRuntimeError('图片尺寸解析失败', 'AI_RESPONSE_INVALID');
+    }
+    const width = Number(dimensions?.width) || 0;
+    const height = Number(dimensions?.height) || 0;
+    if (!width || !height || width > MAX_IMAGE_PIXEL_DIMENSION || height > MAX_IMAGE_PIXEL_DIMENSION) {
+      throw createRuntimeError('图片尺寸超过下载上限', 'AI_RESPONSE_INVALID');
+    }
+  }
+
+  // 图片 URL 安全下载：逐跳经 endpoint policy 校验，限制协议、redirect、类型、字节数与像素尺寸。
+  async function downloadImageSafely(sourceUrl, timeoutMs, executionOptions = {}) {
+    const requestControl = createRequestControl(timeoutMs, executionOptions.signal);
+    try {
+      let currentUrl = String(sourceUrl || '').trim();
+      for (let redirects = 0; redirects <= MAX_IMAGE_REDIRECTS; redirects += 1) {
+        const endpointRequestOptions = await requestControl.race(
+          resolveEndpointRequestOptions(currentUrl, 'image-download'),
+        );
+        const response = await requestControl.race(Promise.resolve().then(() => fetchImpl(currentUrl, {
+          ...endpointRequestOptions,
+          method: 'GET',
+          redirect: 'manual',
+          signal: requestControl.signal,
+        })));
+        if (response && response.status >= 300 && response.status < 400) {
+          await cancelResponseBody(response);
+          const location = response.headers?.get?.('location');
+          if (!location || redirects === MAX_IMAGE_REDIRECTS) {
+            throw createRuntimeError('图片下载重定向被拒绝', 'AI_ENDPOINT_NOT_ALLOWED');
+          }
+          currentUrl = new URL(location, currentUrl).toString();
+          continue;
+        }
+        if (!isResponseOk(response)) {
+          await cancelResponseBody(response);
+          throw createHttpError(response?.status);
+        }
+        const mimeType = normalizeText(response.headers?.get?.('content-type')).toLowerCase();
+        if (!mimeType.startsWith('image/')) {
+          await cancelResponseBody(response);
+          throw createRuntimeError('图片下载返回了非图片内容', 'AI_RESPONSE_INVALID');
+        }
+        const contentLength = Number(response.headers?.get?.('content-length') || 0);
+        if (contentLength > MAX_IMAGE_DOWNLOAD_BYTES) {
+          await cancelResponseBody(response);
+          throw createRuntimeError('图片体积超过下载上限', 'AI_RESPONSE_INVALID');
+        }
+        const buffer = await readImageResponseBody(response, requestControl);
+        if (!buffer.length || buffer.length > MAX_IMAGE_DOWNLOAD_BYTES) {
+          throw createRuntimeError('图片体积超过下载上限或为空', 'AI_RESPONSE_INVALID');
+        }
+        assertImagePixelDimensions(buffer);
+        return { buffer, mime_type: normalizeImageMimeType(mimeType) };
+      }
+      throw createRuntimeError('图片下载重定向次数超限', 'AI_ENDPOINT_NOT_ALLOWED');
+    } catch (error) {
+      throw sanitizeRuntimeError(requestControl.getError(error), '图片下载失败');
+    } finally {
+      requestControl.finish();
+    }
+  }
+
+  // OpenAI 兼容生图：优先请求 b64_json，兼容仅返回 URL 的中转服务。
+  async function requestOpenAICompatibleImage(modelConfig, request, timeoutMs, executionOptions) {
+    const url = appendEndpoint(modelConfig.baseUrl, 'images/generations');
+    const size = resolveImageSize(loadConfigSafely(), request?.size);
+    const body = {
+      model: modelConfig.modelName,
+      prompt: buildImagePrompt(request),
+      response_format: 'b64_json',
+      ...(size ? { size } : {}),
+    };
+    const requestOptions = {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${modelConfig.apiKey}`,
+      },
+      body: JSON.stringify(body),
+    };
+    const responseData = await runWithRetry(
+      ({ timeoutMs: remainingMs, signal }) => requestJsonBody(url, requestOptions, remainingMs, 'image', { signal }),
+      timeoutMs,
+      executionOptions,
+    );
+    const item = Array.isArray(responseData?.data) ? responseData.data[0] : null;
+    if (item?.b64_json) {
+      return {
+        image: { buffer: Buffer.from(item.b64_json, 'base64'), mime_type: normalizeImageMimeType(item.mime_type || item.mimeType) },
+        imageUrl: '',
+        usage: responseData?.usage,
+      };
+    }
+    if (item?.url) {
+      return { image: null, imageUrl: String(item.url), usage: responseData?.usage };
+    }
+    throw createRuntimeError('生图模型未返回图片数据', 'AI_RESPONSE_INVALID');
+  }
+
+  // Google AI Studio 生图：inlineData 返回 base64。
+  async function requestGoogleImage(modelConfig, request, timeoutMs, executionOptions) {
+    const base = trimBaseUrl(modelConfig.baseUrl);
+    const url = `${base}/models/${encodeURIComponent(modelConfig.modelName)}:generateContent`;
+    const requestOptions = {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': modelConfig.apiKey,
+      },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: buildImagePrompt(request) }] }],
+        generationConfig: { responseModalities: ['IMAGE'] },
+      }),
+    };
+    const responseData = await runWithRetry(
+      ({ timeoutMs: remainingMs, signal }) => requestJsonBody(url, requestOptions, remainingMs, 'image', { signal }),
+      timeoutMs,
+      executionOptions,
+    );
+    const parts = responseData?.candidates?.[0]?.content?.parts;
+    const inlineData = Array.isArray(parts) ? parts.find((part) => part?.inlineData?.data || part?.inline_data?.data) : null;
+    const data = inlineData?.inlineData?.data || inlineData?.inline_data?.data;
+    if (!data) {
+      throw createRuntimeError('生图模型未返回图片数据', 'AI_RESPONSE_INVALID');
+    }
+    return {
+      image: {
+        buffer: Buffer.from(data, 'base64'),
+        mime_type: normalizeImageMimeType(inlineData?.inlineData?.mimeType || inlineData?.inline_data?.mime_type),
+      },
+      imageUrl: '',
+      usage: responseData?.usageMetadata,
+    };
+  }
+
+  async function executeImageGeneration(modelConfig, provider, request, executionOptions = {}) {
+    const result = provider === 'google-ai-studio'
+      ? await requestGoogleImage(modelConfig, request, timeouts.image, executionOptions)
+      : await requestOpenAICompatibleImage(modelConfig, request, timeouts.image, executionOptions);
+    if (result.image) {
+      // b64_json / inlineData 直返路径同样校验类型、字节数与像素尺寸，与 URL 下载路径一致。
+      const buffer = result.image.buffer;
+      const mimeType = normalizeImageMimeType(result.image.mime_type);
+      if (!Buffer.isBuffer(buffer) || !buffer.length || buffer.length > MAX_IMAGE_DOWNLOAD_BYTES) {
+        throw createRuntimeError('图片体积超过下载上限或为空', 'AI_RESPONSE_INVALID');
+      }
+      assertImagePixelDimensions(buffer);
+      return { buffer, mime_type: mimeType, image_url: '' };
+    }
+    const downloaded = await downloadImageSafely(result.imageUrl, timeouts.image, executionOptions);
+    return { ...downloaded, image_url: result.imageUrl };
+  }
+
+  async function executeGenerateImage(request, executionOptions = {}) {
+    const config = loadConfigSafely();
+    const modelConfig = requireModelConfig(config, { model_kind: 'image' });
+    const provider = normalizeText(config?.image_model?.provider);
+    let tracked = false;
+    try {
+      const image = await executeImageGeneration(modelConfig, provider, request, executionOptions);
+      trackSafely(modelConfig, config, undefined, 'image');
+      tracked = true;
+      return {
+        success: true,
+        title: normalizeText(request?.title),
+        buffer: image.buffer,
+        mime_type: image.mime_type,
+      };
+    } catch (error) {
+      if (!tracked) {
+        trackSafely(modelConfig, config, undefined, 'image');
+      }
+      throw sanitizeRuntimeError(error, '生图请求失败');
+    }
+  }
+
+  async function executeTestImageModel(configOverride, executionOptions = {}) {
+    const config = loadConfigSafely();
+    let modelConfig;
+    try {
+      modelConfig = requireModelConfig(config, { model_kind: 'image', ...(configOverride || {}) });
+      const provider = normalizeText(configOverride?.image_model?.provider) || normalizeText(config?.image_model?.provider);
+      // 复用真实生图路径：b64 校验类型/尺寸，URL 经 downloadImageSafely 下载并校验，避免误标可用。
+      const image = await executeImageGeneration(
+        modelConfig,
+        provider,
+        { prompt: '生成一张简单的蓝色几何图形测试图片' },
+        executionOptions,
+      );
+      trackSafely(modelConfig, config, undefined, 'image');
+      return {
+        success: true,
+        message: '测试成功：已生成并校验生图结果',
+        image_url: '',
+        image_data: image.buffer.toString('base64'),
+        mime_type: image.mime_type,
+      };
+    } catch (error) {
+      if (modelConfig) {
+        trackSafely(modelConfig, config, undefined, 'image');
+      }
+      const sanitized = sanitizeRuntimeError(error, '生图模型测试失败');
+      return { success: false, message: sanitized.message };
+    }
+  }
+
   async function executeListModels(configOverride, executionOptions = {}) {
     let config;
     try {
@@ -1100,12 +1373,17 @@ function createAiRuntime(options = {}) {
       );
     },
 
-    generateImage() {
-      return Promise.reject(createRuntimeError('Web 端生图能力将在后续包提供', 'WEB_CAPABILITY_PENDING'));
+    generateImage(request, executionOptions = {}) {
+      return queue.enqueue('image', (signal) => executeGenerateImage(request, { ...executionOptions, signal }), {
+        scopeId: getScopeId(request),
+        signal: executionOptions.signal,
+      });
     },
 
-    testImageModel() {
-      return Promise.reject(createRuntimeError('Web 端生图模型测试将在后续包提供', 'WEB_CAPABILITY_PENDING'));
+    testImageModel(configOverride, executionOptions = {}) {
+      return queue.enqueue('image', (signal) => executeTestImageModel(configOverride, { ...executionOptions, signal }), {
+        signal: executionOptions.signal,
+      });
     },
 
     pauseQueueScope(scopeId) {
@@ -1167,7 +1445,7 @@ function createAiRuntime(options = {}) {
           return service.listModels({ ...(configOverride || {}), queueScopeId: normalizedScopeId });
         },
         generateImage(request) {
-          return service.generateImage(request);
+          return service.generateImage({ ...(request || {}), queueScopeId: getScopeId(request, normalizedScopeId) || normalizedScopeId });
         },
         testImageModel(config) {
           return service.testImageModel(config);

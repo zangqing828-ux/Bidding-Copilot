@@ -22,7 +22,7 @@ ARG TARGETARCH
 
 # 安装运行时系统依赖
 # - better-sqlite3 需要 python3 + build-essential（已预装在 node:22-slim 的 node-gyp）
-# - Chromium 用于 Mermaid/HTML 图片渲染（Sprint 05 工包 C，后续启用）
+# - Chromium 用于 Mermaid/HTML 图片渲染（playwright-core 驱动）
 # - LibreOffice 用于 Word 导出转换（Sprint 05 工包 C，后续启用）
 # - 中文字体
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -34,6 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     ripgrep \
     fd-find \
+    chromium \
     fonts-noto-cjk \
     fonts-noto-cjk-extra \
     && rm -rf /var/lib/apt/lists/*
@@ -82,7 +83,10 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOST=0.0.0.0
 ENV YIBIAO_DATA_DIR=/data
+ENV BIDMASTER_TENANT_ID=bidmaster
 ENV OAUTH_MODE=mainquest
+ENV YIBIAO_CHROMIUM_PATH=/usr/bin/chromium
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 EXPOSE 3000
 

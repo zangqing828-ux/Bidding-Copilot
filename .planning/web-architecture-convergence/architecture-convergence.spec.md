@@ -1,9 +1,11 @@
 # Web 架构收敛 Spec
 
-状态：Draft for implementation
+状态：Historical input（2026-07-28 起由 `.planning/web-single-tenant-release/baseline.md` 接管实施范围）
 基线：`main@e71e87c633de`（PR #3 已合并）
 前置：`project.md` 的 2026-07-24 锁定决策
 后续：本 Spec 验收通过后，才能执行 `.planning/yibiao-brand-cleanup/brand-cleanup.spec.md`
+
+> 本文中的每账号 workspace、Electron 回归、Agent Runtime、知识库/查重/废标首发范围均已退出当前实施合同。本文只作为架构事实和历史验收输入。
 
 ## 1. 目的
 

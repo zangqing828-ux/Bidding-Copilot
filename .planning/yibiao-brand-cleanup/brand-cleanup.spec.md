@@ -1,10 +1,12 @@
 # BidMaster 品牌清理实施 Spec
 
-> 状态：Draft（待 Gate 决策后进入实现）
+> 状态：Historical input（2026-07-28 起由 `.planning/web-single-tenant-release/baseline.md` 接管首发范围）
 > 基线：`main@e71e87c`（PR #3 已合并）
 > 生成日期：2026-07-24
 > 适用仓库：`zangqing828-ux/Bidding-Copilot`
 > 前置：Web 架构收敛 Spec 未验收时，只可执行 WP-0 的盘点与 Gate 准备；不得实施或合入 WP-1 至 WP-7。本 Spec 不以 PR #3 的“Web 骨架”状态作为业务完成依据。
+
+> 2026-07-28 更新：纯 Web、单租户、无存量数据假设下，Electron 兼容与多账号数据迁移不再属于首发 Gate；发现真实存量数据时恢复迁移 Gate。
 
 ## 1. 决策与问题陈述
 

@@ -209,7 +209,7 @@ async function runTests() {
     assert(Array.isArray(body.data), 'templates.list 返回数组');
   }
 
-  // 6. 两个 workspace 的 SSE 隔离
+  // 6. 两个授权账号连接同一租户 SSE
   {
     // 第二个账号登录
     const login2Res = await httpRequest('GET', '/api/auth/login');
@@ -230,14 +230,14 @@ async function runTests() {
     const sessionCookie2 = sessionCookie2Match?.match(/yibiao_session=([^;]+)/)?.[1];
     const cookieStr2 = `yibiao_session=${sessionCookie2}`;
 
-    // 两个 SSE 连接
+    // 两个 session 分别建立 SSE 连接
     const sse1 = await connectSSE(cookieStr);
     const sse2 = await connectSSE(cookieStr2);
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     // 两个连接都正常
-    assert(sse1.res.statusCode === 200, 'workspace 1 SSE 连接成功');
-    assert(sse2.res.statusCode === 200, 'workspace 2 SSE 连接成功');
+    assert(sse1.res.statusCode === 200, '授权账号 1 的租户 SSE 连接成功');
+    assert(sse2.res.statusCode === 200, '授权账号 2 的租户 SSE 连接成功');
 
     sse1.close();
     sse2.close();

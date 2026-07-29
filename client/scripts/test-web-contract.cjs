@@ -13,28 +13,107 @@ const ALLOWED_STATUSES = new Set(['implemented', 'pending', 'removed']);
 const FORBIDDEN_PROTOTYPE_IDENTIFIERS = new Set(
   Object.getOwnPropertyNames(Object.prototype).concat(['__proto__'])
 );
-const REMOVED_MENU_SECTIONS = ['resources', 'bid-opportunity', 'plugin-manager'];
 const DELETED_FEATURE_PATHS = [
   'src/features/resources',
   'src/features/bid-opportunity',
   'src/features/plugins',
+  'src/features/business-bid',
+  'src/features/knowledge-base/pages',
+  'src/features/duplicate-check',
+  'src/features/rejection-check',
+  'src/features/developer',
   'electron/services/pluginContext.cjs',
   'electron/services/pluginService.cjs',
   'electron/services/pluginConfigWindow.cjs',
   'electron/ipc/pluginIpc.cjs',
   'electron/preload-plugin-config.cjs',
 ];
-const DELETED_FEATURE_LEAVES = new Set([
+const EXIT_REMOVED_LEAVES = new Set([
   'resources.list',
   'tenderOpportunities.list',
   'plugins.list',
+  'locals.database.getStatus',
+  'events.database.onStatus',
+  'events.ai.onHttpError',
+  'events.agent.onStatus',
+  'events.developerTokenStats.onChanged',
+  'events.knowledgeBase.onEvent',
+  'events.export.onWordExportProgress',
+  'requiredOnlineServices.getStatus',
+  'license.getStatus',
+  'license.refresh',
+  'license.importOfflineFile',
+  'license.activateOfflineCode',
+  'ai.requestJson',
+  'agent.listRuntimes',
+  'agent.run',
+  'agent.selfCheck',
+  'agent.exportSelfCheckReport',
+  'agent.getStatus',
+  'agent.restart',
+  'developerTokenStats.get',
+  'developerTokenStats.reset',
+  'developerExpansionReplaceTest.run',
+  'file.selectDuplicateCheckFiles',
+  'knowledgeBase.getMigrationStatus',
+  'knowledgeBase.migrateLegacy',
+  'knowledgeBase.list',
+  'knowledgeBase.createFolder',
+  'knowledgeBase.renameFolder',
+  'knowledgeBase.reorderFolder',
+  'knowledgeBase.deleteFolder',
+  'knowledgeBase.deleteDocument',
+  'knowledgeBase.moveDocument',
+  'knowledgeBase.uploadDocuments',
+  'knowledgeBase.retryDocument',
+  'knowledgeBase.startMatching',
+  'knowledgeBase.readMarkdown',
+  'knowledgeBase.readItems',
+  'knowledgeBase.readAnalysis',
+  'technicalPlan.checkBidSections',
+  'technicalPlan.selectBidSection',
+  'duplicateCheck.loadState',
+  'duplicateCheck.saveFiles',
+  'duplicateCheck.saveUiState',
+  'duplicateCheck.updateState',
+  'duplicateCheck.clear',
+  'rejectionCheck.loadState',
+  'rejectionCheck.importDocument',
+  'rejectionCheck.importTenderFromTechnicalPlan',
+  'rejectionCheck.removeDocument',
+  'rejectionCheck.saveUiState',
+  'rejectionCheck.updateState',
+  'rejectionCheck.clear',
+  'tasks.startBidSectionExtraction',
+  'tasks.startRejectionItemsExtraction',
+  'tasks.startRejectionCheck',
+  'tasks.startDuplicateAnalysis',
 ]);
-const DELETED_PRODUCT_COUNT = DELETED_FEATURE_LEAVES.size;
+const EXIT_REMOVED_COUNT = EXIT_REMOVED_LEAVES.size;
+const REMOVED_MENU_SECTIONS = [
+  'business-bid',
+  'knowledge-base',
+  'document-knowledge-base',
+  'image-knowledge-base',
+  'bid-check',
+  'duplicate-check',
+  'rejection-check',
+  'ai-evaluation',
+  'developer-test',
+  'developer-json-test',
+  'developer-prompt-lab',
+  'developer-parser-sandbox',
+  'developer-export-preview',
+  'developer-expansion-replace-test',
+  'developer-agent-test',
+];
 const KB_PENDING_METHODS = [
   'deleteFolder',
   'deleteDocument',
   'moveDocument',
   'retryDocument',
+  'reorderFolder',
+  'startMatching',
 ];
 const DESKTOP_ONLY_CAPABILITIES = [
   'app.getGpuHardwareAccelerationStatus',
@@ -72,7 +151,13 @@ const REQUIRED_WEB_BRIDGE_META_KEYS = [
 ];
 
 const requiredMetaFields = ['status', 'owner', 'workPackage', 'transport', 'contractRef', 'input', 'output', 'errors'];
-const IMPLEMENTED_BRIDGE_RPC_COUNT = 49;
+const IMPLEMENTED_BRIDGE_RPC_COUNT = 32;
+const CONTRACT_STATUS_TOTALS = Object.freeze({
+  implemented: 36,
+  removed: 74,
+  pending: 3,
+  total: 113,
+});
 const COMMON_IMPLEMENTED_BRIDGE_ERRORS = [
   'UNAUTHORIZED',
   'INVALID_BRIDGE_ARGUMENTS',
@@ -85,7 +170,6 @@ const CONTRACT_ENUM_SOURCES = {
   BidAnalysisMode: 'src/features/technical-plan/types.ts',
   BidSectionMode: 'src/features/technical-plan/types.ts',
   OutlineExpansionMode: 'src/shared/types/outline.ts',
-  RejectionDocumentRole: 'src/features/rejection-check/types.ts',
 };
 
 function resolvePropertyPath(target, pathParts) {
@@ -402,6 +486,19 @@ function collectContractDescriptors(descriptor, result = []) {
 }
 
 function assertImplementedContractCompleteness(contractMap, contractEnums) {
+  const statusCounts = { implemented: 0, removed: 0, pending: 0, total: 0 };
+  for (const entry of contractMap.values()) {
+    if (!entry || typeof entry !== 'object') continue;
+    statusCounts.total += 1;
+    if (Object.prototype.hasOwnProperty.call(statusCounts, entry.status)) {
+      statusCounts[entry.status] += 1;
+    }
+  }
+  assert(statusCounts.total === CONTRACT_STATUS_TOTALS.total, `Contract 总数冻结为 ${CONTRACT_STATUS_TOTALS.total}`);
+  assert(statusCounts.implemented === CONTRACT_STATUS_TOTALS.implemented, `implemented 总数冻结为 ${CONTRACT_STATUS_TOTALS.implemented}`);
+  assert(statusCounts.removed === CONTRACT_STATUS_TOTALS.removed, `removed 总数冻结为 ${CONTRACT_STATUS_TOTALS.removed}`);
+  assert(statusCounts.pending === CONTRACT_STATUS_TOTALS.pending, `pending 总数冻结为 ${CONTRACT_STATUS_TOTALS.pending}`);
+
   const implementedBridgeEntries = Array.from(contractMap.entries()).filter(([, entry]) => (
     entry.status === 'implemented' && entry.transport === 'bridge'
   ));
@@ -771,7 +868,10 @@ function collectWorkspaceCloseWarnings() {
         return String(item || '');
       })
       .join(' ');
-    if (message.includes('[workspace] 关闭 workspace 失败')) {
+    if (
+      message.includes('[workspace] 关闭 workspace 失败')
+      || message.includes('[workspace] 关闭租户上下文失败')
+    ) {
       observed.push(message);
     }
     originalWarn(...args);
@@ -842,7 +942,7 @@ async function assertContractFieldPresence(entry, manifestKey) {
 }
 
 function assertRemovedProductWhitelist(removedProductEntries) {
-  assert(removedProductEntries.size === DELETED_PRODUCT_COUNT, `deleted-product 条目数量为 ${DELETED_PRODUCT_COUNT}（当前 ${removedProductEntries.size}）`);
+  assert(removedProductEntries.size === EXIT_REMOVED_COUNT, `deleted-product 条目数量为 ${EXIT_REMOVED_COUNT}（当前 ${removedProductEntries.size}）`);
 
   const deletedProductLeaves = new Set();
   for (const [entryKey, spec] of removedProductEntries.entries()) {
@@ -851,8 +951,8 @@ function assertRemovedProductWhitelist(removedProductEntries) {
     assert(typeof spec.contractRef === 'string', `${entryKey} contractRef 存在`);
     deletedProductLeaves.add(spec.contractRef);
   }
-  assert(deletedProductLeaves.size === DELETED_PRODUCT_COUNT, `deleted-product 可比较项数量为 3（当前 ${deletedProductLeaves.size}）`);
-  assertSetEqual(deletedProductLeaves, DELETED_FEATURE_LEAVES, 'deleted-product leaves 白名单');
+  assert(deletedProductLeaves.size === EXIT_REMOVED_COUNT, `deleted-product 可比较项数量为 ${EXIT_REMOVED_COUNT}（当前 ${deletedProductLeaves.size}）`);
+  assertSetEqual(deletedProductLeaves, EXIT_REMOVED_LEAVES, 'deleted-product leaves 白名单');
 }
 
 async function runBridgeBehavior(inject, context) {
@@ -914,12 +1014,8 @@ async function runBridgeBehavior(inject, context) {
       assert(false, `manifest 中存在 webBridge 未定义叶子：${manifestKey}`);
     }
 
-    if (['members.appName', 'members.platform', 'locals.openExternal', 'locals.database.getStatus'].includes(manifestKey)) {
+    if (['members.appName', 'members.platform', 'locals.openExternal'].includes(manifestKey)) {
       assert(entry.status === 'implemented', `${manifestKey} 实际应为 implemented`);
-    }
-
-    if (manifestKey === 'events.database.onStatus') {
-      assert(entry.status === 'pending', 'events.database.onStatus 按待实现待定返回');
     }
 
     if (manifestKey.startsWith('events.')) {
@@ -951,49 +1047,14 @@ async function runBridgeBehavior(inject, context) {
     }
   }
 
-  const updateNotifierSource = readSource('src/app/UpdateNotifier.tsx');
-  assertSourceContains(
-    updateNotifierSource,
-    /const isWeb = window\.yibiao\?\.platform === ['"]web['"]/,
-    'UpdateNotifier 识别 web 平台',
-  );
-  assertSourceContains(
-    updateNotifierSource,
-    /if \(!isWeb\) {\s*void checkUpdate\(\);\s*}/s,
-    'UpdateNotifier web 平台不调用 checkUpdate',
-  );
-  assertSourceContains(
-    updateNotifierSource,
-    /void checkRemoteNotice\(\)/,
-    'UpdateNotifier 保留远程公告检查',
-  );
-
   const settingsPageSource = readSource('src/features/settings/pages/SettingsPage.tsx');
   assertSourceContains(
     settingsPageSource,
     /const isWebPlatform = window\.yibiao\?\.platform === ['"]web['"]/,
     'SettingsPage 识别 web 平台',
   );
-  assertSourceContains(
-    settingsPageSource,
-    /if \(!isWebPlatform\)\s*{[\s\S]*?void window\.yibiao\?\.getVersion\(\)\.then\(setAppVersion\)/,
-    'web 平台不会调用 getVersion',
-  );
-  assertSourceContains(
-    settingsPageSource,
-    /if \(isWebPlatform\) {\s*setUpdateStatus\('disabled'\);\s*return;\s*}/s,
-    'SettingsPage web 分支跳过 checkForUpdates 执行',
-  );
-  assertSourceContains(
-    settingsPageSource,
-    /if \(isWebPlatform\) {\s*return;\s*}\s*try {\s*const result = await window\.yibiao\?\.quitAndInstall\(\);/s,
-    'SettingsPage web 分支不调用 quitAndInstall',
-  );
-  assertSourceContains(
-    settingsPageSource,
-    /{\s*!isWebPlatform \? \(\s*<article className="about-update-card">[\s\S]*?<\/article>\s*\)\s*:\s*null}/,
-    'SettingsPage web 平台不渲染自动更新卡片',
-  );
+  assert(!/about-update-card|自动更新渠道|GPU 硬件加速|开发者模式|Token 统计小窗|离线激活授权|智能体配置/.test(settingsPageSource), 'SettingsPage 已移除退出能力 UI');
+  assert(!/developerTokenStats\.openWindow|config\.openConfigFolder|startGpuHardwareAccelerationTrial|license\?\.getStatus/.test(settingsPageSource), 'SettingsPage 已移除退出 Bridge 调用');
 
   assertRemovedProductWhitelist(removedProductEntries);
 
@@ -1001,39 +1062,33 @@ async function runBridgeBehavior(inject, context) {
   const bindingKeys = collectBindingDispatcherKeys(routeDispatchers);
   const implementedContractEntries = Array.from(contractMap.entries()).filter(([, entry]) => entry.status === 'implemented');
 
-  const workspaceContext = getWorkspaceContext('contract-test-context');
-  try {
-    for (const [contractKey, contractEntry] of implementedContractEntries) {
-      const isMemberMeta = contractKey.startsWith('members.') || contractKey.startsWith('locals.') || contractKey.startsWith('events.');
-      if (isMemberMeta) {
-        continue;
-      }
-
-      assert(contractEntry && contractEntry.status === 'implemented', `${contractKey} 是 implemented RPC`);
-
-      const binding = bindingMetadata.get(contractKey);
-      assert(Boolean(binding), `${contractKey} 有绑定元数据`);
-      assert(['direct', 'store'].includes(binding.type), `${contractKey} binding.type 需为 direct 或 store`);
-
-      const dispatcher = routeDispatchers[contractKey.split('.')[0]]?.[contractKey.split('.')[1]];
-      assert(typeof dispatcher === 'function', `${contractKey} 有 dispatcher 函数`);
-
-      if (binding.type === 'store') {
-        assert(typeof binding.storeName === 'string' && binding.storeName.length > 0, `${contractKey} storeName 有值`);
-        assert(typeof binding.storeMethod === 'string' && binding.storeMethod.length > 0, `${contractKey} storeMethod 有值`);
-
-        const store = workspaceContext.stores?.[binding.storeName];
-        assert(Boolean(store), `${contractKey} 对应 Store 在真实 context 中存在`);
-        assert(typeof store[binding.storeMethod] === 'function', `${contractKey} 对应 Store 方法存在`);
-      }
-
-      if (binding.type === 'direct') {
-        assert(typeof binding.handler === 'function', `${contractKey} direct handler 已声明为函数`);
-      }
+  const workspaceContext = getWorkspaceContext(process.env.BIDMASTER_TENANT_ID);
+  for (const [contractKey, contractEntry] of implementedContractEntries) {
+    const isMemberMeta = contractKey.startsWith('members.') || contractKey.startsWith('locals.') || contractKey.startsWith('events.');
+    if (isMemberMeta) {
+      continue;
     }
-  } finally {
-    if (workspaceContext && workspaceContext.close) {
-      await workspaceContext.close();
+
+    assert(contractEntry && contractEntry.status === 'implemented', `${contractKey} 是 implemented RPC`);
+
+    const binding = bindingMetadata.get(contractKey);
+    assert(Boolean(binding), `${contractKey} 有绑定元数据`);
+    assert(['direct', 'store'].includes(binding.type), `${contractKey} binding.type 需为 direct 或 store`);
+
+    const dispatcher = routeDispatchers[contractKey.split('.')[0]]?.[contractKey.split('.')[1]];
+    assert(typeof dispatcher === 'function', `${contractKey} 有 dispatcher 函数`);
+
+    if (binding.type === 'store') {
+      assert(typeof binding.storeName === 'string' && binding.storeName.length > 0, `${contractKey} storeName 有值`);
+      assert(typeof binding.storeMethod === 'string' && binding.storeMethod.length > 0, `${contractKey} storeMethod 有值`);
+
+      const store = workspaceContext.stores?.[binding.storeName];
+      assert(Boolean(store), `${contractKey} 对应 Store 在真实 context 中存在`);
+      assert(typeof store[binding.storeMethod] === 'function', `${contractKey} 对应 Store 方法存在`);
+    }
+
+    if (binding.type === 'direct') {
+      assert(typeof binding.handler === 'function', `${contractKey} direct handler 已声明为函数`);
     }
   }
 
@@ -1212,14 +1267,19 @@ async function runBridgeBehavior(inject, context) {
           wordControlOptions: {},
         }],
       }],
-      ['rejectionCheck.removeDocument', { namespace: 'rejectionCheck', method: 'removeDocument', args: ['garbage'] }],
+      ['rejectionCheck.removeDocument', { namespace: 'rejectionCheck', method: 'removeDocument', args: ['garbage'] }, 'removed'],
       ['templates.get', { namespace: 'templates', method: 'get', args: [123] }],
       ['tasks.getActiveTasks', { namespace: 'tasks', method: 'getActiveTasks', args: ['extra'] }],
     ];
-    for (const [contractKey, body] of invalidContractCases) {
+    for (const [contractKey, body, expectedRemoved] of invalidContractCases) {
       const invalidResponse = await statusPayload(body);
-      assert(invalidResponse.response.statusCode === 400, `${contractKey} 非法参数返回 400`);
-      assert(invalidResponse.payload.code === 'INVALID_BRIDGE_ARGUMENTS', `${contractKey} 返回稳定参数错误码`);
+      if (expectedRemoved === 'removed') {
+        assert(invalidResponse.response.statusCode === 410, `${contractKey} removed 返回 410`);
+        assert(invalidResponse.payload.code === 'WEB_BRIDGE_REMOVED', `${contractKey} removed 返回 WEB_BRIDGE_REMOVED`);
+      } else {
+        assert(invalidResponse.response.statusCode === 400, `${contractKey} 非法参数返回 400`);
+        assert(invalidResponse.payload.code === 'INVALID_BRIDGE_ARGUMENTS', `${contractKey} 返回稳定参数错误码`);
+      }
     }
     assert(invalidContractWorkspaceResolutions === 0, '非法契约参数不解析 workspace 或进入 Store');
   } finally {
@@ -1234,9 +1294,6 @@ async function runBridgeBehavior(inject, context) {
         switchWorkflowKind: () => ({}),
         saveBidAnalysisConfig: () => ({}),
         saveOutlineConfig: () => ({}),
-      },
-      rejectionCheckStore: {
-        removeDocument: () => ({}),
       },
     },
   }));
@@ -1259,7 +1316,6 @@ async function runBridgeBehavior(inject, context) {
           wordControlOptions: {},
         }],
       }],
-      ['rejectionCheck.removeDocument', { namespace: 'rejectionCheck', method: 'removeDocument', args: ['tender'] }],
     ];
     for (const [contractKey, body] of validContractCases) {
       const validResponse = await statusPayload(body);
@@ -1267,36 +1323,6 @@ async function runBridgeBehavior(inject, context) {
     }
   } finally {
     setWorkspaceContextResolver(previousValidEnumResolver);
-  }
-
-  let rejectionPatch = null;
-  const previousRejectionResolver = setWorkspaceContextResolver(() => ({
-    stores: {
-      rejectionCheckStore: {
-        updateRejectionCheck: (partial) => {
-          rejectionPatch = partial;
-          return partial;
-        },
-      },
-    },
-  }));
-  try {
-    const rejectionRes = await statusPayload({
-      namespace: 'rejectionCheck',
-      method: 'updateState',
-      args: [{
-        rejectionCheckResult: { status: 'success' },
-        tenderDocument: { content: 'browser-controlled' },
-        checkTask: { status: 'success' },
-      }],
-    });
-    assert(rejectionRes.response.statusCode === 200, '废标结果编辑通过 Bridge 返回 200');
-    assert(
-      JSON.stringify(rejectionPatch) === JSON.stringify({ rejectionCheckResult: { status: 'success' } }),
-      'rejectionCheck.updateState 只允许浏览器写入可编辑结果字段',
-    );
-  } finally {
-    setWorkspaceContextResolver(previousRejectionResolver);
   }
 
   for (const [manifestKey, entry] of Array.from(contractMap.entries()).filter(([key]) => key.startsWith('events.'))) {
@@ -1420,9 +1446,9 @@ async function runBridgeBehavior(inject, context) {
 
   for (const method of ['listRuntimes', 'run', 'selfCheck', 'exportSelfCheckReport', 'getStatus', 'restart']) {
     const contractKey = `agent.${method}`;
-    const pendingAgentRes = await statusPayload({ namespace: 'agent', method, args: [] });
-    assert(pendingAgentRes.response.statusCode === 501, `${contractKey} 返回 501`);
-    assert(pendingAgentRes.payload.code === 'WEB_CAPABILITY_PENDING', `${contractKey} code 为 WEB_CAPABILITY_PENDING`);
+    const removedAgentRes = await statusPayload({ namespace: 'agent', method, args: [] });
+    assert(removedAgentRes.response.statusCode === 410, `${contractKey} 返回 410`);
+    assert(removedAgentRes.payload.code === 'WEB_BRIDGE_REMOVED', `${contractKey} code 为 WEB_BRIDGE_REMOVED`);
     assert(!bindingMetadata.get(contractKey), `${contractKey} 无 binding spec`);
     assert(
       !routeDispatchers?.agent || typeof routeDispatchers.agent[method] !== 'function',
@@ -1430,11 +1456,11 @@ async function runBridgeBehavior(inject, context) {
     );
   }
 
-  for (const method of ['updateState']) {
+  for (const method of ['updateState', 'loadState', 'saveFiles', 'saveUiState', 'clear']) {
     const contractKey = `duplicateCheck.${method}`;
-    const pendingDuplicateCheckRes = await statusPayload({ namespace: 'duplicateCheck', method, args: [{ file_path: '/outside/workspace.txt', content_path: '/outside/content.txt' }] });
-    assert(pendingDuplicateCheckRes.response.statusCode === 501, `${contractKey} 返回 501`);
-    assert(pendingDuplicateCheckRes.payload.code === 'WEB_CAPABILITY_PENDING', `${contractKey} code 为 WEB_CAPABILITY_PENDING`);
+    const removedDuplicateCheckRes = await statusPayload({ namespace: 'duplicateCheck', method, args: [{ file_path: '/outside/workspace.txt', content_path: '/outside/content.txt' }] });
+    assert(removedDuplicateCheckRes.response.statusCode === 410, `${contractKey} 返回 410`);
+    assert(removedDuplicateCheckRes.payload.code === 'WEB_BRIDGE_REMOVED', `${contractKey} code 为 WEB_BRIDGE_REMOVED`);
     const bindingSpec = bindingMetadata.get(contractKey);
     assert(!bindingSpec, `${contractKey} 无 binding spec`);
     assert(
@@ -1443,21 +1469,11 @@ async function runBridgeBehavior(inject, context) {
     );
   }
 
-  const protectedDuplicateCheckRes = await statusPayload({
-    namespace: 'duplicateCheck',
-    method: 'saveFiles',
-    args: [{ tenderFileIds: [], bidFileIds: [], file_path: '/outside/workspace.txt', content_path: '/outside/content.txt' }],
-  });
-  assert(protectedDuplicateCheckRes.response.statusCode === 400, 'duplicateCheck.saveFiles 拒绝空 file ID 列表');
-  assert(protectedDuplicateCheckRes.payload.code === 'UPLOAD_FILE_ID_INVALID', 'duplicateCheck.saveFiles 不接受浏览器路径字段');
-  assert(Boolean(bindingMetadata.get('duplicateCheck.saveFiles')), 'duplicateCheck.saveFiles 有 binding spec');
-  assert(typeof routeDispatchers?.duplicateCheck?.saveFiles === 'function', 'duplicateCheck.saveFiles 有 route dispatcher');
-
   for (const method of KB_PENDING_METHODS) {
     const contractKey = `knowledgeBase.${method}`;
-    const pendingKnowledgeRes = await statusPayload({ namespace: 'knowledgeBase', method, args: [] });
-    assert(pendingKnowledgeRes.response.statusCode === 501, `${contractKey} 返回 501`);
-    assert(pendingKnowledgeRes.payload.code === 'WEB_CAPABILITY_PENDING', `${contractKey} code 为 WEB_CAPABILITY_PENDING`);
+    const removedKnowledgeRes = await statusPayload({ namespace: 'knowledgeBase', method, args: [] });
+    assert(removedKnowledgeRes.response.statusCode === 410, `${contractKey} 返回 410`);
+    assert(removedKnowledgeRes.payload.code === 'WEB_BRIDGE_REMOVED', `${contractKey} code 为 WEB_BRIDGE_REMOVED`);
 
     const bindingSpec = bindingMetadata.get(contractKey);
     assert(!bindingSpec, `${contractKey} 无 binding spec`);
@@ -1476,7 +1492,10 @@ async function runBridgeBehavior(inject, context) {
   }
 
   for (const removedEntry of removedProductEntries.values()) {
-    const [namespace, method] = removedEntry.contractRef.split('.');
+    if (removedEntry.transport === 'event') continue;
+    const parts = removedEntry.contractRef.split('.');
+    if (parts.length !== 2) continue;
+    const [namespace, method] = parts;
     const removedRes = await statusPayload({ namespace, method, args: [] });
     assert(removedRes.response.statusCode === 410, `${removedEntry.contractRef} 返回 410`);
     assert(removedRes.payload.code === 'WEB_BRIDGE_REMOVED', `${removedEntry.contractRef} 返回 WEB_BRIDGE_REMOVED`);
@@ -1531,31 +1550,31 @@ async function runBridgeBehavior(inject, context) {
   });
 
   try {
-    const wsPendingRes = await statusPayload({ namespace: 'tasks', method: 'startBidSectionExtraction', args: [] });
-    assert(wsPendingRes.response.statusCode === 501, 'pending 能力返回 501，且不触发 workspace');
-    assert(workspaceResolved === 0, 'pending 能力未初始化 workspace');
+    const wsRemovedRes = await statusPayload({ namespace: 'tasks', method: 'startBidSectionExtraction', args: [] });
+    assert(wsRemovedRes.response.statusCode === 410, 'removed 能力返回 410，且不触发 workspace');
+    assert(workspaceResolved === 0, 'removed 能力未初始化 workspace');
 
     for (const method of ['updateState']) {
-      const wsDuplicateCheckPendingRes = await statusPayload({ namespace: 'duplicateCheck', method, args: [{ file_path: '/outside/workspace.txt', content_path: '/outside/content.txt' }] });
-      assert(wsDuplicateCheckPendingRes.response.statusCode === 501, `duplicateCheck.${method} 返回 501 且不触发 workspace`);
+      const wsDuplicateCheckRemovedRes = await statusPayload({ namespace: 'duplicateCheck', method, args: [{ file_path: '/outside/workspace.txt', content_path: '/outside/content.txt' }] });
+      assert(wsDuplicateCheckRemovedRes.response.statusCode === 410, `duplicateCheck.${method} 返回 410 且不触发 workspace`);
       assert(workspaceResolved === 0, `duplicateCheck.${method} 不初始化 workspace`);
     }
 
     for (const method of KB_PENDING_METHODS) {
-      const wsKnowledgePendingRes = await statusPayload({ namespace: 'knowledgeBase', method, args: [] });
-      assert(wsKnowledgePendingRes.response.statusCode === 501, `knowledgeBase.${method} 返回 501 且不触发 workspace`);
+      const wsKnowledgeRemovedRes = await statusPayload({ namespace: 'knowledgeBase', method, args: [] });
+      assert(wsKnowledgeRemovedRes.response.statusCode === 410, `knowledgeBase.${method} 返回 410 且不触发 workspace`);
       assert(workspaceResolved === 0, `knowledgeBase.${method} 不初始化 workspace`);
     }
 
     for (const entryName of DESKTOP_ONLY_CAPABILITIES) {
       const [namespace, method] = entryName.split('.');
-      const wsRemovedRes = await statusPayload({ namespace, method, args: [] });
-      assert(wsRemovedRes.response.statusCode === 410, `${entryName} 返回 410，且不触发 workspace`);
+      const wsDesktopOnlyRes = await statusPayload({ namespace, method, args: [] });
+      assert(wsDesktopOnlyRes.response.statusCode === 410, `${entryName} 返回 410，且不触发 workspace`);
       assert(workspaceResolved === 0, `${entryName} 不初始化 workspace`);
     }
 
-    const wsRemovedRes = await statusPayload({ namespace: 'resources', method: 'list', args: [] });
-    assert(wsRemovedRes.response.statusCode === 410, 'removed 能力返回 410，且不触发 workspace');
+    const wsResourceRemovedRes = await statusPayload({ namespace: 'resources', method: 'list', args: [] });
+    assert(wsResourceRemovedRes.response.statusCode === 410, 'removed 能力返回 410，且不触发 workspace');
     assert(workspaceResolved === 0, 'removed 能力未初始化 workspace');
   } finally {
     if (typeof oldResolver === 'function') {
@@ -1627,7 +1646,10 @@ async function runBridgeBehavior(inject, context) {
     const accountBLoad = await statusPayload({ namespace: 'config', method: 'load', args: [] }, sessionB);
     const accountBClientId = accountBLoad.payload?.data?.analytics_client_id || '';
     assert(accountBLoad.response.statusCode === 200, 'config.load_B 返回 200');
-    assert(accountBClientId && accountBClientId !== accountAClientId, '两个账号读取的 analytics_client_id 不同');
+    assert(
+      accountBClientId && accountBClientId === accountAClientId,
+      '两个授权账号读取同一租户 analytics_client_id',
+    );
   }
 
   const menuApiText = collectStringLiterals(readSource('src/app/menuConfig.ts'));
@@ -1641,6 +1663,43 @@ async function runBridgeBehavior(inject, context) {
     assert(!navigationText.has(removedId), `navigation 不再声明 ${removedId}`);
     assert(!sidebarText.has(removedId), `Sidebar 不再声明 ${removedId}`);
   }
+
+  for (const retainedId of ['technical-plan', 'existing-plan-expansion', 'my-templates', 'settings']) {
+    assert(navigationText.has(retainedId), `navigation 声明 ${retainedId}`);
+    assert(routerText.has(retainedId) || retainedId === 'settings', `AppRouter 声明 ${retainedId}`);
+  }
+  assert(menuApiText.has('technical-plan') && menuApiText.has('existing-plan-expansion'), 'menuConfig 包含两个技术方案入口');
+  assert(menuApiText.has('my-templates'), 'menuConfig 包含模板入口');
+  assert(sidebarText.has('settings'), 'Sidebar 包含设置入口');
+
+  const appSource = readSource('src/App.tsx');
+  const mainSource = readSource('src/main.tsx');
+  const gateSource = readSource('src/app/WorkspaceDatabaseGate.tsx');
+  assertSourceContains(mainSource, /WorkspaceDatabaseGate/, 'main 仍挂载 WorkspaceDatabaseGate');
+  assertSourceContains(mainSource, /<App\s*\/>/, 'main 挂载 App');
+  assertSourceContains(appSource, /AppRouter/, 'App 挂载 AppRouter');
+  assertSourceContains(
+    gateSource,
+    /const isWeb = window\.yibiao\?\.platform === ['"]web['"]/,
+    'WorkspaceDatabaseGate 识别 web 平台',
+  );
+  assertSourceContains(
+    gateSource,
+    /if \(isWeb\) {\s*return undefined;\s*}/s,
+    'WorkspaceDatabaseGate web 平台跳过 desktop database 检查',
+  );
+  assert(!/GpuHardwareAccelerationPrompt|LicenseStatusPrompt|RequiredOnlineServicesPrompt|UpdateNotifier|AgentRuntimeStatusBar/.test(appSource), 'App 不再挂载退出 Prompt');
+  assert(!/GpuHardwareAccelerationPrompt|LicenseStatusPrompt|RequiredOnlineServicesPrompt|UpdateNotifier/.test(mainSource), 'main 不再挂载退出 Prompt');
+
+  const settingsSource = readSource('src/features/settings/pages/SettingsPage.tsx');
+  assert(!/自动更新渠道|GPU 硬件加速|开发者模式|Token 统计小窗|打开配置文件夹|离线激活授权|智能体配置/.test(settingsSource), 'Settings 不再展示退出能力文案');
+  assert(!/developerTokenStats\.openWindow|config\.openConfigFolder|startGpuHardwareAccelerationTrial|license\?\.getStatus/.test(settingsSource), 'Settings 不再调用退出 Bridge');
+
+  const outlineSource = readSource('src/features/technical-plan/pages/OutlineEditPage.tsx');
+  assert(!/knowledgeBase\.list|debug_force_outline_agent_repair|强制 Agent 修复目录|参考知识库/.test(outlineSource), '目录页不再调用知识库/Agent 修复');
+
+  const stylesSource = readSource('src/styles.css');
+  assert(!/feature-duplicate-check|feature-rejection-check|feature-knowledge-base|feature-developer/.test(stylesSource), 'styles.css 不再导入退出功能 CSS');
 
   for (const targetPath of DELETED_FEATURE_PATHS) {
     const absolutePath = path.join(__dirname, '..', targetPath);
@@ -1719,6 +1778,7 @@ async function closeServer() {
     process.env.CONFIG_ENCRYPTION_KEY = 'test-key';
     process.env.OAUTH_MODE = 'mock';
     process.env.SESSION_SECRET = 'dev-secret';
+    process.env.BIDMASTER_TENANT_ID = 'contract-test-context';
 
     const contractModule = require('../shared/bridgeContract.cjs');
     contractVersion = contractModule.version;
@@ -1729,7 +1789,7 @@ async function closeServer() {
       workspaceContextModule.createWorkspaceContext = (...args) => {
         const workspaceContext = originalCreateWorkspaceContext(...args);
         const options = args[0] || {};
-        if (options.workspaceId === 'contract-close-warning') {
+        if (options.workspaceId === process.env.BIDMASTER_TENANT_ID) {
           const originalClose = typeof workspaceContext.close === 'function' ? workspaceContext.close.bind(workspaceContext) : undefined;
           return {
             ...workspaceContext,
@@ -1764,7 +1824,7 @@ async function closeServer() {
     server = http.createServer(app);
     closeWorkspace = closeAll;
     if (process.env.WEB_CONTRACT_SIMULATE_CLOSE_WARNING === '1') {
-      getWorkspaceContext('contract-close-warning');
+      getWorkspaceContext(process.env.BIDMASTER_TENANT_ID);
     }
 
     const inject = createRequest();

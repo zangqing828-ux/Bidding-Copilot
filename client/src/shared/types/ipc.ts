@@ -1,11 +1,44 @@
 import type { AiHttpErrorPayload, ChatCompletionRequest, JsonCompletionRequest } from './ai';
-import type { DuplicateCheckSaveFilesRequest, DuplicateCheckWorkspaceState, FileSelectionResult } from './bid';
+import type { FileSelectionResult } from './bid';
 import type { ClientConfig, ConfigSaveResult, ImageModelTestResult, ModelListConfig, ModelListResult, UpdateChannel } from './config';
-import type { KnowledgeAnalysisSnapshot, KnowledgeBaseEvent, KnowledgeBaseIndex, KnowledgeBaseIndexMutationResult, KnowledgeBaseMigrationResult, KnowledgeBaseMigrationStatus, KnowledgeBaseMutationResult, KnowledgeBaseRetryDocumentResult, KnowledgeBaseStartMatchingResult, KnowledgeBaseUploadResult, KnowledgeDocument, KnowledgeFolder, KnowledgeItem } from '../../features/knowledge-base/types';
-import type { RejectionCheckWorkspaceState, RejectionDocumentRole } from '../../features/rejection-check/types';
 import type { BackgroundTaskState, BidAnalysisMode, BidAnalysisTaskState, BidSectionMode, ContentGenerationOptions, ContentGenerationPlanState, ContentGenerationRuntimeState, ContentGenerationSectionState, DetectedBidSection, GlobalFactGroupState, SaveOutlineRequest, StartBidAnalysisInput, TechnicalPlanImportResult, TechnicalPlanState, TechnicalPlanStep, TechnicalPlanWorkflowKind } from '../../features/technical-plan/types';
 import type { ExportFormatConfig, ExportTemplateRecord } from './exportFormat';
 import type { OutlineData, OutlineExpansionMode, OutlineWordControlOptions } from './outline';
+
+type DuplicateCheckSaveFilesRequest = any;
+type DuplicateCheckWorkspaceState = any;
+type KnowledgeAnalysisSnapshot = any;
+type KnowledgeBaseEvent = any;
+type KnowledgeBaseIndex = any;
+type KnowledgeBaseIndexMutationResult = any;
+type KnowledgeBaseMigrationResult = any;
+type KnowledgeBaseMigrationStatus = any;
+type KnowledgeBaseMutationResult = any;
+type KnowledgeBaseRetryDocumentResult = any;
+type KnowledgeBaseStartMatchingResult = any;
+type KnowledgeBaseUploadResult = any;
+type KnowledgeDocument = any;
+type KnowledgeFolder = any;
+type KnowledgeItem = any;
+type RejectionCheckWorkspaceState = any;
+type RejectionDocumentRole = any;
+
+export interface StartOutlineGenerationInput {
+  reference_knowledge_document_ids: string[];
+  outline_expansion_mode: OutlineExpansionMode;
+  word_control_options: OutlineWordControlOptions;
+}
+
+export type StartGlobalFactsGenerationInput = Record<string, never>;
+
+export type PauseContentGenerationInput = Record<string, never>;
+
+export type StartContentGenerationInput =
+  | { resume: true }
+  | { retryContentCorrection: true }
+  | { rerunIllustrations: true }
+  | { regenerate?: boolean; generationOptions: Partial<ContentGenerationOptions> }
+  | { regenerate: true; targetItemId: string; requirement: string; generationOptions: Partial<ContentGenerationOptions> };
 
 export interface TaskEvent<TState = unknown, TRejectionCheckState = unknown, TDuplicateCheckState = unknown> {
   task: unknown;
@@ -489,10 +522,10 @@ export interface YibiaoBridge {
   tasks: {
     startBidSectionExtraction: (payload?: unknown) => Promise<unknown>;
     startBidAnalysis: (payload: StartBidAnalysisInput) => Promise<BackgroundTaskState>;
-    startOutlineGeneration: (payload: unknown) => Promise<unknown>;
-    startGlobalFactsGeneration: (payload: unknown) => Promise<unknown>;
-    startContentGeneration: (payload: unknown) => Promise<unknown>;
-    pauseContentGeneration: () => Promise<unknown>;
+    startOutlineGeneration: (payload: StartOutlineGenerationInput) => Promise<BackgroundTaskState>;
+    startGlobalFactsGeneration: (payload?: StartGlobalFactsGenerationInput) => Promise<BackgroundTaskState>;
+    startContentGeneration: (payload: StartContentGenerationInput) => Promise<BackgroundTaskState>;
+    pauseContentGeneration: (payload?: PauseContentGenerationInput) => Promise<BackgroundTaskState>;
     startRejectionItemsExtraction: (payload: unknown) => Promise<unknown>;
     startRejectionCheck: (payload: unknown) => Promise<unknown>;
     startDuplicateAnalysis: (payload: unknown) => Promise<unknown>;

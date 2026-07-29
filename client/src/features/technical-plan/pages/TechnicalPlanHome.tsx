@@ -1168,12 +1168,6 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
           hasTenderFile={Boolean(state.tenderFile)}
           mode={state.bidAnalysisMode}
           selectedTaskIds={state.bidAnalysisSelectedTaskIds}
-          bidSectionMode={state.bidSectionMode}
-          bidSections={state.bidSections}
-          bidSectionExtractionTask={state.bidSectionExtractionTask}
-          bidSectionExtractionStatus={state.bidSectionExtractionStatus}
-          bidSectionExtractionError={state.bidSectionExtractionError}
-          selectedSectionTitle={state.tenderFile?.selectedSectionTitle}
           tasks={state.bidAnalysisTasks}
           task={state.bidAnalysisTask}
           progress={state.bidAnalysisProgress}

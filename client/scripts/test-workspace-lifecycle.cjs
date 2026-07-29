@@ -554,19 +554,19 @@ await run('workspaceRuntimeFactory: 依赖失败需回滚并保留原始错误',
 
     const factoryPath = require.resolve('../server/workspace/workspaceRuntimeFactory.cjs');
     const sqlitePath = require.resolve('../core/sqliteDatabase.cjs');
-    const webServicesPath = require.resolve('../server/workspace/webServices.cjs');
+    const technicalPlanTaskServicePath = require.resolve('../server/workspace/technicalPlanTaskService.cjs');
     const agentServicePath = require.resolve('../server/agent/webAgentService.cjs');
 
     const originalLoad = Module._load;
     const realSqlite = originalLoad(sqlitePath);
-    const realWebServices = originalLoad(webServicesPath);
+    const realTechnicalPlanTaskService = originalLoad(technicalPlanTaskServicePath);
     const expectedError = new Error('受控装配失败');
     let sqliteClosed = false;
 
     let caughtError;
     try {
       Module._load = function loadWithOverrides(request, parent, isMain) {
-        if (request === sqlitePath || request === webServicesPath || request === agentServicePath) {
+        if (request === sqlitePath || request === technicalPlanTaskServicePath || request === agentServicePath) {
           const resolved = Module._resolveFilename(request, parent, isMain);
           if (path.resolve(resolved) === sqlitePath) {
             return {
@@ -583,10 +583,10 @@ await run('workspaceRuntimeFactory: 依赖失败需回滚并保留原始错误',
               },
             };
           }
-          if (path.resolve(resolved) === webServicesPath) {
+          if (path.resolve(resolved) === technicalPlanTaskServicePath) {
             return {
-              ...realWebServices,
-              createWebBidAnalysisTaskService() {
+              ...realTechnicalPlanTaskService,
+              createTechnicalPlanTaskService() {
                 throw expectedError;
               },
             };
@@ -617,10 +617,10 @@ await run('workspaceRuntimeFactory: 依赖失败需回滚并保留原始错误',
             },
           };
         }
-        if (resolved && path.resolve(resolved) === webServicesPath) {
+        if (resolved && path.resolve(resolved) === technicalPlanTaskServicePath) {
           return {
-            ...realWebServices,
-            createWebBidAnalysisTaskService() {
+            ...realTechnicalPlanTaskService,
+            createTechnicalPlanTaskService() {
               throw expectedError;
             },
           };
@@ -666,11 +666,11 @@ await run('workspaceRuntimeFactory: close 按顺序关闭并聚合失败', async
     const databasePath = paths.databasePath;
     const configPath = path.join(baseDir, 'users', 'closeerr', 'config.enc.json');
     const factoryPath = require.resolve('../server/workspace/workspaceRuntimeFactory.cjs');
-    const webServicesPath = require.resolve('../server/workspace/webServices.cjs');
+    const technicalPlanTaskServicePath = require.resolve('../server/workspace/technicalPlanTaskService.cjs');
     const agentServicePath = require.resolve('../server/agent/webAgentService.cjs');
 
     const originalLoad = Module._load;
-    const realWebServices = originalLoad(webServicesPath);
+    const realTechnicalPlanTaskService = originalLoad(technicalPlanTaskServicePath);
     let runtime;
 
     try {
@@ -681,10 +681,10 @@ await run('workspaceRuntimeFactory: close 按顺序关闭并聚合失败', async
         } catch {
           resolved = undefined;
         }
-        if (resolved && path.resolve(resolved) === webServicesPath) {
+        if (resolved && path.resolve(resolved) === technicalPlanTaskServicePath) {
           return {
-            ...realWebServices,
-            createWebBidAnalysisTaskService() {
+            ...realTechnicalPlanTaskService,
+            createTechnicalPlanTaskService() {
               return {
                 getActiveTasks() { return []; },
                 subscribeCallback() { return () => {}; },
@@ -748,11 +748,11 @@ await run('workspaceRuntimeFactory: close 重试会保留失败 handler，成功
     const factoryPath = require.resolve('../server/workspace/workspaceRuntimeFactory.cjs');
     const sqlitePath = require.resolve('../core/sqliteDatabase.cjs');
     const taskEventPortPath = require.resolve('../core/taskEventPort.cjs');
-    const webServicesPath = require.resolve('../server/workspace/webServices.cjs');
+    const technicalPlanTaskServicePath = require.resolve('../server/workspace/technicalPlanTaskService.cjs');
     const agentServicePath = require.resolve('../server/agent/webAgentService.cjs');
 
     const originalLoad = Module._load;
-    const realWebServices = originalLoad(webServicesPath);
+    const realTechnicalPlanTaskService = originalLoad(technicalPlanTaskServicePath);
     const realSqlite = originalLoad(sqlitePath);
     const realTaskEventPort = originalLoad(taskEventPortPath);
     const closeStats = {
@@ -807,10 +807,10 @@ await run('workspaceRuntimeFactory: close 重试会保留失败 handler，成功
           };
         }
 
-        if (resolved && path.resolve(resolved) === webServicesPath) {
+        if (resolved && path.resolve(resolved) === technicalPlanTaskServicePath) {
           return {
-            ...realWebServices,
-            createWebBidAnalysisTaskService() {
+            ...realTechnicalPlanTaskService,
+            createTechnicalPlanTaskService() {
               return {
                 getActiveTasks() { return []; },
                 subscribeCallback() { return () => {}; },

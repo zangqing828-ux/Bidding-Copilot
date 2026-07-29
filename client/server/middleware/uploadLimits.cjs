@@ -1,7 +1,7 @@
 // 上传限制中间件：检查文件扩展名和 MIME 类型。
 const path = require('node:path');
 
-const ALLOWED_EXTENSIONS = new Set(['.docx', '.doc', '.pdf', '.txt', '.md', '.xlsx']);
+const ALLOWED_EXTENSIONS = new Set(['.pdf', '.docx', '.txt', '.md']);
 const MAX_FILE_COUNT = 10;
 
 function checkFileExtension(filename) {

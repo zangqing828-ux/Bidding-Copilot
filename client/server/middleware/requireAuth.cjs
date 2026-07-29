@@ -17,6 +17,7 @@ function requireAuth(req, res, next) {
 
   req.sessionId = session.sessionId;
   req.account = account;
+  req.tenantId = account.workspaceId;
   req.workspaceId = account.workspaceId;
   next();
 }

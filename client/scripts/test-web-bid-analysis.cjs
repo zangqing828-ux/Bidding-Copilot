@@ -5,7 +5,7 @@ const path = require('node:path');
 const { createSqliteDatabase } = require('../core/sqliteDatabase.cjs');
 const { createTechnicalPlanStore } = require('../core/stores/technicalPlanStore.cjs');
 const { createWorkspaceMutationExecutor } = require('../server/workspace/workspaceMutationExecutor.cjs');
-const { createWebBidAnalysisTaskService } = require('../server/workspace/webServices.cjs');
+const { createTechnicalPlanTaskService } = require('../server/workspace/technicalPlanTaskService.cjs');
 
 function waitFor(predicate, timeoutMs = 12000) {
   const deadline = Date.now() + timeoutMs;
@@ -54,7 +54,7 @@ async function main() {
       withQueueScope() { return this; },
       resumeQueueScope() {},
     };
-    const service = createWebBidAnalysisTaskService({ aiService, technicalPlanStore: store, mutationExecutor });
+    const service = createTechnicalPlanTaskService({ aiService, technicalPlanStore: store, mutationExecutor });
     const events = [];
     const unsubscribe = service.subscribeCallback((event) => events.push(event));
     const startPayload = {
@@ -145,7 +145,7 @@ async function main() {
       withQueueScope() { return this; },
       resumeQueueScope() {},
     };
-    const closingService = createWebBidAnalysisTaskService({ aiService: closingAiService, technicalPlanStore: store, mutationExecutor });
+    const closingService = createTechnicalPlanTaskService({ aiService: closingAiService, technicalPlanStore: store, mutationExecutor });
     await closingService.startBidAnalysis(startPayload);
     await closingService.close();
     const interrupted = store.loadTechnicalPlan().bidAnalysisTask;

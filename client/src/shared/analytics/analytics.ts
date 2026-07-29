@@ -11,14 +11,6 @@ interface AnalyticsIdentity {
   clientCreatedAt: string;
 }
 
-interface AnalyticsLicenseSnapshot {
-  licenseStatus: string;
-  licensePlan: string;
-  licenseExpiresAt: string;
-  sourceTrusted: string;
-  untrustedReason: string;
-}
-
 interface ConfigUsagePayload {
   file_parser_provider?: string;
   image_provider?: string;
@@ -67,7 +59,6 @@ let appOpenTracked = false;
 let lastTrackedPage = '';
 let versionPromise: Promise<string> | null = null;
 let identityPromise: Promise<AnalyticsIdentity> | null = null;
-let licenseSnapshot: { value: AnalyticsLicenseSnapshot; expiresAt: number } | null = null;
 
 function getLegacyClientId() {
   try {
@@ -123,36 +114,6 @@ function getVersion() {
   return versionPromise;
 }
 
-async function getAnalyticsLicenseSnapshot(): Promise<AnalyticsLicenseSnapshot> {
-  const now = Date.now();
-  if (licenseSnapshot && licenseSnapshot.expiresAt > now) {
-    return licenseSnapshot.value;
-  }
-
-  const empty: AnalyticsLicenseSnapshot = {
-    licenseStatus: '',
-    licensePlan: '',
-    licenseExpiresAt: '',
-    sourceTrusted: '',
-    untrustedReason: '',
-  };
-
-  try {
-    const status = await window.yibiao?.license?.getStatus();
-    const value = status ? {
-      licenseStatus: String(status.licenseStatus || status.status || ''),
-      licensePlan: String(status.plan || ''),
-      licenseExpiresAt: String(status.licenseExpiresAt || '').slice(0, 10),
-      sourceTrusted: String(status.sourceTrustedText || (status.sourceTrusted ? 'true' : 'false')),
-      untrustedReason: String(status.untrustedReason || ''),
-    } : empty;
-    licenseSnapshot = { value, expiresAt: now + 60_000 };
-    return value;
-  } catch {
-    return empty;
-  }
-}
-
 function booleanText(value: boolean | undefined) {
   if (value === undefined) return undefined;
   return value ? 'true' : 'false';
@@ -183,7 +144,7 @@ function configUsageValueText(value: unknown) {
 }
 
 function sendAnalytics(event: AnalyticsEvent, page = '', payload: Record<string, unknown> = {}) {
-  void Promise.all([getVersion(), getAnalyticsIdentity(), getAnalyticsLicenseSnapshot()]).then(([version, identity, license]) => {
+  void Promise.all([getVersion(), getAnalyticsIdentity()]).then(([version, identity]) => {
     fetch(ANALYTICS_ENDPOINT, {
       method: 'POST',
       headers: {
@@ -198,11 +159,6 @@ function sendAnalytics(event: AnalyticsEvent, page = '', payload: Record<string,
         arch: '',
         client_id: identity.clientId,
         client_created_at: identity.clientCreatedAt,
-        license_status: license.licenseStatus,
-        license_plan: license.licensePlan,
-        license_expires_at: license.licenseExpiresAt,
-        source_trusted: license.sourceTrusted,
-        untrusted_reason: license.untrustedReason,
         ...payload,
       }),
     }).catch(() => undefined);

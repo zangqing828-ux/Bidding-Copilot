@@ -864,8 +864,33 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
             updated_at = @updated_at
         WHERE type = @type
       `);
+      // 正文任务保留 checkpoint：转为 paused 可继续，中断小节标记为可重试 error。
+      const pauseContentTask = db.prepare(`
+        UPDATE technical_plan_tasks
+        SET status = 'paused',
+            logs_json = @logs_json,
+            error = NULL,
+            error_code = NULL,
+            retryable = 1,
+            pause_requested = 0,
+            updated_at = @updated_at
+        WHERE type = 'content-generation'
+      `);
+      const markInterruptedSections = db.prepare(`
+        UPDATE technical_plan_content_sections
+        SET status = 'error', error = '上次生成被中断，请继续生成。', updated_at = ?
+        WHERE status = 'running'
+      `);
       for (const row of interrupted) {
         const logs = safeJsonParse(row.logs_json, []);
+        if (row.type === 'content-generation') {
+          pauseContentTask.run({
+            logs_json: JSON.stringify([...logs, '服务重启导致正文生成暂停，可点击继续恢复。']),
+            updated_at: timestamp,
+          });
+          markInterruptedSections.run(timestamp);
+          continue;
+        }
         updateTask.run({
           type: row.type,
           logs_json: JSON.stringify([...logs, '服务重启导致任务中断，请重新执行']),
@@ -1870,6 +1895,8 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
         db.prepare("DELETE FROM technical_plan_tasks WHERE type = 'content-generation'").run();
         clearTechnicalPlanMermaidCache();
         updateMeta({ content_generation_runtime_json: null });
+        // 目录实质变化后推进输入版本，让旧任务的 CAS 回写失效。
+        bumpInputRevision();
       }
       updateMeta({ content_illustration_plan_json: null });
     });
