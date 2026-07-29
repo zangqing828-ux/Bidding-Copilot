@@ -273,13 +273,13 @@ function createWebWorkspaceRuntime({
       throw new Error('agentService 缺少 close 方法');
     }
     pushCloseHandler(closeHandlers, createCloseHandler(agentService), 'agentService');
-    const exportService = createWebExportService({ workspaceId, workspaceRoot });
+    const imageRenderer = createWebImageRenderer();
+    pushCloseHandler(closeHandlers, createCloseHandler(imageRenderer), 'imageRenderer');
+    const exportService = createWebExportService({ workspaceId, workspaceRoot, paths, technicalPlanStore, imageRenderer });
     pushCloseHandler(closeHandlers, createCloseHandler(exportService), 'exportService');
 
     const knowledgeBaseService = createWebKnowledgeBaseService({ knowledgeBaseStore, fileService });
     const duplicateCheckService = createWebDuplicateCheckServiceStub({ duplicateCheckStore });
-    const imageRenderer = createWebImageRenderer();
-    pushCloseHandler(closeHandlers, createCloseHandler(imageRenderer), 'imageRenderer');
     const illustrationPorts = createWebIllustrationPorts({ renderer: imageRenderer });
     const taskService = createTechnicalPlanTaskService({
       aiService,

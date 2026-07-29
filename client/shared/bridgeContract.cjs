@@ -723,7 +723,7 @@ const rawMethods = {
     }),
   },
   systemFonts: {
-    list: pendingContract('systemFonts.list', 'web-shell', 'WR-05'),
+    list: implementedBridgeContract({ owner: 'export', workPackage: 'WR-05', contractRef: 'systemFonts.list', input: [], output: 'string[]' }),
   },
   resources: {
     list: createContractEntry({
