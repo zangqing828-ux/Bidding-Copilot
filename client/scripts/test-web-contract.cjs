@@ -1156,6 +1156,42 @@ async function runBridgeBehavior(inject, context) {
     setWorkspaceContextResolver(previousResolver);
   }
 
+  // ai.chat：Bridge 层按契约声明的 AI_* 错误码分类映射 HTTP 状态（WR-06A）。
+  const aiChatErrorCases = [
+    ['AI_CONFIG_INVALID', 400, false],
+    ['AI_CONFIG_LOAD_FAILED', 400, false],
+    ['AI_ENDPOINT_NOT_ALLOWED', 403, false],
+    ['AI_REQUEST_ABORTED', 400, false],
+    ['AI_REQUEST_TIMEOUT', 503, true],
+    ['AI_NETWORK_ERROR', 503, true],
+    ['AI_RESPONSE_PARSE_ERROR', 502, false],
+    ['AI_REQUEST_FAILED', 502, false],
+    ['AI_QUEUE_OVERLOADED', 429, true],
+  ];
+  for (const [code, expectedStatus, expectedRetryable] of aiChatErrorCases) {
+    const previousAiChatResolver = setWorkspaceContextResolver(() => ({
+      aiService: {
+        chat: () => {
+          const error = new Error(`ai chat failed: ${code}`);
+          error.code = code;
+          if (code === 'AI_QUEUE_OVERLOADED') error.retryable = true;
+          return Promise.reject(error);
+        },
+      },
+    }));
+    try {
+      const res = await statusPayload({ namespace: 'ai', method: 'chat', args: [{ messages: [] }] });
+      assert(res.response.statusCode === expectedStatus, `ai.chat ${code} 通过 Bridge 返回 ${expectedStatus}`);
+      assert(res.payload.code === code, `ai.chat ${code} 保留原始错误码`);
+      assert(res.payload.retryable === expectedRetryable, `ai.chat ${code} retryable=${expectedRetryable}`);
+      if (code === 'AI_QUEUE_OVERLOADED') {
+        assert(res.response.headers['retry-after'] === '5', 'ai.chat 队列过载返回 Retry-After: 5');
+      }
+    } finally {
+      setWorkspaceContextResolver(previousAiChatResolver);
+    }
+  }
+
   let resolveDisconnectRequestStarted;
   let resolveDisconnectRequestAborted;
   const disconnectRequestStarted = new Promise((resolve) => {
