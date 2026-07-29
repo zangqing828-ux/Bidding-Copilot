@@ -75,13 +75,9 @@ function checkAgentRuntime() {
       ...missingTools,
       ...(runnerStatus.available ? [] : ['prlimit']),
     ];
-    return {
-      name: 'agent_runtime',
-      status: 'fail',
-      message: hasBinary ? `缺少依赖：${missing.join(', ')}` : 'OpenCode binary 不存在',
-    };
+    return failOrWarn('agent_runtime', hasBinary ? `缺少依赖：${missing.join(', ')}` : 'OpenCode binary 不存在');
   } catch (err) {
-    return { name: 'agent_runtime', status: 'fail', message: err?.message || '不可用' };
+    return failOrWarn('agent_runtime', err?.message || '不可用');
   }
 }
 

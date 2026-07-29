@@ -442,6 +442,23 @@ router.post('/bridge', (req, res) => {
           retryable: true,
         });
     }
+    if (typeof err?.code === 'string' && err.code.startsWith('AI_')) {
+      // 按契约声明的 AI_* 错误码分类透出，避免统一降级为 INTERNAL_ERROR。
+      const status = err.code === 'AI_CONFIG_INVALID' || err.code === 'AI_CONFIG_LOAD_FAILED'
+        ? 400
+        : err.code === 'AI_ENDPOINT_NOT_ALLOWED'
+          ? 403
+          : err.code === 'AI_REQUEST_TIMEOUT' || err.code === 'AI_NETWORK_ERROR'
+            ? 503
+            : err.code === 'AI_REQUEST_ABORTED'
+              ? 400
+              : 502;
+      return res.status(status).json({
+        code: err.code,
+        message: err.message || 'AI 请求失败',
+        retryable: err.retryable === true || status === 503,
+      });
+    }
     if (typeof err?.code === 'string' && err.code.startsWith('AGENT_')) {
       const unavailable = err.code === 'AGENT_RUNTIME_UNAVAILABLE' || err.code === 'AGENT_CLOSING';
       return res.status(unavailable ? 503 : 400).json({

@@ -21,25 +21,16 @@
 | Check | 内容 |
 | --- | --- |
 | `CI / Repository Hygiene` | lockfile 完整性、变更范围 whitespace |
-| `CI / Client Build` | `npm ci`、CommonJS 语法、TypeScript/Vite 构建、critical 审计 |
+| `CI / Client Build` | `npm ci`、CommonJS 语法、Web 构建、`test:web` 与浏览器 Gate、high 审计 |
 | `CI / Analytics Worker Check` | `npm ci`、Wrangler dry-run、critical 审计 |
 | `CI / Analytics Dashboard Check` | `npm ci`、Wrangler dry-run、critical 审计 |
 | `CI / Quality Gate` | 汇总以上四项，任一失败时整体失败 |
 
 主分支保护应使用稳定检查名 `CI / Quality Gate`。
 
-### Release Client
+### Release Client（已退役）
 
-文件：`.github/workflows/release.yml`
-
-`Release Quality Gate` 会在创建或更新 GitHub Release 前执行：
-
-- 客户端依赖安装
-- Electron Main 与脚本语法检查
-- TypeScript 与 Vite 构建
-- critical 生产依赖审计
-
-门禁失败时不会创建 Release，也不会启动 Windows/macOS 打包。
+桌面发行流水线 `.github/workflows/release.yml` 及 Windows/macOS 打包已随 Web-only 首发退役（WR-06A 删除）。当前不再有桌面 Release workflow；Web 交付以 Docker 镜像 + ECS 部署为准（见 `.planning/web-single-tenant-release/`）。如需重新引入桌面发行，须通过独立工作包与审核。
 
 ## 本地等价验证
 
@@ -48,9 +39,10 @@
 ```bash
 cd client
 npm ci
-find electron scripts -name '*.cjs' -print0 | xargs -0 -n1 node --check
-npm run build
-npm audit --omit=dev --audit-level=critical
+find scripts server core shared -name '*.cjs' -print0 | xargs -0 -n1 node --check
+npm run build:web
+npm run test:web
+npm run audit:production
 ```
 
 Analytics Worker：
@@ -73,7 +65,7 @@ npm audit --audit-level=critical
 
 ## 依赖审计基线
 
-截至 2026-07-23，客户端与 Wrangler 依赖树仍有 high 和 moderate 级历史风险，其中客户端 `xlsx` 缺少可用修复版本。CI 首版阻断 critical；完整报告继续显示在 Actions 日志中。升级依赖和替换 `xlsx` 应作为独立治理任务处理。
+WR-06A（2026-07-29）已删除 Pi/Electron/`xlsx` 等依赖并升级余下依赖，客户端生产依赖 `npm audit --omit=dev` 的 high 与 critical 漏洞已清零；客户端 CI 门槛为 high（`npm run audit:production`）。Analytics Worker/Dashboard 仍以 critical 为首版门槛，其历史 high/moderate 风险作为独立治理任务处理。
 
 ## 主分支保护
 

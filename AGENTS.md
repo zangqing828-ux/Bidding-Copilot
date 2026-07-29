@@ -85,7 +85,7 @@
 - Docker production smoke：以 `NODE_ENV=production`、`OAUTH_MODE=mainquest` 启动，检查 readiness、OAuth authorize 跳转、Secure Cookie、SSE、上传、任务恢复和导出下载。
 - OpenCode Foundation smoke：构建 `agent-e2e` target，使用固定 checksum 的真实 OpenCode 完成两轮 tool-call、安全结果读取和临时目录清理；production readiness 必须验证 OpenCode、`prlimit`、`rg`、`fd` 和 `jq`。
 - 修改 Web native 依赖后验证 Linux Node ABI；Electron ABI 不属于首发 Gate。
-- 修改依赖后运行 `npm audit --omit=dev --audit-level=critical`；已知关键漏洞必须清零。
+- 修改依赖后运行 `npm run audit:production`（`npm audit --omit=dev --audit-level=high`）；生产依赖 high 和 critical 漏洞必须清零。
 - 完成标准必须包含真实成功链路、边界/失败链路、跨用户共享租户数据、session 隔离、持久化、重启恢复、图片和高保真 DOCX 验证。
 
 ## 变更纪律
