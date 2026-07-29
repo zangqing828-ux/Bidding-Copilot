@@ -47,7 +47,16 @@ function createElectronAssetResolver() {
   };
 }
 
-// 桌面端导出端口：注入原生图片归一化、资产解析与 Mermaid 本地渲染/缓存。
+// 桌面端远程图片抓取：由用户本机发起（等价浏览器行为），无服务端 SSRF 风险，保留原导出能力。
+async function electronRemoteImageFetcher(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`图片下载失败：${url}`);
+  }
+  return { buffer: Buffer.from(await response.arrayBuffer()) };
+}
+
+// 桌面端导出端口：注入原生图片归一化、资产解析、Mermaid 本地渲染/缓存与远程图片抓取。
 function createElectronExportPorts() {
   return {
     imageNormalizer: electronImageNormalizer,
@@ -55,6 +64,7 @@ function createElectronExportPorts() {
     mermaidRenderer: (code) => getLocalImageRenderService().renderMermaidToPng(code),
     getMermaidCacheEntry: (code) => getMermaidCacheEntry(app, code),
     saveMermaidCacheImage: (hash, buffer) => saveMermaidCacheImage(app, hash, buffer),
+    remoteImageFetcher: electronRemoteImageFetcher,
   };
 }
 

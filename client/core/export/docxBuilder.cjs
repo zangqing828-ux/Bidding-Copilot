@@ -1137,12 +1137,14 @@ async function loadImage(source, context = {}) {
     return { buffer: fetched.buffer, type: fetched.type || imageTypeFromPath(new URL(url).pathname) };
   }
 
-  // 本地文件读取受 baseDir 边界约束，禁止借相对路径越权读取目录外文件。
+  // 本地文件读取受 baseDir 边界约束，禁止借相对/绝对路径越权读取目录外文件。
   const fileUrlPrefix = 'file://';
   const rawPath = url.startsWith(fileUrlPrefix) ? fileURLToPath(url) : url;
   const baseDir = path.resolve(context.baseDir || process.cwd());
   const resolvedPath = path.isAbsolute(rawPath) ? path.resolve(rawPath) : path.resolve(baseDir, rawPath);
-  if (resolvedPath !== baseDir && !resolvedPath.startsWith(`${baseDir}${path.sep}`)) {
+  // baseDir 为文件系统根目录时拼接 sep 会得到 '//'，需先归一化前缀，否则所有路径都会被误拒。
+  const basePrefix = baseDir.endsWith(path.sep) ? baseDir : `${baseDir}${path.sep}`;
+  if (resolvedPath !== baseDir && !resolvedPath.startsWith(basePrefix)) {
     return null;
   }
 

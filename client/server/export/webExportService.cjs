@@ -57,7 +57,8 @@ function createWebExportService({ workspaceId, workspaceRoot, paths, technicalPl
       fs.mkdirSync(exportsDir, { recursive: true, mode: 0o700 });
       const warnings = [];
       const result = await buildDocxResult(
-        { ...payload, project_name: projectName, outline },
+        // base_dir 一律固化为当前 tenant 工作区根，忽略客户端传入值，避免越权读取目录外文件。
+        { ...payload, base_dir: workspaceRoot, baseDir: workspaceRoot, project_name: projectName, outline },
         { warnings, ...ports },
       );
       const fileName = `${safeFileName(projectName)}_${new Date().toISOString().replace(/[:.]/g, '-')}.docx`;
