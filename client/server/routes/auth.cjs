@@ -9,7 +9,7 @@ const { createSession, deleteSession, getSession, SESSION_COOKIE_NAME, cleanExpi
 const router = express.Router();
 
 // state Cookie 名称：用 HttpOnly Cookie 绑定发起登录的浏览器，防跨浏览器接管（RFC 9700）。
-const STATE_COOKIE_NAME = 'yibiao_oauth_state';
+const STATE_COOKIE_NAME = 'bidmaster_oauth_state';
 const STATE_TTL_MS = 5 * 60 * 1000;
 
 function createState() {

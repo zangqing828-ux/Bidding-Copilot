@@ -6,7 +6,7 @@ function renderGitHubStats(repo) {
   state.githubStars.textContent = repo ? formatNumber(repo.stars) : '-';
   state.githubForks.textContent = repo ? formatNumber(repo.forks) : '-';
   state.githubOpenIssues.textContent = repo ? formatNumber(repo.openIssues) : '-';
-  state.githubRepoUrl.href = repo?.htmlUrl || 'https://github.com/FB208/OpenBidKit_Yibiao';
+  state.githubRepoUrl.href = repo?.htmlUrl || 'https://github.com/zangqing828-ux/Bidding-Copilot';
 }
 
 export async function loadOverview() {

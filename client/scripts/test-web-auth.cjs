@@ -79,7 +79,7 @@ async function runTests() {
   {
     const res = await app.inject({ method: 'GET', url: '/api/auth/login' });
     assert(res.statusCode === 302, '/api/auth/login 返回 302');
-    const stateCookie = getCookieAttrs(res.headers['set-cookie'], 'yibiao_oauth_state');
+    const stateCookie = getCookieAttrs(res.headers['set-cookie'], 'bidmaster_oauth_state');
     assert(stateCookie.includes('HttpOnly'), 'state Cookie 是 HttpOnly');
     assert(stateCookie.includes('SameSite=Lax'), 'state Cookie 是 SameSite=Lax');
     assert(res.headers.location.includes('state='), '重定向 URL 包含 state');
@@ -101,7 +101,7 @@ async function runTests() {
   {
     // Step 1: login 获取 state Cookie
     const loginRes = await app.inject({ method: 'GET', url: '/api/auth/login' });
-    const stateCookie = extractCookie(loginRes.headers['set-cookie'], 'yibiao_oauth_state');
+    const stateCookie = extractCookie(loginRes.headers['set-cookie'], 'bidmaster_oauth_state');
     const stateValue = new URL(loginRes.headers.location, 'http://localhost').searchParams.get('state');
 
     // Step 2: mock-callback 带 state Cookie
@@ -110,14 +110,14 @@ async function runTests() {
       url: '/api/auth/mock-callback',
       headers: {
         'content-type': 'application/x-www-form-urlencoded',
-        cookie: `yibiao_oauth_state=${stateCookie}`,
+        cookie: `bidmaster_oauth_state=${stateCookie}`,
       },
       payload: `email=t@t.com&name=T&state=${stateValue}`,
     });
     assert(callbackRes.statusCode === 302, 'mock 登录成功返回 302');
-    sessionCookie = extractCookie(callbackRes.headers['set-cookie'], 'yibiao_session');
+    sessionCookie = extractCookie(callbackRes.headers['set-cookie'], 'bidmaster_session');
     assert(sessionCookie !== null, 'mock 登录设置 session Cookie');
-    const sessionAttrs = getCookieAttrs(callbackRes.headers['set-cookie'], 'yibiao_session');
+    const sessionAttrs = getCookieAttrs(callbackRes.headers['set-cookie'], 'bidmaster_session');
     assert(sessionAttrs.includes('HttpOnly'), 'session Cookie 是 HttpOnly');
     assert(sessionAttrs.includes('SameSite=Lax'), 'session Cookie 是 SameSite=Lax');
   }
@@ -127,7 +127,7 @@ async function runTests() {
     const res = await app.inject({
       method: 'GET',
       url: '/api/auth/me',
-      headers: { cookie: `yibiao_session=${sessionCookie}` },
+      headers: { cookie: `bidmaster_session=${sessionCookie}` },
     });
     assert(res.statusCode === 200, '已登录 /api/auth/me 返回 200');
     const body = JSON.parse(res.body);
@@ -140,7 +140,7 @@ async function runTests() {
     const res = await app.inject({
       method: 'POST',
       url: '/api/bridge',
-      headers: { 'content-type': 'application/json', cookie: `yibiao_session=${sessionCookie}` },
+      headers: { 'content-type': 'application/json', cookie: `bidmaster_session=${sessionCookie}` },
       payload: { namespace: 'ai', method: 'chat', args: [] },
     });
     assert(res.statusCode === 400, '已登录业务 API 通过 auth 后进入契约参数校验');
@@ -153,7 +153,7 @@ async function runTests() {
     const res = await app.inject({
       method: 'POST',
       url: '/api/auth/logout',
-      headers: { cookie: `yibiao_session=${sessionCookie}` },
+      headers: { cookie: `bidmaster_session=${sessionCookie}` },
     });
     assert(res.statusCode === 200, '退出返回 200');
     const body = JSON.parse(res.body);
@@ -163,7 +163,7 @@ async function runTests() {
     const meRes = await app.inject({
       method: 'GET',
       url: '/api/auth/me',
-      headers: { cookie: `yibiao_session=${sessionCookie}` },
+      headers: { cookie: `bidmaster_session=${sessionCookie}` },
     });
     assert(meRes.statusCode === 401, '退出后 /api/auth/me 返回 401');
   }

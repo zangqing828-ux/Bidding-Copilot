@@ -1,13 +1,9 @@
 
 # 贡献指南
 
-感谢你关注易标 AI（OpenBidKit_Yibiao）。
+感谢你关注 BidMaster。
 
 本项目是一个开源免费的 AI 标书编写工具，欢迎提交问题反馈、功能建议、文档优化和代码贡献。
-
-## 支持项目
-
-如果本项目对您有帮助，请礼貌地点一个 Star，这是对项目持续维护最大的支持。
 
 ## 反馈问题
 
@@ -55,7 +51,7 @@ PR 描述建议包含：
 请先 Fork 本仓库，然后克隆到本地：
 
 ```bash
-git clone https://github.com/你的用户名/OpenBidKit_Yibiao.git
+git clone https://github.com/你的用户名/Bidding-Copilot.git
 ````
 
 安装依赖：
@@ -71,12 +67,6 @@ npm run dev
 ```
 
 具体命令请以 README 中的说明为准。
-
-## 长期交流
-
-如果你希望长期交流项目使用、部署或二次开发相关问题，可以添加企业微信。
-
-请在 README 中查看最新联系方式。
 
 ## 许可证
 

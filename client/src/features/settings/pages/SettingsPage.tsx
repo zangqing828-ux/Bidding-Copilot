@@ -41,7 +41,6 @@ const textProviderDefaults: Record<ConfiguredTextModelProvider, TextModelConfig>
 };
 
 const textProviderApiKeyUrls: Partial<Record<ConfiguredTextModelProvider, string>> = {
-  jinlong: 'https://s.markup.com.cn/jl',
   volcengine: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey',
   deepseek: 'https://platform.deepseek.com/api_keys',
   agnes: 'https://platform.agnes-ai.com/settings/apiKeys',
@@ -224,7 +223,7 @@ const imageProviderDefaults: ImageModelProfiles = {
 };
 
 const imageProviderApiKeyUrls: Record<ImageModelProvider, string> = {
-  jinlong: 'https://s.markup.com.cn/jl',
+  jinlong: '',
   volcengine: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey',
   'google-ai-studio': 'https://aistudio.google.com/api-keys',
   agnes: 'https://platform.agnes-ai.com/settings/apiKeys',
@@ -1500,17 +1499,6 @@ function SettingsPage() {
                     rel="noreferrer"
                   >
                     zangqing828-ux/Bidding-Copilot
-                  </a>
-                </li>
-                <li className="about-links-item">
-                  <span className="about-links-label">使用文档</span>
-                  <a
-                    className="about-links-value is-link"
-                    href="https://wiki.agnet.top/"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    wiki.agnet.top
                   </a>
                 </li>
               </ul>

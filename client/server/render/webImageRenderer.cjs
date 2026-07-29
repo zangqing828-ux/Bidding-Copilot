@@ -25,7 +25,7 @@ function createRenderError(message, code = 'IMAGE_RENDER_FAILED') {
 
 function resolveChromiumExecutable(env = process.env) {
   const candidates = [
-    env.YIBIAO_CHROMIUM_PATH,
+    env.BIDMASTER_CHROMIUM_PATH,
     env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
@@ -39,7 +39,7 @@ function resolveChromiumExecutable(env = process.env) {
       // ignore
     }
   }
-  throw createRenderError('未找到可用的 Chromium，可通过 YIBIAO_CHROMIUM_PATH 指定', 'CHROMIUM_NOT_FOUND');
+  throw createRenderError('未找到可用的 Chromium，可通过 BIDMASTER_CHROMIUM_PATH 指定', 'CHROMIUM_NOT_FOUND');
 }
 
 function resolveMermaidBrowserScript() {

@@ -91,24 +91,24 @@ async function createSessionCookie(port) {
   const loginCookies = Array.isArray(login.headers['set-cookie'])
     ? login.headers['set-cookie']
     : [login.headers['set-cookie']];
-  const stateCookie = loginCookies.find((item) => item?.startsWith('yibiao_oauth_state='));
-  const stateCookieValue = stateCookie?.match(/yibiao_oauth_state=([^;]+)/)?.[1] || '';
+  const stateCookie = loginCookies.find((item) => item?.startsWith('bidmaster_oauth_state='));
+  const stateCookieValue = stateCookie?.match(/bidmaster_oauth_state=([^;]+)/)?.[1] || '';
   const state = login.headers.location?.match(/state=([^&]+)/)?.[1] || '';
   const callback = await requestJson(port, {
     method: 'POST',
     url: '/api/auth/mock-callback',
     headers: {
       'content-type': 'application/x-www-form-urlencoded',
-      cookie: `yibiao_oauth_state=${stateCookieValue}`,
+      cookie: `bidmaster_oauth_state=${stateCookieValue}`,
     },
     payload: `email=worker%40test.com&name=WorkerTest&state=${state}`,
   });
   const callbackCookies = Array.isArray(callback.headers['set-cookie'])
     ? callback.headers['set-cookie']
     : [callback.headers['set-cookie']];
-  const sessionCookie = callbackCookies.find((item) => item?.startsWith('yibiao_session='));
-  const sessionValue = sessionCookie?.match(/yibiao_session=([^;]+)/)?.[1] || '';
-  return `yibiao_session=${sessionValue}`;
+  const sessionCookie = callbackCookies.find((item) => item?.startsWith('bidmaster_session='));
+  const sessionValue = sessionCookie?.match(/bidmaster_session=([^;]+)/)?.[1] || '';
+  return `bidmaster_session=${sessionValue}`;
 }
 
 function closeHttpServer(server) {
@@ -139,7 +139,7 @@ async function main() {
   });
 
   await run('Web Store 在 Worker 中顺序执行，大文件读取不阻塞主事件循环', async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-store-worker-'));
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bidmaster-store-worker-'));
     const workspaceId = 'store-worker-account';
     const workspaceRoot = path.join(tempDir, 'users', workspaceId, 'workspace');
     const userDir = path.dirname(workspaceRoot);
@@ -216,8 +216,8 @@ async function main() {
   });
 
   await run('真实 Bridge 读取大文件时 health 仍可先返回', async () => {
-    const tempDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-store-bridge-'));
-    process.env.YIBIAO_DATA_DIR = tempDataDir;
+    const tempDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bidmaster-store-bridge-'));
+    process.env.BIDMASTER_DATA_DIR = tempDataDir;
     process.env.OAUTH_MODE = 'mock';
     process.env.SESSION_SECRET = 'store-worker-session-secret';
 

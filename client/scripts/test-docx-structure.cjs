@@ -126,7 +126,7 @@ function createHighFidelityOutline(assetUrl) {
 
 async function main() {
   const env = createFixtureEnvironment();
-  const assetUrl = 'yibiao-asset://generated-images/technical-plan/illustrations/rev1/ai-1.png';
+  const assetUrl = 'bidmaster-asset://generated-images/technical-plan/illustrations/rev1/ai-1.png';
   const payload = {
     project_name: '高保真导出测试',
     outline: createHighFidelityOutline(assetUrl),

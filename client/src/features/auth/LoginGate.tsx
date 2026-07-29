@@ -82,7 +82,7 @@ function LoginGate({ children }: LoginGateProps) {
     return (
       <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ textAlign: 'center' }}>
-          <h2 style={{ marginBottom: '16px' }}>易标投标工具箱</h2>
+          <h2 style={{ marginBottom: '16px' }}>BidMaster 投标工具箱</h2>
           <p style={{ marginBottom: '24px', color: '#6b7280' }}>请先登录以使用 Web 端</p>
           <a href="/api/auth/login">
             <button type="button" style={{ padding: '10px 32px', fontSize: '15px', cursor: 'pointer' }}>

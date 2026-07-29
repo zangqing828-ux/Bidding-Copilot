@@ -75,7 +75,7 @@ function buildGitHubHeaders(env) {
   const token = String(env.GITHUB_API_TOKEN || env.GITHUB_TOKEN || '').trim();
   return {
     Accept: 'application/vnd.github+json',
-    'User-Agent': 'OpenBidKit-Yibiao-Plugin-Market',
+    'User-Agent': 'BidMaster-Plugin-Market',
     'X-GitHub-Api-Version': GITHUB_API_VERSION,
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };

@@ -11,8 +11,8 @@ function assert(condition, message) {
   if (condition) { passed.push(message); } else { failed.push(message); console.error(`  FAIL: ${message}`); }
 }
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-export-test-'));
-process.env.YIBIAO_DATA_DIR = tmpDir;
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bidmaster-export-test-'));
+process.env.BIDMASTER_DATA_DIR = tmpDir;
 process.env.CONFIG_ENCRYPTION_KEY = 'test-key';
 process.env.OAUTH_MODE = 'mock';
 process.env.SESSION_SECRET = 'dev-secret';
@@ -47,17 +47,17 @@ async function runTests() {
   }
   const setCookies = loginRes.headers['set-cookie'];
   const loginCookies = Array.isArray(setCookies) ? setCookies : (setCookies ? [setCookies] : []);
-  const stateCookie = loginCookies.find((c) => c.startsWith('yibiao_oauth_state='));
+  const stateCookie = loginCookies.find((c) => c.startsWith('bidmaster_oauth_state='));
   const stateValue = new URL(loginRes.headers.location, 'http://localhost').searchParams.get('state');
-  const stateCookieValue = stateCookie?.match(/yibiao_oauth_state=([^;]+)/)?.[1];
+  const stateCookieValue = stateCookie?.match(/bidmaster_oauth_state=([^;]+)/)?.[1];
   const mockRes = await httpRequest('POST', '/api/auth/mock-callback', {
-    'content-type': 'application/x-www-form-urlencoded', cookie: `yibiao_oauth_state=${stateCookieValue}`,
+    'content-type': 'application/x-www-form-urlencoded', cookie: `bidmaster_oauth_state=${stateCookieValue}`,
   }, `email=export@test.com&name=E&state=${stateValue}`);
   const setCookies2 = mockRes.headers['set-cookie'];
   const cookies = Array.isArray(setCookies2) ? setCookies2 : (setCookies2 ? [setCookies2] : []);
-  const sessionMatch = cookies.find((c) => c.startsWith('yibiao_session='));
-  const sessionCookie = sessionMatch?.match(/yibiao_session=([^;]+)/)?.[1];
-  const cookieStr = `yibiao_session=${sessionCookie}`;
+  const sessionMatch = cookies.find((c) => c.startsWith('bidmaster_session='));
+  const sessionCookie = sessionMatch?.match(/bidmaster_session=([^;]+)/)?.[1];
+  const cookieStr = `bidmaster_session=${sessionCookie}`;
 
   // 1. export.exportWord → 200，返回受当前账号约束的一次性下载令牌。
   {

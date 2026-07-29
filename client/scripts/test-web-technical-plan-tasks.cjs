@@ -40,7 +40,7 @@ async function waitFor(predicate, message, timeoutMs = 5000) {
 }
 
 function createHarness({ aiService, taskRunners } = {}) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yibiao-wr03-'));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bidmaster-wr03-'));
   const databasePath = path.join(tmpDir, 'yibiao.sqlite');
   const sqliteDatabase = createSqliteDatabase({ databasePath });
   const technicalPlanStore = createTechnicalPlanStore({ db: sqliteDatabase.db, workspaceRoot: tmpDir });

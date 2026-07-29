@@ -11,7 +11,7 @@ function normalizeTokenNumber(value) {
 function createAiAnalyticsTracker(options = {}) {
   const fetchImpl = options.fetch || globalThis.fetch;
   const endpoint = String(
-    options.endpoint || process.env.YIBIAO_ANALYTICS_ENDPOINT || DEFAULT_ANALYTICS_ENDPOINT,
+    options.endpoint || process.env.BIDMASTER_ANALYTICS_ENDPOINT || DEFAULT_ANALYTICS_ENDPOINT,
   ).trim();
   const version = String(options.version || pkg.version || '').trim();
   const platform = String(options.platform || process.platform).trim();

@@ -1,5 +1,5 @@
 // 资产路由：GET /api/assets/generated-images/*
-// 将 yibiao-asset://generated-images/<rel> 映射到当前账号 workspace 的 generated-images 目录，
+// 将 bidmaster-asset://generated-images/<rel> 映射到当前账号 workspace 的 generated-images 目录，
 // 只服务当前登录账号自己的资产，做严格路径边界校验。
 const express = require('express');
 const path = require('node:path');

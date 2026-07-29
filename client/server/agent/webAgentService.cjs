@@ -27,11 +27,11 @@ function createProcessError(message, code) {
 }
 
 function getRuntimeBinary(env) {
-  return String(env.YIBIAO_WEB_OPENCODE_BIN || path.join(__dirname, '..', '..', 'vendor', 'opencode', `linux-${process.arch}`, 'opencode')).trim();
+  return String(env.BIDMASTER_WEB_OPENCODE_BIN || path.join(__dirname, '..', '..', 'vendor', 'opencode', `linux-${process.arch}`, 'opencode')).trim();
 }
 
 function getRuntimeTools(env) {
-  const raw = String(env.YIBIAO_WEB_AGENT_TOOLS || TOOL_NAMES.join(',')).trim();
+  const raw = String(env.BIDMASTER_WEB_AGENT_TOOLS || TOOL_NAMES.join(',')).trim();
   return raw.split(',').map((item) => item.trim()).filter(Boolean);
 }
 
@@ -68,11 +68,11 @@ function buildOpenCodeConfig(proxyBaseUrl) {
         name: 'BidMaster AI Proxy',
         options: {
           baseURL: `${proxyBaseUrl}/v1`,
-          apiKey: '{env:YIBIAO_WEB_AGENT_PROXY_TOKEN}',
+          apiKey: '{env:BIDMASTER_WEB_AGENT_PROXY_TOKEN}',
         },
         models: {
           'bidmaster-proxy': {
-            name: 'Yibiao Current Text Model',
+            name: 'BidMaster Current Text Model',
             // 自定义 Provider 没有 Models.dev 目录项，明确限额以避免 OpenCode 在启动期额外探测模型元数据。
             limit: { context: 128_000, output: 8_192 },
           },
@@ -159,7 +159,7 @@ function createWebAgentService({
     if (closing) throw createProcessError('Agent 服务正在关闭', 'AGENT_CLOSING');
     if (activeTask) throw createProcessError('Agent 当前有任务正在运行，请稍后重试', 'AGENT_BUSY');
     const taskId = safeTaskSegment(payload.task_id);
-    const title = String(payload.title || '易标智能体任务').slice(0, 160);
+    const title = String(payload.title || 'BidMaster 智能体任务').slice(0, 160);
     const task = String(payload.task || payload.prompt || '').trim();
     if (!task) throw createProcessError('Agent 任务内容不能为空', 'INVALID_BRIDGE_ARGUMENTS');
     if (task.length > MAX_PROMPT_CHARS) throw createProcessError('Agent 任务内容过长', 'INVALID_BRIDGE_ARGUMENTS');

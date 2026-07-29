@@ -254,7 +254,7 @@ function createDefaultTemplateName(date = new Date()): string {
   const minute = String(date.getMinutes()).padStart(2, '0');
   const second = String(date.getSeconds()).padStart(2, '0');
 
-  return `yibiao-${year}-${month}-${day}-${hour}${minute}${second}`;
+  return `bidmaster-${year}-${month}-${day}-${hour}${minute}${second}`;
 }
 
 function createDefaultExportFormat(): ExportFormatConfig {
@@ -737,7 +737,7 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
           >
             <div className="settings-row-copy">
               <strong>设置模板名称</strong>
-              <span>默认按 yibiao-YYYY-MM-DD-HHmmss 格式生成，保存后显示在“我的模板”中。</span>
+              <span>默认按 bidmaster-YYYY-MM-DD-HHmmss 格式生成，保存后显示在“我的模板”中。</span>
             </div>
             <div className="input-with-action export-template-name-control">
               <input

@@ -436,7 +436,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     writeIllustrationFile(filePath, buffer);
     return {
       filePath,
-      assetUrl: `yibiao-asset://generated-images/technical-plan/illustrations/${encodeURIComponent(safeRevision)}/${encodeURIComponent(`${safeItemId}.png`)}`,
+      assetUrl: `bidmaster-asset://generated-images/technical-plan/illustrations/${encodeURIComponent(safeRevision)}/${encodeURIComponent(`${safeItemId}.png`)}`,
     };
   }
 

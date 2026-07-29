@@ -23,7 +23,7 @@ function runCachedCheck(name, probe) {
 
 function checkChromium() {
   const candidates = [
-    process.env.YIBIAO_CHROMIUM_PATH,
+    process.env.BIDMASTER_CHROMIUM_PATH,
     process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
@@ -31,7 +31,7 @@ function checkChromium() {
   if (candidates.some((candidate) => fs.existsSync(candidate))) {
     return { name: 'chromium', status: 'ok' };
   }
-  return failOrWarn('chromium', '未找到 Chromium，可通过 YIBIAO_CHROMIUM_PATH 指定');
+  return failOrWarn('chromium', '未找到 Chromium，可通过 BIDMASTER_CHROMIUM_PATH 指定');
 }
 
 function checkCjkFonts() {

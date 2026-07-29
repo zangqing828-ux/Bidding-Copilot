@@ -6,7 +6,7 @@ const Database = require('better-sqlite3');
 let dbInstance = null;
 
 function resolveDbPath() {
-  const dataDir = process.env.YIBIAO_DATA_DIR || path.resolve(__dirname, '..', '..', 'data');
+  const dataDir = process.env.BIDMASTER_DATA_DIR || path.resolve(__dirname, '..', '..', 'data');
   fs.mkdirSync(dataDir, { recursive: true });
   return path.join(dataDir, 'auth.sqlite');
 }

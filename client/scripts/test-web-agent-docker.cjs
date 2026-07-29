@@ -60,9 +60,9 @@ async function main() {
     aiService,
     env: {
       ...process.env,
-      YIBIAO_WEB_OPENCODE_BIN: process.env.YIBIAO_WEB_OPENCODE_BIN,
-      YIBIAO_WEB_PRLIMIT_BIN: '/usr/bin/prlimit',
-      YIBIAO_WEB_AGENT_TOOLS: '',
+      BIDMASTER_WEB_OPENCODE_BIN: process.env.BIDMASTER_WEB_OPENCODE_BIN,
+      BIDMASTER_WEB_PRLIMIT_BIN: '/usr/bin/prlimit',
+      BIDMASTER_WEB_AGENT_TOOLS: '',
     },
   });
   try {

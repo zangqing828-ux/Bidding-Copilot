@@ -84,6 +84,9 @@ jobs:
       - name: Check CommonJS syntax
         run: find scripts server core shared -name '*.cjs' -print0 | xargs -0 -n1 node --check
 
+      - name: Check brand allowlist
+        run: npm run check:brand-allowlist
+
       - name: Build renderer
         run: npm run build
 
@@ -95,7 +98,7 @@ jobs:
             CHROMIUM_BIN="$(find "${HOME}/.cache/ms-playwright" -type f -name chrome -path '*chrome-linux*' 2>/dev/null | head -1 || true)"
           fi
           if [ -n "$CHROMIUM_BIN" ] && [ -f "$CHROMIUM_BIN" ]; then
-            echo "YIBIAO_CHROMIUM_PATH=$CHROMIUM_BIN" >> "$GITHUB_ENV"
+            echo "BIDMASTER_CHROMIUM_PATH=$CHROMIUM_BIN" >> "$GITHUB_ENV"
             echo "Resolved Chromium: $CHROMIUM_BIN"
           else
             echo "未定位到 Playwright Chromium 可执行文件" >&2
@@ -121,12 +124,12 @@ jobs:
           docker build \
             --build-arg OPENCODE_ASSET_SHA256=0000000000000000000000000000000000000000000000000000000000000000 \
             -t bidding-copilot-web:invalid-checksum . \
-            > /tmp/yibiao-invalid-checksum-build.log 2>&1
+            > /tmp/bidmaster-invalid-checksum-build.log 2>&1
           build_status="$?"
           set -e
-          cat /tmp/yibiao-invalid-checksum-build.log
+          cat /tmp/bidmaster-invalid-checksum-build.log
           test "$build_status" -ne 0
-          grep -q 'checksum 校验失败' /tmp/yibiao-invalid-checksum-build.log
+          grep -q 'checksum 校验失败' /tmp/bidmaster-invalid-checksum-build.log
 
       - name: Docker Web business smoke
         working-directory: .
@@ -137,7 +140,7 @@ jobs:
             -e WEB_BID_ANALYSIS_TEST_MODE=1 \
             -e SESSION_SECRET=ci-test-secret \
             -e CONFIG_ENCRYPTION_KEY=ci-test-key \
-            -e YIBIAO_DATA_DIR=/data \
+            -e BIDMASTER_DATA_DIR=/data \
             bidding-copilot-web:ci
           # 等待服务启动，最多 30 秒
           for i in $(seq 1 30); do
@@ -156,49 +159,49 @@ jobs:
           done
           curl -fsS http://127.0.0.1:3000/api/health
           curl -fsS http://127.0.0.1:3000/api/readiness
-          curl -sS -D /tmp/yibiao-mock-login-headers -c /tmp/yibiao-mock-cookies \
+          curl -sS -D /tmp/bidmaster-mock-login-headers -c /tmp/bidmaster-mock-cookies \
             -o /dev/null http://127.0.0.1:3000/api/auth/login
-          oauth_state="$(grep -i '^location:' /tmp/yibiao-mock-login-headers \
+          oauth_state="$(grep -i '^location:' /tmp/bidmaster-mock-login-headers \
             | sed -E 's#.*[?&]state=([^&[:space:]]+).*#\1#' \
             | tr -d '\r')"
           test -n "$oauth_state"
-          curl -sS -b /tmp/yibiao-mock-cookies -c /tmp/yibiao-mock-cookies \
+          curl -sS -b /tmp/bidmaster-mock-cookies -c /tmp/bidmaster-mock-cookies \
             -o /dev/null -X POST \
             -H 'content-type: application/x-www-form-urlencoded' \
             --data-urlencode 'email=ci-worker@example.test' \
             --data-urlencode 'name=CI Worker' \
             --data-urlencode "state=$oauth_state" \
             http://127.0.0.1:3000/api/auth/mock-callback
-          curl -fsS -b /tmp/yibiao-mock-cookies \
+          curl -fsS -b /tmp/bidmaster-mock-cookies \
             -H 'content-type: application/json' \
             -d '{"namespace":"technicalPlan","method":"loadState","args":[]}' \
             http://127.0.0.1:3000/api/bridge | grep -q '"code":"OK"'
-          printf '%s\n' 'CI 招标文件：项目概况、技术要求、交付服务要求。' > /tmp/yibiao-bid-analysis.txt
-          upload_response="$(curl -fsS -b /tmp/yibiao-mock-cookies \
-            -F 'file=@/tmp/yibiao-bid-analysis.txt;type=text/plain' \
+          printf '%s\n' 'CI 招标文件：项目概况、技术要求、交付服务要求。' > /tmp/bidmaster-bid-analysis.txt
+          upload_response="$(curl -fsS -b /tmp/bidmaster-mock-cookies \
+            -F 'file=@/tmp/bidmaster-bid-analysis.txt;type=text/plain' \
             http://127.0.0.1:3000/api/uploads)"
           file_id="$(node -e "const result = JSON.parse(process.argv[1]); if (!/^[0-9a-f-]{36}$/i.test(result.fileId || '')) process.exit(1); process.stdout.write(result.fileId);" "$upload_response")"
-          curl -fsS -b /tmp/yibiao-mock-cookies \
+          curl -fsS -b /tmp/bidmaster-mock-cookies \
             -H 'content-type: application/json' \
             -d "{\"namespace\":\"technicalPlan\",\"method\":\"importTenderDocument\",\"args\":[[\"${file_id}\"]]}" \
             http://127.0.0.1:3000/api/bridge | grep -q '"code":"OK"'
-          curl -fsS -b /tmp/yibiao-mock-cookies \
+          curl -fsS -b /tmp/bidmaster-mock-cookies \
             -H 'content-type: application/json' \
             -d '{"namespace":"tasks","method":"startBidAnalysis","args":[{"mode":"key","selected_task_ids":["projectOverview","techRequirements","projectInfo","partAInfo","deliveryAndServiceRequirements"],"force_rerun":true}]}' \
             http://127.0.0.1:3000/api/bridge | grep -q '"code":"OK"'
           for i in $(seq 1 30); do
-            curl -fsS -b /tmp/yibiao-mock-cookies \
+            curl -fsS -b /tmp/bidmaster-mock-cookies \
               -H 'content-type: application/json' \
               -d '{"namespace":"technicalPlan","method":"loadState","args":[]}' \
-              -o /tmp/yibiao-bid-analysis-state.json \
+              -o /tmp/bidmaster-bid-analysis-state.json \
               http://127.0.0.1:3000/api/bridge
-            if node -e "const fs = require('node:fs'); const result = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); const state = result.data || {}; process.exit(result.code === 'OK' && state.bidAnalysisTask?.status === 'success' && state.bidAnalysisTasks?.projectOverview?.status === 'success' ? 0 : 1);" /tmp/yibiao-bid-analysis-state.json; then
+            if node -e "const fs = require('node:fs'); const result = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); const state = result.data || {}; process.exit(result.code === 'OK' && state.bidAnalysisTask?.status === 'success' && state.bidAnalysisTasks?.projectOverview?.status === 'success' ? 0 : 1);" /tmp/bidmaster-bid-analysis-state.json; then
               echo "Bid analysis business smoke passed after ${i}s"
               break
             fi
             if [ $i -eq 30 ]; then
               echo 'Bid analysis business smoke failed'
-              cat /tmp/yibiao-bid-analysis-state.json
+              cat /tmp/bidmaster-bid-analysis-state.json
               docker logs web-test
               docker stop web-test || true
               docker rm web-test || true
@@ -206,17 +209,17 @@ jobs:
             fi
             sleep 1
           done
-          curl -fsS -b /tmp/yibiao-mock-cookies \
+          curl -fsS -b /tmp/bidmaster-mock-cookies \
             -H 'content-type: application/json' \
             -d '{"namespace":"export","method":"exportWord","args":[{"project_name":"CI 投标技术文件","outline":[{"id":"ci-outline-1","title":"第一章","content":"容器端到端导出验证内容","children":[]}]}]}' \
-            -o /tmp/yibiao-export.json \
+            -o /tmp/bidmaster-export.json \
             http://127.0.0.1:3000/api/bridge
-          download_url="$(node -e "const fs = require('node:fs'); const result = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); const url = result.code === 'OK' && result.data?.success === true ? result.data.downloadUrl : ''; if (!/^\\/api\\/downloads\\/[0-9a-f-]+$/i.test(url)) process.exit(1); process.stdout.write(url);" /tmp/yibiao-export.json)"
-          curl -fsS -b /tmp/yibiao-mock-cookies \
-            -o /tmp/yibiao-export.docx \
+          download_url="$(node -e "const fs = require('node:fs'); const result = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); const url = result.code === 'OK' && result.data?.success === true ? result.data.downloadUrl : ''; if (!/^\\/api\\/downloads\\/[0-9a-f-]+$/i.test(url)) process.exit(1); process.stdout.write(url);" /tmp/bidmaster-export.json)"
+          curl -fsS -b /tmp/bidmaster-mock-cookies \
+            -o /tmp/bidmaster-export.docx \
             "http://127.0.0.1:3000${download_url}"
-          node -e "const fs = require('node:fs'); const file = fs.readFileSync(process.argv[1]); if (file.length < 4 || file[0] !== 0x50 || file[1] !== 0x4b) process.exit(1);" /tmp/yibiao-export.docx
-          download_status="$(curl -sS -b /tmp/yibiao-mock-cookies -o /dev/null -w '%{http_code}' "http://127.0.0.1:3000${download_url}")"
+          node -e "const fs = require('node:fs'); const file = fs.readFileSync(process.argv[1]); if (file.length < 4 || file[0] !== 0x50 || file[1] !== 0x4b) process.exit(1);" /tmp/bidmaster-export.docx
+          download_status="$(curl -sS -b /tmp/bidmaster-mock-cookies -o /dev/null -w '%{http_code}' "http://127.0.0.1:3000${download_url}")"
           test "$download_status" = "404"
           docker stop web-test
           docker rm web-test
@@ -234,7 +237,7 @@ jobs:
             -e PUBLIC_BASE_URL=https://web.example.test \
             -e SESSION_SECRET=ci-production-session-secret \
             -e CONFIG_ENCRYPTION_KEY=ci-production-encryption-key \
-            -e YIBIAO_DATA_DIR=/data \
+            -e BIDMASTER_DATA_DIR=/data \
             bidding-copilot-web:ci
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:3001/api/readiness >/dev/null 2>&1; then
@@ -252,9 +255,9 @@ jobs:
           done
           curl -fsS http://127.0.0.1:3001/api/health
           curl -fsS http://127.0.0.1:3001/api/readiness
-          curl -sS -D /tmp/yibiao-oauth-headers -o /dev/null http://127.0.0.1:3001/api/auth/login
-          grep -Eiq '^location: https://auth\.example\.test/oauth/authorize\\?' /tmp/yibiao-oauth-headers
-          grep -Eiq '^set-cookie: yibiao_oauth_state=.*; Secure;' /tmp/yibiao-oauth-headers
+          curl -sS -D /tmp/bidmaster-oauth-headers -o /dev/null http://127.0.0.1:3001/api/auth/login
+          grep -Eiq '^location: https://auth\.example\.test/oauth/authorize\\?' /tmp/bidmaster-oauth-headers
+          grep -Eiq '^set-cookie: bidmaster_oauth_state=.*; Secure;' /tmp/bidmaster-oauth-headers
           docker stop web-prod-test
           docker rm web-prod-test
 
@@ -316,7 +319,7 @@ jobs:
         run: |
           docker build --target agent-e2e -t bidding-copilot-agent:e2e .
           docker run --rm \
-            -e YIBIAO_WEB_OPENCODE_BIN=/app/client/vendor/opencode/linux-x64/opencode \
+            -e BIDMASTER_WEB_OPENCODE_BIN=/app/client/vendor/opencode/linux-x64/opencode \
             bidding-copilot-agent:e2e
           docker build --target runtime -t bidding-copilot-agent:runtime .
           test "$(docker run --rm --entrypoint /bin/sh bidding-copilot-agent:runtime -lc 'test ! -e scripts/test-web-agent-docker.cjs && echo clean')" = clean
