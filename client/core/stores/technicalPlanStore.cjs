@@ -1709,6 +1709,12 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     return loadTechnicalPlan();
   }
 
+  // 目录生成收尾：把目录结果 patch 与任务状态 patch 单次原子写入，
+  // 供任务编排的 guarded store 以 revision 守卫调用（见 technicalPlanTaskService）。
+  function commitOutlineGenerationResult(planPatch, taskPatch) {
+    return updateTechnicalPlan({ ...(planPatch || {}), outlineGenerationTask: taskPatch });
+  }
+
   function updateStep(step) {
     return updateTechnicalPlan({ step });
   }
@@ -2148,6 +2154,7 @@ function createTechnicalPlanStore({ db, fileService, workspaceRoot }) {
     updateTechnicalPlan,
     updateTechnicalPlanWithoutReload,
     updateTechnicalPlanForInputRevision,
+    commitOutlineGenerationResult,
     getBidAnalysisInputVersion,
     recoverInterruptedTasks,
     saveContentGenerationItem,
