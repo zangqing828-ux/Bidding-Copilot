@@ -5,6 +5,7 @@ const { createAiFairCoordinator } = require('../core/aiFairCoordinator.cjs');
 const { createAiRuntime } = require('../core/aiRuntime.cjs');
 const {
   createWebEndpointPolicy,
+  createConnectLookup,
   isBlockedAddress,
 } = require('../server/ai/webEndpointPolicy.cjs');
 
@@ -289,6 +290,52 @@ async function main() {
     await retry;
     assert.equal(closeCalls, 2);
     assert.equal(policy.close(), retry, '成功后重复 close 应永久复用已完成 Promise');
+  });
+
+  await run('connect lookup 对 undici 的 { all: true } 回调返回地址数组而非单值', async () => {
+    // 回归：undici 连接器以 { all: true } 调用 lookup 并期望 [{ address, family }]；
+    // 若按单值 (address, family) 回调，undici 会把 address 当数组解构得到 undefined，连接报 ERR_INVALID_IP_ADDRESS。
+    const connectLookup = createConnectLookup((hostname, options, callback) => {
+      callback(null, [
+        { address: '93.184.216.34', family: 4 },
+        { address: '93.184.216.35', family: 4 },
+      ]);
+    });
+
+    const allResult = await new Promise((resolve, reject) => {
+      connectLookup('example.com', { all: true, hints: 32 }, (error, addresses) => {
+        if (error) return reject(error);
+        resolve(addresses);
+      });
+    });
+    assert.ok(Array.isArray(allResult), 'all:true 回调应返回数组');
+    assert.equal(allResult.length, 2);
+    assert.equal(allResult[0].address, '93.184.216.34');
+    assert.equal(allResult[0].family, 4);
+
+    const single = await new Promise((resolve, reject) => {
+      connectLookup('example.com', {}, (error, address, family) => {
+        if (error) return reject(error);
+        resolve({ address, family });
+      });
+    });
+    assert.equal(single.address, '93.184.216.34', '非 all 回调应返回单值地址');
+    assert.equal(single.family, 4);
+  });
+
+  await run('connect lookup 解析到私网地址时拒绝连接', async () => {
+    const connectLookup = createConnectLookup((hostname, options, callback) => {
+      callback(null, [{ address: '10.0.0.9', family: 4 }]);
+    });
+    await assert.rejects(
+      new Promise((resolve, reject) => {
+        connectLookup('internal.example.com', { all: true }, (error, addresses) => {
+          if (error) return reject(error);
+          resolve(addresses);
+        });
+      }),
+      (error) => error.code === 'AI_ENDPOINT_NOT_ALLOWED',
+    );
   });
 
   if (failed.length) {

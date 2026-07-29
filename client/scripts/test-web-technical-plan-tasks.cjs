@@ -10,6 +10,7 @@ const { createSqliteDatabase } = require('../core/sqliteDatabase.cjs');
 const { createTechnicalPlanStore } = require('../core/stores/technicalPlanStore.cjs');
 const { createWorkspaceMutationExecutor } = require('../server/workspace/workspaceMutationExecutor.cjs');
 const { createTechnicalPlanTaskService } = require('../server/workspace/technicalPlanTaskService.cjs');
+const { normalizeCanonicalOutlineInput } = require('../core/technical-plan/outline/outlineGenerationTask.cjs');
 
 const passed = [];
 const failed = [];
@@ -334,6 +335,52 @@ async function main() {
     } finally {
       await harness.close();
     }
+  });
+
+  await run('目录 runner 入参剥离编排 envelope 字段后通过严格校验', async () => {
+    // 回归：任务编排层向 runner payload 注入 input_revision / payload_signature，
+    // 真实目录 runner 的严格校验曾因此拒绝（startOutlineGeneration 不允许字段：input_revision）。
+    const business = {
+      reference_knowledge_document_ids: [],
+      outline_expansion_mode: 'ai-complement',
+      word_control_options: { enabled: false, minimumWords: 0, maximumWords: 0, sectionWords: 0, strictSectionWords: false },
+    };
+    const normalized = normalizeCanonicalOutlineInput({
+      ...business,
+      input_revision: 2,
+      payload_signature: JSON.stringify(business),
+    });
+    assert.equal(normalized.outline_expansion_mode, 'ai-complement');
+    assert.deepEqual(normalized.reference_knowledge_document_ids, []);
+    // 真正的未知业务字段仍应被拒绝，保持严格校验语义。
+    assert.throws(
+      () => normalizeCanonicalOutlineInput({ ...business, input_revision: 2, bogus_field: 1 }),
+      /不允许字段：bogus_field/,
+    );
+  });
+
+  await run('commitOutlineGenerationResult 保留 task_id/input_revision/started_at', async () => {
+    // 回归（Codex 评审）：saveTask 整行替换，收尾提交若只写 status/progress/logs/stats
+    // 会清空任务标识与修订号，破坏中断恢复与单次原子提交语义。
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wr07-commit-outline-'));
+    const sqliteDatabase = createSqliteDatabase({ databasePath: path.join(tmpDir, 'yibiao.sqlite') });
+    const db = sqliteDatabase.db;
+    const store = createTechnicalPlanStore({ db, workspaceRoot: tmpDir });
+    db.prepare(`INSERT INTO technical_plan_tasks (type, task_id, status, progress, logs_json, stats_json, error, error_code, retryable, input_revision, pause_requested, started_at, updated_at)
+      VALUES ('outline-generation', 'task-outline-1', 'running', 50, '[]', NULL, NULL, NULL, 0, 7, 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`).run();
+    const state = store.commitOutlineGenerationResult(
+      { outlineData: { outline: [{ id: 'n1', title: '第一章', children: [] }] } },
+      { status: 'success', progress: 100, logs: ['目录生成完成。'], stats: { outline: { phase: 'done' } } },
+    );
+    const task = state.outlineGenerationTask;
+    assert.equal(task.task_id, 'task-outline-1', 'task_id 应保留');
+    assert.equal(task.input_revision, 7, 'input_revision 应保留');
+    assert.equal(task.started_at, '2026-01-01T00:00:00.000Z', 'started_at 应保留');
+    assert.equal(task.status, 'success', 'status 应更新');
+    assert.equal(task.progress, 100, 'progress 应更新');
+    assert.equal(state.outlineData.outline.length, 1, '目录结果应写入');
+    db.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   console.log(`\nWeb 技术方案任务编排测试：${passed.length} 通过，${failed.length} 失败`);
