@@ -56,13 +56,13 @@
 
 **建议**：在 P1 项完成后，把占位测试改为真实业务测试，新增端到端验收脚本。
 
-## P2：Electron ABI 双向回归
+## P2：Electron ABI 双向回归（已退役）
 
 **来源**：外部审查指出 ABI 切换不可靠
 
-- CI 已在 Web 测试后执行 `smoke:electron-native`；本地 Web native 依赖验证后仍需恢复 Node ABI，再执行 Electron smoke。
+- WR-06A 已删除 Electron 桌面发行与 `smoke:electron-native`，Electron ABI 不再属于首发 Gate；CI 只验证 Linux Node ABI（`npm rebuild better-sqlite3 --runtime=node`）。
 
-**建议**：保持 CI 中的 `npm run smoke:electron-native` 步骤，新增 native 依赖时同步验证 Node/Electron ABI 切换。
+**建议**：仅维护 Web/Node native 依赖的 Linux ABI 验证；如未来重新引入桌面发行，再以新 Gate 方案评估 ABI 回归。
 
 ## P2：Docker 镜像运行时依赖
 

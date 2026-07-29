@@ -25,32 +25,6 @@ function createWebAiServiceStub() {
   };
 }
 
-function createWebKnowledgeBaseService({ knowledgeBaseStore, fileService }) {
-  return {
-    store: knowledgeBaseStore,
-    list() {
-      return knowledgeBaseStore.list();
-    },
-    createFolder(name) {
-      return knowledgeBaseStore.createFolder(name);
-    },
-    uploadDocuments(folderId, fileIds, options = {}) {
-      return fileService.uploadKnowledgeBaseDocuments({ folderId, fileIds, knowledgeBaseStore, signal: options.signal });
-    },
-  };
-}
-
-function createWebDuplicateCheckServiceStub({ duplicateCheckStore }) {
-  return {
-    store: duplicateCheckStore,
-    runAnalysisTask: async () => {
-      throw new Error('Web 端查重分析任务尚未实现');
-    },
-  };
-}
-
 module.exports = {
   createWebAiServiceStub,
-  createWebKnowledgeBaseService,
-  createWebDuplicateCheckServiceStub,
 };

@@ -5,7 +5,7 @@
 - 单元测试验证 pure function、校验器、状态转换和格式 builder。
 - integration test 验证 Bridge -> TenantContext -> task -> Store -> SSE。
 - Browser E2E 验证真实用户路径和错误体验。
-- Docker smoke 验证 Linux 依赖、Node ABI、Chromium、字体和持久卷。
+- Docker smoke 验证 Linux 依赖、Node ABI、Chromium、字体、OpenCode Foundation 和持久卷。
 - 真实模型 E2E 只在本地 RC 和 ECS staging 运行，不在普通 PR CI 消耗外部额度。
 - Prompt、JSON contract、图片计划和输出质量需有固定 fixture/eval。
 - mock 只能验证控制流，不能替代真实模型 Gate。
@@ -181,7 +181,7 @@ PR 不得合入的情况：
 - 新增 high/critical 漏洞。
 - 单包净新增超过 1,000 行且无批准。
 - 测试只断言 500/501 或文件头。
-- core 导入 Electron/Express/Agent。
+- 技术方案 core 直接导入 Electron、Express 或 `server/agent`；OpenCode Foundation 只能通过服务端 Task Spec/port 接入。
 - 用户可见旧品牌或旧推广链接。
 
 ## 8. Local RC Gate
@@ -194,6 +194,7 @@ PR 不得合入的情况：
 - 真实文本模型。
 - 真实图片模型。
 - 真实 PDF/DOCX fixture。
+- 固定 checksum 的真实 OpenCode binary、`prlimit`、`rg`、`fd` 和 `jq`。
 
 ### 8.2 必跑场景
 
@@ -213,7 +214,11 @@ DOCX 招标文件 + DOCX 原方案 -> 目录 original-only/AI 补充的首发保
 
 正文运行中刷新页面；随后重启 container；确认已完成章节保留，中断任务可继续/重试。
 
-#### RC-05 边界
+#### RC-05 OpenCode Foundation
+
+构建 production 与 `agent-e2e` target；确认 readiness 通过，真实 OpenCode 完成两轮 tool-call，安全读取唯一声明输出，成功/失败/取消后任务目录清理。确认 production image 不包含测试 harness，浏览器无法调用通用 Agent Bridge。
+
+#### RC-06 边界
 
 - 范围外上传
 - 错误文件签名
@@ -224,7 +229,7 @@ DOCX 招标文件 + DOCX 原方案 -> 目录 original-only/AI 补充的首发保
 - session 过期
 - download token 重放
 
-#### RC-06 备份恢复
+#### RC-07 备份恢复
 
 停止测试容器，备份 `/data`，在新目录恢复并启动同 digest；确认项目、图片、模板和 session/账号数据一致。
 
@@ -288,11 +293,11 @@ release-evidence/
 | Gate | 阻断条件 | Owner |
 |---|---|---|
 | G-A Scope | 可达退出能力或 pending | 代码集成 |
-| G-B Core | 重复实现、Electron/Agent import | 架构 |
+| G-B Core | 重复实现、技术方案 core 直接依赖 Electron/Express/server Agent | 架构 |
 | G-C Text | 真实模型两条文本链失败 | 产品/工程 |
 | G-D Images | 任一图片类型无法真实落盘 | 产品/工程 |
 | G-E DOCX | 模板/编号/表格/图片不完整 | 产品 |
-| G-F Security | high/critical 非零或越界测试失败 | 工程 |
+| G-F Security | high/critical 非零、OpenCode checksum/权限/输出边界或其他越界测试失败 | 工程 |
 | G-G Local RC | 完整本地闭环未通过 | 老板 |
 | G-H MainQuest | Product/redirect/三用户未验收 | 老板 + MQ owner |
 | G-I ECS | HTTPS/SSE/volume/backup/rollback 失败 | 老板 + 运维 |

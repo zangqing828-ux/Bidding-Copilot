@@ -80,7 +80,7 @@ export interface UploadResult {
   deduplicated?: boolean;
 }
 
-const DOCUMENT_ACCEPT = '.doc,.docx,.pdf,.txt,.md,.xlsx';
+const DOCUMENT_ACCEPT = '.pdf,.docx,.txt,.md';
 
 function chooseFiles({ multiple = false, accept = DOCUMENT_ACCEPT }: { multiple?: boolean; accept?: string } = {}): Promise<File[]> {
   return new Promise((resolve) => {

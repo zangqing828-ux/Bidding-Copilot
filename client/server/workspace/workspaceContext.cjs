@@ -254,7 +254,6 @@ function createWorkspaceContext({
     agentService: runtime.agentService || (runtime.ports && runtime.ports.agent),
     exportService: runtime.exportService || (runtime.ports && runtime.ports.exporter),
     stores: runtime.stores,
-    knowledgeBaseService: runtime.knowledgeBaseService,
     taskService: runtime.taskService,
     taskEvents: runtime.taskEvents,
     getActivitySnapshot() {

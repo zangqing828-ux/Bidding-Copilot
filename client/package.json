@@ -2,26 +2,13 @@
   "name": "yibiao-client",
   "version": "0.1.0",
   "private": true,
-  "description": "易标投标工具箱独立桌面客户端",
+  "description": "BidMaster Web 客户端与服务端",
   "author": "mark",
-  "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n vite,electron -c blue,magenta \"vite --host 127.0.0.1 --port 5173 --strictPort\" \"wait-on http://127.0.0.1:5173 && cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:5173 electron .\"",
     "build": "tsc --noEmit && vite build",
-    "dist": "npm run build && electron-builder",
-    "dist:win": "npm run build && electron-builder --win",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "postinstall": "electron-builder install-app-deps",
     "preview": "vite preview --host 127.0.0.1 --port 4173",
-    "generate-build-attestation": "node scripts/generate-build-attestation.cjs",
-    "prepare-opencode-tools": "node scripts/prepare-opencode-tools.cjs",
-    "verify-opencode-tools": "node scripts/verify-opencode-tools.cjs",
-    "audit:production": "npm audit --omit=dev --audit-level=critical || node scripts/audit-production-dependencies.cjs",
-    "smoke:electron-native": "electron --no-sandbox scripts/electron-native-smoke.cjs",
-    "presmoke:electron-native": "npm rebuild better-sqlite3 --runtime=electron --target=41.10.2",
-    "start": "electron .",
-    "prestart": "npm rebuild better-sqlite3 --runtime=electron --target=41.10.2",
+    "audit:production": "npm audit --omit=dev --audit-level=high",
     "dev:web": "concurrently -k -n web,api -c blue,magenta \"vite --host 127.0.0.1 --port 5173 --strictPort\" \"wait-on http://127.0.0.1:5173 && cross-env OAUTH_MODE=mock SESSION_SECRET=dev-secret node server/index.cjs\"",
     "predev:web": "npm rebuild better-sqlite3 --runtime=node",
     "build:web": "tsc --noEmit && vite build",
@@ -47,7 +34,6 @@
     "test:web-contract": "node scripts/test-web-contract.cjs",
     "test:web-contract:strict-guard": "node scripts/test-web-contract-strict-guard.cjs",
     "test:bid-analysis-contract": "node scripts/test-bid-analysis-contract.cjs",
-    "test:electron-task-characterization": "node scripts/test-electron-task-characterization.cjs",
     "test:task-orchestrator": "node scripts/test-task-orchestrator.cjs",
     "test:workspace-mutation-executor": "node scripts/test-workspace-mutation-executor.cjs",
     "test:bid-analysis-cas": "node scripts/test-bid-analysis-cas.cjs",
@@ -63,142 +49,22 @@
     "test:workspace-lifecycle": "node scripts/test-workspace-lifecycle.cjs",
     "test:web-workspace-registry": "node scripts/test-web-workspace-registry.cjs",
     "test:web-store-executor": "node scripts/test-web-store-executor.cjs",
-    "test:web": "npm run test:portable-core && npm run test:task-orchestrator && npm run test:electron-task-characterization && npm run test:workspace-mutation-executor && npm run test:bid-analysis-contract && npm run test:bid-analysis-cas && npm run test:ai-scheduler && npm run test:web-endpoint-policy && npm run test:web-ai-runtime && npm run test:web-image-renderer && npm run test:web-illustrations && npm run test:web-analytics-identity && npm run test:web-analytics-identity-retirement && npm run test:web-store-executor && npm run test:workspace-lifecycle && npm run test:web-workspace-registry && npm run test:web-graceful-shutdown && npm run test:web-auth && npm run test:web-single-tenant && npm run test:web-workspace && npm run test:web-contract && npm run test:web-contract:strict-guard && npm run test:web-tasks && npm run test:web-technical-plan-tasks && npm run test:web-bid-analysis && npm run test:web-files && npm run test:web-export && npm run test:docx-structure && npm run test:web-agent-protocol && npm run test:web-agent-runtime && npm run test:web-agent-coordinator && npm run test:web-agent-executor && npm run test:opencode-checksum && npm run test:document-parser-limits"
-  },
-  "build": {
-    "appId": "com.yibiao.openbidkit",
-    "productName": "易标投标工具箱",
-    "copyright": "Copyright © 2026 mark",
-    "asar": true,
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**/*",
-      "electron/**/*",
-      "core/**/*",
-      "shared/**/*",
-      "assets/**/*",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "vendor/opencode",
-        "to": "opencode",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "vendor/opencode-tools",
-        "to": "opencode-tools",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "FB208",
-        "repo": "OpenBidKit_Yibiao",
-        "releaseType": "release"
-      }
-    ],
-    "win": {
-      "icon": "assets/icon.ico",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "perMachine": false
-    },
-    "msi": {
-      "oneClick": false,
-      "perMachine": false,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
-    },
-    "mac": {
-      "icon": "assets/icon.icns",
-      "identity": null,
-      "category": "public.app-category.business",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ]
-    },
-    "dmg": {
-      "background": "assets/macos-dmg/background.png",
-      "iconSize": 88,
-      "iconTextSize": 12,
-      "contents": [
-        {
-          "x": 170,
-          "y": 360,
-          "type": "file"
-        },
-        {
-          "x": 520,
-          "y": 360,
-          "type": "link",
-          "path": "/Applications"
-        },
-        {
-          "x": 112,
-          "y": 318,
-          "type": "file",
-          "path": "assets/macos-dmg/macOS使用说明.txt",
-          "name": "macOS使用说明.txt"
-        }
-      ]
-    },
-    "artifactName": "Yibiao-${version}-${os}-${arch}.${ext}"
+    "test:web": "npm run test:portable-core && npm run test:task-orchestrator && npm run test:workspace-mutation-executor && npm run test:bid-analysis-contract && npm run test:bid-analysis-cas && npm run test:ai-scheduler && npm run test:web-endpoint-policy && npm run test:web-ai-runtime && npm run test:web-image-renderer && npm run test:web-illustrations && npm run test:web-analytics-identity && npm run test:web-analytics-identity-retirement && npm run test:web-store-executor && npm run test:workspace-lifecycle && npm run test:web-workspace-registry && npm run test:web-graceful-shutdown && npm run test:web-auth && npm run test:web-single-tenant && npm run test:web-workspace && npm run test:web-contract && npm run test:web-contract:strict-guard && npm run test:web-tasks && npm run test:web-technical-plan-tasks && npm run test:web-bid-analysis && npm run test:web-files && npm run test:web-export && npm run test:docx-structure && npm run test:web-agent-protocol && npm run test:web-agent-runtime && npm run test:web-agent-coordinator && npm run test:web-agent-executor && npm run test:opencode-checksum && npm run test:document-parser-limits"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.80.10",
-    "@earendil-works/pi-coding-agent": "0.80.10",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-popover": "^1.1.15",
     "@radix-ui/react-separator": "^1.1.7",
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-toast": "^1.2.15",
     "@radix-ui/react-tooltip": "^1.2.8",
-    "adm-zip": "^0.5.17",
+    "adm-zip": "^0.6.0",
     "better-sqlite3": "^12.10.0",
-    "cfb": "^1.2.2",
     "chardet": "^2.1.1",
     "cheerio": "^1.2.0",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "docx": "^9.6.1",
-    "electron-updater": "^6.8.3",
     "express": "^5.2.1",
     "iconv-lite": "^0.7.2",
     "image-size": "^2.0.2",
@@ -206,7 +72,7 @@
     "markdown-it": "^14.2.0",
     "markdown-it-cjk-friendly": "^2.0.2",
     "markdown-it-task-lists": "^2.1.1",
-    "mermaid": "^11.14.0",
+    "mermaid": "^11.16.0",
     "mime-types": "^3.0.2",
     "multer": "^2.2.0",
     "pdf-parse": "^2.4.5",
@@ -216,22 +82,17 @@
     "react-dom": "^19.1.1",
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2",
-    "undici": "^7.25.0",
-    "xlsx": "^0.18.5"
+    "undici": "^7.28.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^24.10.0",
-    "@types/plist": "^3.0.5",
     "@types/react": "^19.1.11",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^5.0.0",
     "concurrently": "^9.2.1",
     "cross-env": "^10.0.0",
-    "electron": "^41.10.2",
-    "electron-builder": "^26.8.1",
-    "js-yaml": "^4.1.1",
     "typescript": "^5.9.2",
     "vite": "^7.1.7",
     "wait-on": "^8.0.4"

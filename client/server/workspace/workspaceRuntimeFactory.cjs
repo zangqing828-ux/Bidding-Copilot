@@ -1,9 +1,6 @@
 const { createTemplateStore } = require('../../core/templateStore.cjs');
 const { createEncryptedConfigStore } = require('../config/encryptedConfigStore.cjs');
 const { createTechnicalPlanStore } = require('../../core/stores/technicalPlanStore.cjs');
-const { createKnowledgeBaseStore } = require('../../core/stores/knowledgeBaseStore.cjs');
-const { createDuplicateCheckStore } = require('../../core/stores/duplicateCheckStore.cjs');
-const { createRejectionCheckStore } = require('../../core/stores/rejectionCheckStore.cjs');
 const { createTaskEventPort } = require('../../core/taskEventPort.cjs');
 const { assertPort } = require('../../core/ports.cjs');
 const { createAiRuntime } = require('../../core/aiRuntime.cjs');
@@ -184,10 +181,6 @@ function createWebWorkspaceRuntime({
 
   try {
     const { createSqliteDatabase } = require('../../core/sqliteDatabase.cjs');
-    const {
-      createWebKnowledgeBaseService,
-      createWebDuplicateCheckServiceStub,
-    } = require('./webServices.cjs');
     const { createTechnicalPlanTaskService } = require('./technicalPlanTaskService.cjs');
     const { createWebImageRenderer } = require('../render/webImageRenderer.cjs');
     const { createWebIllustrationPorts } = require('../render/webIllustrationPorts.cjs');
@@ -205,19 +198,6 @@ function createWebWorkspaceRuntime({
     const fileService = createWebFileService({ uploadRegistry, configStore });
     const technicalPlanStore = createTechnicalPlanStore({ db: sqliteDatabase.db, workspaceRoot, fileService });
     technicalPlanStore.recoverInterruptedTasks();
-    const knowledgeBaseStore = createKnowledgeBaseStore({ db: sqliteDatabase.db, workspaceRoot });
-    const duplicateCheckStore = createDuplicateCheckStore({ db: sqliteDatabase.db, workspaceRoot });
-    sqliteDatabase.db.prepare(`
-      UPDATE duplicate_check_files
-      SET file_path = 'upload:' || file_id
-      WHERE file_path NOT LIKE 'upload:%'
-    `).run();
-    sqliteDatabase.db.prepare(`
-      UPDATE duplicate_check_content_files
-      SET content_path = NULL
-      WHERE content_path IS NOT NULL
-    `).run();
-    const rejectionCheckStore = createRejectionCheckStore({ db: sqliteDatabase.db, workspaceRoot, technicalPlanStore, fileService });
     const templateStore = createTemplateStore({ db: sqliteDatabase.db });
     const storeExecutor = createWorkspaceStoreExecutor({
       workspaceId,
@@ -278,13 +258,10 @@ function createWebWorkspaceRuntime({
     const exportService = createWebExportService({ workspaceId, workspaceRoot, paths, technicalPlanStore, imageRenderer });
     pushCloseHandler(closeHandlers, createCloseHandler(exportService), 'exportService');
 
-    const knowledgeBaseService = createWebKnowledgeBaseService({ knowledgeBaseStore, fileService });
-    const duplicateCheckService = createWebDuplicateCheckServiceStub({ duplicateCheckStore });
     const illustrationPorts = createWebIllustrationPorts({ renderer: imageRenderer });
     const taskService = createTechnicalPlanTaskService({
       aiService,
       technicalPlanStore,
-      knowledgeBaseService,
       mutationExecutor,
       illustrationPorts,
     });
@@ -305,12 +282,8 @@ function createWebWorkspaceRuntime({
       exportService,
       taskService,
       taskEvents,
-      knowledgeBaseService,
       stores: {
         technicalPlanStore,
-        knowledgeBaseStore,
-        duplicateCheckStore,
-        rejectionCheckStore,
         templateStore,
       },
       ports: {

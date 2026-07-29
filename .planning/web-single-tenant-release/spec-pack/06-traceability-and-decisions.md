@@ -23,14 +23,14 @@
 |---|---:|---|
 | `events.database.onStatus` | 1 | 桌面数据库状态退出 |
 | `events.ai.onHttpError` | 1 | Web 使用请求级 Toast/错误；无全局桌面事件 |
-| `events.agent.onStatus` | 1 | Agent 退出 |
+| `events.agent.onStatus` | 1 | 浏览器通用 Agent 入口退出；服务端 OpenCode Foundation 保留 |
 | `events.developerTokenStats.onChanged` | 1 | developer 退出 |
 | `events.knowledgeBase.onEvent` | 1 | knowledge management 退出 |
 | `events.export.onWordExportProgress` | 1 | Web 首发采用调用级状态，不增加独立导出事件 |
 | `requiredOnlineServices.getStatus` | 1 | 桌面联网提示退出 |
 | `license.*` | 4 | MainQuest Product access 取代本地 license |
 | `ai.requestJson` | 1 | Renderer 目录旧实现删除；core 直接使用 server AI Runtime |
-| `agent.*` | 6 | Agent 退出 |
+| `agent.*` | 6 | 浏览器通用 Agent 入口退出；服务端只允许静态 Task Spec |
 | `developerTokenStats.*` | 2 | developer 退出 |
 | `developerExpansionReplaceTest.run` | 1 | developer 退出 |
 | `file.selectDuplicateCheckFiles` | 1 | duplicate check 退出 |
@@ -84,15 +84,15 @@ Runtime 装配与持久化入口。它们不计入上面的 41 个 pending：
 | DOCX | Electron exportService | `git mv`，注入 asset resolver |
 | 下载 | Web one-time token | 保留 |
 | Browser E2E | Playwright | 扩展完整业务链 |
-| Docker | Node multi-stage | 删除 Agent、加入 Chromium |
+| Docker | Node multi-stage | 保留 OpenCode Foundation 与 Chromium，删除 Electron/Pi；LibreOffice 仅用于 DOCX QA |
 
 ## 3. 拒绝迁入的历史候选
 
-以下归档内容不进入首发：
+以下归档内容不整体进入首发：
 
 - Agent Sidecar protocol/listener/coordinator/token
-- Agent Runner/OpenCode/Pi
-- Agent business task registry
+- 历史重复 Agent Runner、Pi 和桌面 Agent
+- 历史 Agent business task registry 与正式业务 Task Spec
 - run manifest 与跨进程 task DTO 套件
 - Agent quality report/eval
 - 多标段 portable task
@@ -103,6 +103,7 @@ Runtime 装配与持久化入口。它们不计入上面的 41 个 pending：
 
 - portable import 差异
 - 非 Agent characterization fixtures
+- 已合入并验证的 `client/server/agent/` OpenCode Foundation、真实 Docker E2E 和安全边界；禁止从归档再复制一套
 - pause/resume/restart 测试思路
 - Web full-flow Browser E2E 的用户步骤
 
@@ -114,7 +115,7 @@ Runtime 装配与持久化入口。它们不计入上面的 41 个 pending：
 | D-02 | ECS 单实例单租户 | LOCKED | 单租户 baseline |
 | D-03 | 所有授权用户共享业务空间 | LOCKED | 单租户 baseline |
 | D-04 | MainQuest 负责 Product access | LOCKED | MainQuest authorize 实现 |
-| D-05 | Agent 与 Electron 退出首发 | LOCKED | `project.md` |
+| D-05 | 浏览器通用 Agent 产品入口、Pi、Sidecar 与 Electron 退出；服务端 OpenCode Foundation 保留 | LOCKED 2026-07-29 | 老板最新决策 + 实际代码摸排 |
 | D-06 | 四个首发产品入口 | LOCKED | 单租户 baseline |
 | D-07 | 图片和高保真 DOCX 为硬 Gate | LOCKED | 单租户 baseline |
 | D-08 | 上传仅 PDF/DOCX/TXT/MD | LOCKED | 单租户 baseline |
@@ -199,7 +200,7 @@ active scan 必须排除本文件和品牌 Spec；任何未列入此表的旧 to
 - [ ] **T3 P0**：WR-03 接通四种技术方案任务和恢复语义。
 - [ ] **T4 P0**：WR-04 完成三类图片的 Linux 生成与安全边界。
 - [ ] **T5 P0**：WR-05 完成高保真 DOCX 和一次性下载。
-- [ ] **T6 P0**：WR-06A/06B 分两次提交删除 Electron/Agent/退出 runtime，清零 high 漏洞和 active 旧品牌。
+- [ ] **T6 P0**：WR-06A/06B 分两次提交删除 Electron/Pi/退出 runtime，保留并验证 OpenCode Foundation，清零 high 漏洞和 active 旧品牌。
 - [ ] **T7 P0**：WR-07 通过真实文件、真实模型的本地 RC。
 - [ ] **T8 P0**：WR-08 完成 MainQuest/ECS staging、备份和回滚。
 

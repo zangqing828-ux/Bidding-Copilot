@@ -221,14 +221,24 @@ adapter 禁止出现：
 - 多标段配置、知识库选择和 Agent 修复模式
 - 桌面 update、license、GPU、online-service Prompt
 
-### 8.2 Web Runtime 删除
+### 8.2 Web Runtime 保留与删除边界
 
-- `client/server/agent/`
-- `client/server/agent-sidecar/`
-- `client/agent-runner/`
-- Web Agent coordinator、lease、readiness 和 shutdown 接线
-- knowledge base、duplicate、rejection 的 Web runtime 装配
-- OpenCode 下载、校验和 agent-e2e Docker target
+保留：
+
+- `client/server/agent/` 中现有 Web OpenCode Proxy、Runner、Coordinator、Task Workspace、Task Spec、Executor 和 Result Committer。
+- OpenCode 固定版本下载、checksum 校验、`prlimit`、`rg`、`fd`、`jq`。
+- `workspaceRuntimeFactory.cjs` 的租户 Agent service/lease、`server/index.cjs` 的 Coordinator shutdown 接线。
+- readiness 的 Agent Foundation 检查。
+- Agent protocol/runtime/coordinator/executor/checksum tests 和真实 `agent-e2e` Docker target。
+
+删除：
+
+- `client/server/agent-sidecar/`、`client/agent-runner/` 等历史重复实现，如当前分支仍存在。
+- Electron OpenCode/Pi runtime、桌面 Agent registry、自检 UI、developer Agent 页面和 release 打包链。
+- 浏览器通用 Agent Bridge、任意 prompt/path/runtime/output 参数入口；这些入口当前已经由 WR-01 删除。
+- knowledge base、duplicate、rejection 的 Web runtime 装配。
+
+生产 Task Spec 注册表在没有单独批准的业务 Agent 工作包时保持为空。保留 OpenCode Foundation 不能被描述为“当前技术方案主链路已经使用 Agent”。
 
 ### 8.3 pure Web 收口后删除
 

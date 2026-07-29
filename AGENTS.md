@@ -28,7 +28,7 @@
 - 首发上传格式只支持 PDF、DOCX、TXT、Markdown。
 - 产品展示品牌统一为 `BidMaster`，仓库地址统一为 `https://github.com/zangqing828-ux/Bidding-Copilot`。
 - 资源下载、投标机会、插件管理及其菜单、路由、页面和运行入口保持删除。
-- Electron 桌面发行、桌面回归 Gate、Agent Sidecar、Agent Runner、OpenCode/Pi、Agent Quality、多 workspace、多租户、知识库管理、查重、废标检查和 AI 评审均退出首发范围。
+- Electron 桌面发行、桌面回归 Gate、浏览器通用 Agent 管理入口、Pi、Sidecar、Agent Quality、多 workspace、多租户、知识库管理、查重、废标检查和 AI 评审退出首发范围。服务端 OpenCode Foundation、受限 Task Spec 边界、Coordinator、Runner 和真实 Docker E2E 保留。
 - 任何返回 `501`、stub、mock、占位成功、只验证错误码或尚未接入真实业务的用户可达能力，都不得标记为完成。
 - 当前按无生产存量数据执行；一旦发现需保留的数据，立即停止破坏性数据改动并恢复迁移 Gate。
 
@@ -53,6 +53,8 @@
 - 进程内只能存在一个可复用 TenantContext；不得继续构建按账号动态创建的 workspace registry。
 - Prompt 统一放在 `src/shared/prompts/` 或 portable core 对应模块，不在组件内硬编码大段 Prompt。
 - 修改 bridge API 时，同步维护运行环境无关的接口类型、Web dispatcher 和契约测试。
+- 浏览器不得直接提交 Agent prompt、文件路径、runtime 参数或输出文件名。OpenCode 只能由服务端静态 Task Spec 调用；未获单独审批时生产 Task Spec 注册表保持为空。
+- OpenCode Foundation 是首发基础设施。WR-06 只能删除浏览器入口、Pi、Sidecar、Electron Agent 和重复实现，不得删除 `client/server/agent/`、OpenCode binary、checksum、工具链、readiness、优雅关闭接线或真实 `agent-e2e`。
 
 ## UI 约束
 
@@ -81,8 +83,9 @@
 - CommonJS：只检查 Web 首发实际使用的 `server`、`core`、`shared` 和 `scripts`。
 - Docker development smoke：从仓库根执行 `docker build -t bidmaster-web:local .`，以 mock OAuth 启动容器，检查 `/api/health`、`/api/readiness` 和登录后的真实 Store 调用。
 - Docker production smoke：以 `NODE_ENV=production`、`OAUTH_MODE=mainquest` 启动，检查 readiness、OAuth authorize 跳转、Secure Cookie、SSE、上传、任务恢复和导出下载。
+- OpenCode Foundation smoke：构建 `agent-e2e` target，使用固定 checksum 的真实 OpenCode 完成两轮 tool-call、安全结果读取和临时目录清理；production readiness 必须验证 OpenCode、`prlimit`、`rg`、`fd` 和 `jq`。
 - 修改 Web native 依赖后验证 Linux Node ABI；Electron ABI 不属于首发 Gate。
-- 修改依赖后运行 `npm audit --omit=dev --audit-level=critical`；已知关键漏洞必须清零。
+- 修改依赖后运行 `npm run audit:production`（`npm audit --omit=dev --audit-level=high`）；生产依赖 high 和 critical 漏洞必须清零。
 - 完成标准必须包含真实成功链路、边界/失败链路、跨用户共享租户数据、session 隔离、持久化、重启恢复、图片和高保真 DOCX 验证。
 
 ## 变更纪律

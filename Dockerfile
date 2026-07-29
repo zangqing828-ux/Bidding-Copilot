@@ -23,8 +23,8 @@ ARG TARGETARCH
 # 安装运行时系统依赖
 # - better-sqlite3 需要 python3 + build-essential（已预装在 node:22-slim 的 node-gyp）
 # - Chromium 用于 Mermaid/HTML 图片渲染（playwright-core 驱动）
-# - LibreOffice 用于 Word 导出转换（Sprint 05 工包 C，后续启用）
-# - 中文字体
+# - util-linux 提供 prlimit，jq/ripgrep/fd 为 OpenCode Agent 受限工具链
+# - 中文字体；LibreOffice 只进入 DOCX QA 环境，不作为应用运行依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
@@ -41,7 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# 安装生产依赖（--ignore-scripts 跳过 postinstall 的 electron-builder install-app-deps，
+# 安装生产依赖（--ignore-scripts 跳过 native 构建脚本，
 # 后续手动 rebuild better-sqlite3 为 Node ABI）
 COPY client/package.json client/package-lock.json ./client/
 RUN cd client && npm ci --omit=dev --ignore-scripts && npm rebuild better-sqlite3 --runtime=node
@@ -54,7 +54,6 @@ COPY --from=builder /app/client/dist ./client/dist
 COPY client/server/ ./client/server/
 COPY client/shared/ ./client/shared/
 COPY client/core/ ./client/core/
-COPY client/electron/ ./client/electron/
 COPY client/scripts/prepare-opencode-binary.cjs ./client/scripts/prepare-opencode-binary.cjs
 COPY client/scripts/opencode-checksums.json ./client/scripts/opencode-checksums.json
 COPY client/package.json ./client/

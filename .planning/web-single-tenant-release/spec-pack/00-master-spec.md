@@ -4,6 +4,8 @@
 
 日期：2026-07-28
 
+最近修订：2026-07-29，WR-06A 保留并验证服务端 OpenCode Foundation
+
 实施基线：`codex/web-single-tenant-baseline@6652dd56c3cce9d4eac101a320120acd4a6a560f`
 
 ## 1. 一句话目标
@@ -24,6 +26,7 @@
 8. Docker production 只允许 MainQuest OAuth；health、readiness、HTTPS、SSE、持久卷、备份和回滚演练通过。
 9. 用户可见面、活跃 README、镜像、容器和新写入标识统一为 BidMaster；内部兼容项只允许出现在批准的 allowlist。
 10. 生产依赖 high/critical 漏洞为 0；发布候选 Bridge Contract 的 `pending` 数为 0。
+11. production image 保留固定 checksum 的 OpenCode Foundation，readiness 和真实 Docker E2E 通过；浏览器通用 Agent 入口关闭，未获审批时生产 Task Spec 注册表为空。
 
 ## 3. 首发产品表面
 
@@ -43,7 +46,7 @@
 - AI 评标
 - 开发者页面
 - 多标段自动识别与选择
-- Agent、OpenCode、Pi、Sidecar
+- 浏览器通用 Agent 管理入口、Pi、Sidecar、Agent Quality
 - Electron 桌面发行、更新和授权
 
 ## 4. 核心执行判断
@@ -55,6 +58,7 @@
 - Renderer 页面与交互
 - SQLite Store、input revision CAS、mutation executor
 - Web AI Runtime 与文本队列
+- Web OpenCode Foundation：固定 binary、AI Proxy、Runner、Coordinator、受限 Task Spec、任务目录与真实 Docker E2E
 - 投标解析任务
 - 上传 file ID、解析 Worker、SSE、一次性下载
 - Electron 中已经运行过的目录、全局事实、正文、配图和 DOCX 业务代码
@@ -62,7 +66,7 @@
 实施方式固定为：
 
 1. `git mv` 已有业务文件到 portable core。
-2. 删除 Electron、Agent 和退出功能分支。
+2. 删除 Electron、Pi、浏览器 Agent 产品入口和退出功能分支；保留服务端 OpenCode Foundation。
 3. 只补 Web adapter、输入校验、Linux 图片渲染和验收测试。
 4. 归档 `archive/wp-j-complete-20260727` 只用于核对 portable 差异和复用测试思路。
 
@@ -246,7 +250,7 @@ git diff --numstat <package-base>...HEAD -- \
 - 多租户、多实例、对象存储、Redis、共享数据库
 - 组织、团队、角色与管理员后台
 - Electron 桌面安装包、自动更新、原生文件对话框
-- Agent、OpenCode、Pi、Sidecar、Agent 质量评估
+- 浏览器通用 Agent 产品入口、Pi、Sidecar、Electron Agent 和 Agent 质量评估；服务端 OpenCode Foundation 保留
 - 多标段识别
 - 独立知识库、查重、废标、商务标、AI 评标
 - DOC、WPS、XLS、XLSX
@@ -272,6 +276,11 @@ git diff --numstat <package-base>...HEAD -- \
 - TODOS.md：无新增提议；退出能力已经进入 NOT in scope 和删除地图。
 - Parallelization：WR-01 -> WR-02 -> WR-03 顺序执行；WR-04/05 可并行；WR-06A ->
   WR-06B -> WR-07 -> WR-08 顺序执行。
+- 2026-07-29 WR-06A 复核：代码证明 OpenCode Foundation 已进入 production Docker、
+  readiness、TenantContext、shutdown 和真实 E2E。删除底层运行时会损失既有 Agent 平台资产；
+  WR-06A 已改为保留并验证 Foundation，只删除浏览器通用入口、Pi、Electron Agent 和重复实现。
+- 当前技术方案任务直接使用 Web AI Runtime，生产 Agent Task Spec 注册表为空。WR-06A
+  不恢复 WR-02 已裁剪的 Agent 质量分支，也不将 Foundation 描述为已接入标书主链路。
 
 ## GSTACK REVIEW REPORT
 
@@ -279,12 +288,12 @@ git diff --numstat <package-base>...HEAD -- \
 |---|---|---|---:|---|---|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | 最新范围已由老板锁定 |
 | Codex Review | independent adversarial audit | 独立挑战 | 1 | CLEAR | 9 项发现，8 项修订，1 项经代码核验驳回 |
-| Eng Review | `/plan-eng-review` | Architecture & tests | 1 | CLEAR | 12 项问题已闭环，0 critical gap |
+| Eng Review | `/plan-eng-review` | Architecture & tests | 2 | CLEAR | 原 12 项问题已闭环；WR-06 OpenCode 删除边界已纠正，0 critical gap |
 | Design Review | `/plan-design-review` | UI/UX gaps | 0 | N/A | 首发不改布局和组件 |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | N/A | 本包为发布实施 Spec |
 
 **CODEX:** 对抗复核确认原 P1 全部闭环。
 
-**VERDICT:** ENG + ADVERSARIAL CLEARED，Spec Pack 可进入 WR-01。
+**VERDICT:** ENG + ADVERSARIAL CLEARED，WR-06A 按“保留 OpenCode Foundation、删除 Electron/Pi/退出能力”执行。
 
 NO UNRESOLVED DECISIONS

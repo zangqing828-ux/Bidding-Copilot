@@ -423,7 +423,7 @@ const parserOptions = [
     items: [
       ['Token', '无需'],
       ['解析速度', '快'],
-      ['支持格式', 'pdf、docx、doc、wps、md、xls、xlsx'],
+      ['支持格式', 'pdf、docx、doc、wps、md'],
       ['大小/页数', '无限制'],
       ['解析质量', '高'],
       ['扫描件', '不支持'],
@@ -437,7 +437,7 @@ const parserOptions = [
     items: [
       ['Token', '需要'],
       ['解析速度', '慢'],
-      ['支持格式', 'pdf、doc、docx、ppt、pptx、图片、html；xls/xlsx 自动本地解析'],
+      ['支持格式', 'pdf、doc、docx、ppt、pptx、图片、html'],
       ['大小/页数', '≤ 200MB / ≤ 200 页'],
       ['解析质量', '高'],
       ['扫描件', '支持'],
@@ -451,7 +451,7 @@ const parserOptions = [
     items: [
       ['Token', '无需（IP 限频）'],
       ['解析速度', '中等'],
-      ['支持格式', 'pdf、doc、docx、ppt、pptx、图片；xls/xlsx 自动本地解析'],
+      ['支持格式', 'pdf、doc、docx、ppt、pptx、图片'],
       ['大小/页数', '≤ 10MB / ≤ 20 页'],
       ['解析质量', '中'],
       ['扫描件', '质量差'],

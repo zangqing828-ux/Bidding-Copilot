@@ -2,6 +2,7 @@
 
 状态：LOCKED
 锁定日期：2026-07-28
+最近修订：2026-07-29，保留服务端 OpenCode Foundation
 起始提交：`origin/main@1c0a17eec348ffaeed1d7e1d0633483bf75fa2fb`
 实施分支：`codex/web-single-tenant-baseline`
 基线标签：`baseline/web-single-tenant-start-20260728`
@@ -41,12 +42,13 @@
 - 上传 file ID、路径边界校验、加密模型配置和 Web AI Runtime。
 - 生成技术方案、已有方案扩写、模板管理和设置。
 - Docker Web Runtime、health、readiness、SSE 和受认证下载。
+- 服务端 OpenCode Foundation：固定 checksum 的 binary、AI Proxy、Runner、Coordinator、受限 Task Spec 边界、进程/文件安全约束和真实 Docker E2E。
 - `analytics/` 作为独立系统保留，除品牌与契约适配外不改业务范围。
 
 ## 4. 首发退出范围
 
 - Electron 桌面发行、Electron Builder、桌面更新与桌面回归 Gate。
-- Agent Sidecar、Agent Runner、OpenCode/Pi 产品能力和 Agent Quality。
+- 浏览器通用 Agent 管理入口、任意 prompt/path/runtime 调用、Pi、Sidecar、Electron Agent 和 Agent Quality。服务端 OpenCode Foundation 保留。
 - 多 workspace Registry、TTL Sweep、多租户公平调度和逐用户业务目录。
 - 商务标、独立知识库管理、查重、废标检查、AI 评标和开发者页面。
 - 多实例横向扩容、共享数据库、对象存储、组织后台和角色权限后台。
@@ -56,7 +58,7 @@
 
 - `origin/main@1c0a17e` 是唯一实施起点。
 - `archive/wp-j-complete-20260727` 只作为 J-Core 和测试证据来源，禁止整体合并。
-- 按文件和业务能力迁移 J-Core；Sidecar、桌面兼容和重复夹具不得随迁。
+- 按文件和业务能力迁移 J-Core；Sidecar、Pi、桌面兼容和重复夹具不得随迁。现有 Web OpenCode Foundation 按原边界保留，不从历史候选重复迁入。
 - 可复用大文件使用 `git mv` 或抽取 adapter，避免复制后形成重复实现。
 - 首发业务源码净新增预算为 3,000 行；单工作包净新增超过 1,000 行时暂停并复审。
 - 测试、fixture、生成物和文档单独统计，不得混入业务源码体量结论。
@@ -80,6 +82,7 @@
 - 生产依赖 high 级漏洞清零。
 - 用户可见与运维活跃面完成 BidMaster 品牌清理。
 - Docker production 只允许 MainQuest OAuth；ECS HTTPS、SSE、持久卷、备份和回滚演练通过。
+- OpenCode binary checksum、readiness、受限权限、真实两轮 tool-call、安全输出读取和任务目录清理通过；浏览器 Agent bridge 保持删除，生产 Task Spec 注册表在未获单独审批时为空。
 
 ## 8. 数据假设
 

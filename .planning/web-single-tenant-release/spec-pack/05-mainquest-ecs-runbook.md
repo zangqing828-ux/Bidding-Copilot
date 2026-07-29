@@ -44,6 +44,7 @@ BidMaster Web container (single instance)
 | GHCR image digest | `<IMAGE_DIGEST>` |
 | ECS host/SSH profile | `<ECS_HOST>` |
 | ECS CPU/内存与容器资源上限 | `<ECS_RESOURCE_LIMITS>` |
+| OpenCode 固定版本与 checksum 证据 | WR-06/07 CI artifact |
 | TLS 证书、私钥路径与自动续期 owner | `<TLS_CERT_CONTRACT>` |
 | 持久数据目录 | `/srv/bidmaster/data` |
 | 备份目录 | `/srv/bidmaster/backups` |
@@ -107,7 +108,7 @@ ghcr.io/zangqing828-ux/bidmaster-web@sha256:<digest>
 发布要求：
 
 1. 从 WR-07 冻结 SHA 构建。
-2. CI 完成 Web、Browser、Docker、dependency audit。
+2. CI 完成 Web、Browser、Docker、OpenCode Foundation E2E、checksum 和 dependency audit。
 3. 推送 SHA tag。
 4. 记录 registry 返回的 digest。
 5. ECS compose 只使用 digest，不使用 `latest`。
@@ -278,7 +279,7 @@ curl -sSI https://<BIDMASTER_DOMAIN>/api/auth/login
 预期：
 
 - health 200。
-- readiness 200，data/auth DB/tenant DB/dist/Chromium/fonts 全部 ok。
+- readiness 200，data/auth DB/tenant DB/dist/Chromium/fonts/OpenCode/`prlimit`/`rg`/`fd`/`jq` 全部 ok。
 - login 302 到 MainQuest `/oauth/authorize`。
 - state Cookie 带 `Secure; HttpOnly; SameSite=Lax`。
 
@@ -330,6 +331,14 @@ docker compose -f docker-compose.prod.yml restart web
 - 已完成图片存在。
 - 中断任务显示 retryable interrupted。
 - 继续/重试后完成。
+
+### 10.6 OpenCode Foundation
+
+1. `/api/readiness` 的 `agent_runtime` 为 `ok`。
+2. production image 包含固定 checksum 的 OpenCode binary，不包含 `scripts/test-web-agent-docker.cjs` 测试 harness。
+3. WR-07 冻结 SHA 对应的 `agent-e2e` artifact 已通过真实两轮 tool-call、安全结果读取和任务目录清理。
+4. 浏览器调用 `agent.*` 仍返回 removed，不能提交任意 prompt、路径、runtime 参数或输出文件名。
+5. 未获独立业务审批时，production Business Agent Task Spec 注册表为空。
 
 ## 11. 备份
 

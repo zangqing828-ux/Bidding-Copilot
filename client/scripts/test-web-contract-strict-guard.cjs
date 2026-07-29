@@ -118,6 +118,8 @@ const result = spawnSync(process.execPath, [path.join(__dirname, 'test-web-contr
   stdio: 'pipe',
   env: {
     ...process.env,
+    // manifest pending 已清零，注入受控模拟 pending 以验证 strict 门禁仍能阻断。
+    WEB_CONTRACT_SIMULATE_PENDING: '1',
   },
   cwd: path.join(__dirname, '..'),
 });

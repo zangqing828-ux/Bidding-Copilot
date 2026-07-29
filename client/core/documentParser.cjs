@@ -9,7 +9,7 @@ const parserLabels = {
   'mineru-agent-api': 'MinerU-Agent 轻量解析 API',
 };
 
-const localSupportedExtensions = new Set(['.txt', '.md', '.markdown', '.docx', '.pdf', '.doc', '.wps', '.xls', '.xlsx']);
+const localSupportedExtensions = new Set(['.txt', '.md', '.markdown', '.docx', '.pdf', '.doc', '.wps']);
 const mineruAgentSupportedExtensions = new Set(['.pdf', '.doc', '.docx', '.ppt', '.pptx', '.png', '.jpg', '.jpeg', '.jp2', '.webp', '.gif', '.bmp']);
 const mineruAccurateSupportedExtensions = new Set(['.pdf', '.doc', '.docx', '.ppt', '.pptx', '.png', '.jpg', '.jpeg', '.jp2', '.webp', '.gif', '.bmp', '.html']);
 const MAX_JSON_BYTES = 1024 * 1024;

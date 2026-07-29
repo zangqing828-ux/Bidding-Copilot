@@ -3,9 +3,6 @@ const { parentPort } = require('node:worker_threads');
 const { createTemplateStore } = require('../../core/templateStore.cjs');
 const { createSqliteDatabase } = require('../../core/sqliteDatabase.cjs');
 const { createTechnicalPlanStore } = require('../../core/stores/technicalPlanStore.cjs');
-const { createKnowledgeBaseStore } = require('../../core/stores/knowledgeBaseStore.cjs');
-const { createDuplicateCheckStore } = require('../../core/stores/duplicateCheckStore.cjs');
-const { createRejectionCheckStore } = require('../../core/stores/rejectionCheckStore.cjs');
 const { createEncryptedConfigStore } = require('../config/encryptedConfigStore.cjs');
 
 if (!parentPort) {
@@ -42,19 +39,6 @@ function createWorkerContext(payload) {
       db: sqliteDatabase.db,
       workspaceRoot,
     });
-    const knowledgeBaseStore = createKnowledgeBaseStore({
-      db: sqliteDatabase.db,
-      workspaceRoot,
-    });
-    const duplicateCheckStore = createDuplicateCheckStore({
-      db: sqliteDatabase.db,
-      workspaceRoot,
-    });
-    const rejectionCheckStore = createRejectionCheckStore({
-      db: sqliteDatabase.db,
-      workspaceRoot,
-      technicalPlanStore,
-    });
 
     return {
       sqliteDatabase,
@@ -63,9 +47,6 @@ function createWorkerContext(payload) {
       targets: {
         configStore: createEncryptedConfigStore({ configPath }),
         technicalPlanStore,
-        knowledgeBaseStore,
-        duplicateCheckStore,
-        rejectionCheckStore,
         templateStore: createTemplateStore({ db: sqliteDatabase.db }),
       },
     };

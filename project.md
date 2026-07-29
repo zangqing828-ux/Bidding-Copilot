@@ -11,7 +11,7 @@
 - Web 架构收敛：`.planning/web-architecture-convergence/architecture-convergence.spec.md`
 - 品牌清理：`.planning/yibiao-brand-cleanup/brand-cleanup.spec.md`
 
-其中 `.planning/web-single-tenant-release/baseline.md` 记录 2026-07-28 最新锁定决策；与旧 Spec 冲突时，以该基线为准。
+其中 `.planning/web-single-tenant-release/baseline.md` 记录 2026-07-28 基线及 2026-07-29 OpenCode Foundation 修订；与旧 Spec 冲突时，以该基线为准。
 
 ## 项目目标
 
@@ -19,13 +19,13 @@
 
 目标是在 Linux 容器中独立完成文件导入、AI 任务、进度恢复、图片渲染、Word 导出和下载。
 
-## 2026-07-28 锁定决策
+## 2026-07-28 锁定决策（2026-07-29 修订第 5 项）
 
 1. **纯 Web 首发。** Electron、桌面发行和桌面回归 Gate 退出首发；portable core 中可复用能力继续保留。
 2. **单租户单实例。** 一个 ECS 部署对应一个租户；获得 BidMaster Product 权限的 MainQuest 用户共享同一业务空间。
 3. **Auth 只做一层。** MainQuest Auth 负责登录和 Product 访问授权；本地只保留用户 session、身份映射和必要审计信息。
 4. **J-Core 选择性迁入。** `origin/main@1c0a17e` 是实施起点；旧 `wp-j-complete` 仅作为来源，不整体合并。
-5. **Agent 退出首发。** Agent Sidecar、Agent Runner、OpenCode/Pi 和 Agent Quality 不进入首发运行时。
+5. **OpenCode Foundation 保留。** 浏览器通用 Agent 管理入口、Pi、Sidecar 和 Agent Quality 退出首发表面；服务端 OpenCode binary、Proxy、Runner、Coordinator、受限 Task Spec 边界和真实 Docker E2E 作为 Agent 执行底座保留在首发运行时。正式业务 Task Spec 仍需单独审批后注册。
 6. **首发表面收缩。** 只开放生成技术方案、已有方案扩写、模板管理和设置。
 7. **交付完整。** 图片生成和高保真 DOCX 属于首发硬门槛；文本降级导出不能作为完成。
 8. **安全格式收缩。** 首发上传只支持 PDF、DOCX、TXT 和 Markdown。
@@ -118,7 +118,7 @@ SQLite + files + encrypted config
 ## 实施顺序与 Gate
 
 1. 锁定单租户首发基线并建立隔离 worktree。
-2. 选择性迁入 J-Core，删除多 workspace、Agent 和桌面发行链。
+2. 选择性迁入 J-Core，删除多 workspace、浏览器 Agent 产品入口、Pi 和桌面发行链，保留 Web OpenCode Foundation。
 3. 完成真实 MainQuest、真实 AI、图片和高保真 DOCX。
 4. 收口上传安全、Web-only 包装和 BidMaster 品牌。
 5. 通过本地真实闭环后部署 ECS staging。
@@ -132,5 +132,5 @@ SQLite + files + encrypted config
 - 组件库替换、页面重做、信息架构重排。
 - 多实例横向扩容、共享数据库、对象存储和组织/团队后台。
 - 恢复资源下载、投标机会或插件管理。
-- Electron 桌面发行和 Agent 产品能力。
+- Electron 桌面发行、浏览器通用 Agent 产品入口、Pi、Sidecar 和 Agent Quality；服务端 OpenCode Foundation 不在此列。
 - 未经基础设施迁移计划重命名或删除线上 Cloudflare 资源、GitHub Secrets、OAuth 应用或持久卷。
