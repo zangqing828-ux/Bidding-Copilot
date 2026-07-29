@@ -43,7 +43,9 @@ function gitGrep() {
       'git',
       ['grep', '-I', '-n', '-i', '-E', TOKEN_PATTERN, '--', ...ACTIVE_PATHS],
       { cwd: repoRoot, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
-    ).split('\n').filter(Boolean);
+    ).split('\n').filter(Boolean)
+      // 扫描脚本自身的 token 定义与 allowlist 正则不算品牌残留。
+      .filter((line) => !line.startsWith('client/scripts/check-brand-allowlist.cjs:'));
   } catch (err) {
     if (err.status === 1) return []; // 无匹配
     throw err;
