@@ -183,6 +183,22 @@ async function main() {
     assert.ok(warnings.length >= 1, '记录图片缺失警告');
   });
 
+  await run('SSRF 防护：远程 http 图片缺省不发起请求并降级', async () => {
+    let fetchCalled = false;
+    const originalFetch = global.fetch;
+    global.fetch = async () => { fetchCalled = true; return { ok: true, arrayBuffer: async () => new ArrayBuffer(0) }; };
+    try {
+      const ssrfOutline = [{ id: '9', title: '远程图', content: '![x](http://169.254.169.254/latest/meta-data/)' }];
+      const warnings = [];
+      const ssrfResult = await buildDocxResult({ project_name: 'ssrf', outline: ssrfOutline }, { warnings, ...env.ports });
+      assert.ok(Buffer.isBuffer(ssrfResult.buffer) && ssrfResult.buffer.length > 0, '仍输出 Buffer');
+      assert.strictEqual(fetchCalled, false, '未注入抓取器时不得发起服务端请求');
+      assert.ok(warnings.length >= 1, '记录图片无法导出警告');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   await run('release guard：发布路径不得引用 simpleDocxBuilder', async () => {
     const clientDir = path.join(__dirname, '..');
     const scanDirs = ['server', 'core', 'electron'];

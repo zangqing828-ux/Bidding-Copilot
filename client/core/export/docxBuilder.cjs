@@ -1124,20 +1124,27 @@ async function loadImage(source, context = {}) {
     };
   }
 
+  // 远程 http(s) 图片仅在运行环境注入受控抓取器（含 endpoint policy 校验）时才允许；
+  // 缺省直接拒绝，避免用户可控正文触发服务端请求伪造（SSRF）。
   if (/^https?:\/\//i.test(url)) {
-    const response = await fetch(url);
-    if (!response.ok) {
+    if (typeof context.remoteImageFetcher !== 'function') {
+      return null;
+    }
+    const fetched = await context.remoteImageFetcher(url);
+    if (!fetched?.buffer?.length) {
       throw new Error(`图片下载失败：${url}`);
     }
-    const type = imageTypeFromMime(response.headers.get('content-type')) || imageTypeFromPath(new URL(url).pathname);
-    return { buffer: Buffer.from(await response.arrayBuffer()), type };
+    return { buffer: fetched.buffer, type: fetched.type || imageTypeFromPath(new URL(url).pathname) };
   }
 
+  // 本地文件读取受 baseDir 边界约束，禁止借相对路径越权读取目录外文件。
   const fileUrlPrefix = 'file://';
   const rawPath = url.startsWith(fileUrlPrefix) ? fileURLToPath(url) : url;
-  const resolvedPath = path.isAbsolute(rawPath)
-    ? rawPath
-    : path.resolve(context.baseDir || process.cwd(), rawPath);
+  const baseDir = path.resolve(context.baseDir || process.cwd());
+  const resolvedPath = path.isAbsolute(rawPath) ? path.resolve(rawPath) : path.resolve(baseDir, rawPath);
+  if (resolvedPath !== baseDir && !resolvedPath.startsWith(`${baseDir}${path.sep}`)) {
+    return null;
+  }
 
   if (!fs.existsSync(resolvedPath)) {
     return null;
@@ -2046,6 +2053,7 @@ async function buildDocxResult(payload, options = {}) {
     mermaidRenderer: options.mermaidRenderer,
     getMermaidCacheEntry: options.getMermaidCacheEntry,
     saveMermaidCacheImage: options.saveMermaidCacheImage,
+    remoteImageFetcher: options.remoteImageFetcher,
   };
   writeExportLog(context, 'export.docx.build.started', {
     stats,
