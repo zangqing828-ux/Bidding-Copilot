@@ -2,6 +2,7 @@
 // 仅 manifest 标记 implemented 且有可执行 dispatcher 的能力才执行后端实现。
 // pending / removed 能力统一返回明确错误码，不执行真实业务。
 const express = require('express');
+const config = require('../config.cjs');
 const { getWorkspaceContext } = require('../workspace/workspaceRegistry.cjs');
 const { createSystemFontService } = require('../export/systemFontService.cjs');
 const { methods: bridgeMethods = {} } = require('../../shared/bridgeContract.cjs');
@@ -154,6 +155,10 @@ function validateContractArguments(contract, args) {
 }
 
 const bridgeBindingMetadata = Object.freeze({
+  app: Object.freeze({
+    getVersion: createDirectBinding(() => config.version, 'app.getVersion'),
+  }),
+
   config: Object.freeze({
     load: createDirectBinding(
       (ctx) => executeWorkspaceStore(ctx, 'configStore', 'load', [], () => ctx.configStore.load()),
@@ -180,6 +185,7 @@ const bridgeBindingMetadata = Object.freeze({
   }),
 
   ai: Object.freeze({
+    chat: createDirectBinding((ctx, args, options) => ctx.aiService.chat(args[0], options), 'ai.chat'),
     testImageModel: createDirectBinding((ctx, args, options) => ctx.aiService.testImageModel(args[0], options), 'ai.testImageModel'),
   }),
 

@@ -305,9 +305,9 @@ node scripts/test-docx-structure.cjs
 - 视觉抽检确认标题、表格和图片无明显错位。
 - 一次性 token 无法重放。
 
-## WR-06A：Web-only Runtime、安全依赖与 CI
+## WR-06A：Web-only Runtime、OpenCode Foundation、安全依赖与 CI
 
-目标：生产镜像只包含 Web 首发运行时，依赖安全，Contract 无 pending。
+目标：生产镜像包含完整 Web 首发运行时和可持续使用的 OpenCode Agent 执行底座，删除 Electron/Pi/退出能力，依赖安全，Contract 无 pending。
 
 依赖：WR-04、WR-05。
 
@@ -320,14 +320,22 @@ node scripts/test-docx-structure.cjs
 
 动作：
 
-1. 删除 Agent、Sidecar、Runner、Electron 和退出 Store 的运行时装配。
-2. 删除整个 Electron 产品链和无调用依赖。
-3. Docker 删除 OpenCode、jq、rg、fd 和 agent-e2e；加入 Chromium。
-4. readiness 改查 data、auth DB、tenant DB、dist、Chromium、字体；检查结果缓存。
-5. shutdown 删除 Agent coordinator，保留 HTTP、SSE、TenantContext 顺序关闭。
-6. CI 删除 Electron/Agent jobs，加入完整 Web、Docker、图片、DOCX 和 high audit Gate。
-7. 更新 direct/transitive dependencies，high/critical 清零。
-8. 完成 `app.getVersion`、`ai.chat` 和设置页模型测试 Contract。
+1. 删除 Electron、Pi、Sidecar、桌面 Agent、退出 Store 和无调用运行时装配。
+2. 保留 `client/server/agent/` 的 OpenCode Proxy、Runner、Coordinator、Task Workspace、Task Spec、Executor、Result Committer，以及 workspace lifecycle/shutdown 接线。
+3. Docker 保留固定 checksum 的 OpenCode binary、`prlimit`、`rg`、`fd`、`jq` 和 `agent-e2e`；保留 Chromium与中文字体；production image 排除测试 harness。LibreOffice 只进入 DOCX QA 环境，不作为应用运行依赖。
+4. readiness 检查 data、auth DB、tenant DB、dist、Chromium、字体、OpenCode binary 和 Agent 工具链；静态检查结果缓存，关键依赖缺失返回 503。
+5. shutdown 保留 Agent Coordinator，顺序固定为：SSE draining -> Agent 拒绝新任务 -> HTTP close -> TenantContext/Agent lease close -> Coordinator close。
+6. CI 删除 Electron/Pi jobs；保留 Agent protocol/runtime/coordinator/executor/checksum 和真实 OpenCode Docker E2E；加入完整 Web、图片、DOCX 和 high audit Gate。
+7. 删除 `@earendil-works/pi-*`、Electron updater、XLSX 和无调用依赖；升级其余 direct/transitive dependencies，high/critical 清零。不得用删除 OpenCode Foundation 规避审计。
+8. 浏览器 `agent.*` 与 `events.agent.*` 保持 removed；生产 Business Agent Task Spec 注册表在没有独立业务审批时保持为空。
+9. 完成 `app.getVersion`、`ai.chat` 和设置页模型测试 Contract。
+
+当前代码事实：
+
+- OpenCode Foundation 已被 production Docker、readiness、TenantContext 和 graceful shutdown 装配。
+- Agent Foundation 有完整单元测试和真实 OpenCode Docker E2E。
+- 技术方案目录、事实、正文和图片任务当前直接使用 Web AI Runtime，没有正式 Agent Task Spec。
+- 本工作包保护底层执行能力，不宣称现有标书主链路已经使用 Agent。
 
 预算：
 
@@ -342,17 +350,28 @@ npm ci
 npm run build:web
 npm run test:web
 npm run test:web-browser
+npm run test:web-agent-protocol
+npm run test:web-agent-runtime
+npm run test:web-agent-coordinator
+npm run test:web-agent-executor
+npm run test:opencode-checksum
 npm audit --omit=dev --audit-level=high
 find server core shared scripts -name '*.cjs' -print0 | xargs -0 -n1 node --check
 cd ..
 docker build -t bidmaster-web:local .
+docker build --target agent-e2e -t bidmaster-agent:e2e .
+docker run --rm \
+  -e YIBIAO_WEB_OPENCODE_BIN=/app/client/vendor/opencode/linux-x64/opencode \
+  bidmaster-agent:e2e
 ```
 
 退出条件：
 
 - production dependency high/critical 为 0。
-- runtime image 无 Electron、OpenCode、Pi、Agent、XLSX。
-- readiness 无 Agent 检查且 Chromium self-check 通过。
+- runtime image 无 Electron、Pi、Sidecar、XLSX，包含通过 checksum 校验的 OpenCode binary 和受限 Agent 工具链。
+- readiness 的 Chromium、字体、OpenCode、`prlimit`、`rg`、`fd`、`jq` self-check 全部通过。
+- 真实 OpenCode 两轮 tool-call、安全输出读取、超时/取消、资源释放和任务目录清理通过。
+- 浏览器无通用 Agent 调用入口；未获审批时生产 Task Spec 注册表为空。
 - Contract `pending=0`。
 - 本包以独立 commit 合入，可在不回滚品牌兼容改动的情况下单独回滚。
 

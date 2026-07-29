@@ -135,7 +135,7 @@ async function runTests() {
     assert(body.email === 't@t.com', '/api/auth/me 返回正确 email');
   }
 
-  // 测试 9：已登录访问业务 API → 501（通过 auth，业务未迁移）
+  // 测试 9：已登录访问业务 API → 通过 auth 后进入契约校验（缺少必填参数 → 400）
   {
     const res = await app.inject({
       method: 'POST',
@@ -143,7 +143,9 @@ async function runTests() {
       headers: { 'content-type': 'application/json', cookie: `yibiao_session=${sessionCookie}` },
       payload: { namespace: 'ai', method: 'chat', args: [] },
     });
-    assert(res.statusCode === 501, '已登录业务 API 返回 501');
+    assert(res.statusCode === 400, '已登录业务 API 通过 auth 后进入契约参数校验');
+    const body = JSON.parse(res.body);
+    assert(body.code === 'INVALID_BRIDGE_ARGUMENTS', '缺少必填参数返回 INVALID_BRIDGE_ARGUMENTS');
   }
 
   // 测试 10：退出登录

@@ -82,7 +82,7 @@ jobs:
         run: npm rebuild better-sqlite3 --runtime=node
 
       - name: Check CommonJS syntax
-        run: find electron scripts server core shared -name '*.cjs' -print0 | xargs -0 -n1 node --check
+        run: find scripts server core shared -name '*.cjs' -print0 | xargs -0 -n1 node --check
 
       - name: Build renderer
         run: npm run build
@@ -109,9 +109,6 @@ jobs:
 
       - name: Run browser Web export gate
         run: npm run test:web-browser
-
-      - name: Run Electron native smoke
-        run: xvfb-run -a npm run smoke:electron-native
 
       - name: Docker build
         working-directory: .
@@ -261,7 +258,7 @@ jobs:
           docker stop web-prod-test
           docker rm web-prod-test
 
-      - name: Block critical production vulnerabilities
+      - name: Block high and critical production vulnerabilities
         run: npm run audit:production
 
   analytics_worker:

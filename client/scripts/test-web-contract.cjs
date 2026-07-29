@@ -151,11 +151,11 @@ const REQUIRED_WEB_BRIDGE_META_KEYS = [
 ];
 
 const requiredMetaFields = ['status', 'owner', 'workPackage', 'transport', 'contractRef', 'input', 'output', 'errors'];
-const IMPLEMENTED_BRIDGE_RPC_COUNT = 33;
+const IMPLEMENTED_BRIDGE_RPC_COUNT = 35;
 const CONTRACT_STATUS_TOTALS = Object.freeze({
-  implemented: 37,
+  implemented: 39,
   removed: 74,
-  pending: 2,
+  pending: 0,
   total: 113,
 });
 const COMMON_IMPLEMENTED_BRIDGE_ERRORS = [
@@ -452,10 +452,12 @@ function readYibiaoBridgeRpcSignatures() {
         walkMembers(member.type.members, currentPath);
         continue;
       }
-      if (!ts.isFunctionTypeNode(member.type) || !prefix) {
+      if (!ts.isFunctionTypeNode(member.type)) {
         continue;
       }
-      signatures.set(currentPath, {
+      // 顶层扁平方法归属 app namespace（历史 preload 结构，renderer 顶层暴露 getVersion 等）。
+      const signatureKey = prefix ? currentPath : `app.${name}`;
+      signatures.set(signatureKey, {
         input: member.type.parameters.map((parameter) => ({
           name: parameter.name.getText(sourceFile),
           type: parameter.type?.getText(sourceFile) || 'unknown',
@@ -1100,8 +1102,12 @@ async function runBridgeBehavior(inject, context) {
 
   let strictPendingGateMessage = null;
   if (strictMode) {
-    strictPendingGateMessage = `strict 模式不允许 pending（当前 ${pendingEntries.length}）`;
-    assert(pendingEntries.length === 0, strictPendingGateMessage);
+    // WR-06A 后 manifest pending=0。为持续验证 strict 门禁能阻断 pending 发布，
+    // 允许通过受控环境变量注入一个模拟 pending 项（仅 strict-guard 元测试使用）。
+    const simulatedPending = process.env.WEB_CONTRACT_SIMULATE_PENDING === '1' ? 1 : 0;
+    const effectivePending = pendingEntries.length + simulatedPending;
+    strictPendingGateMessage = `strict 模式不允许 pending（当前 ${effectivePending}）`;
+    assert(effectivePending === 0, strictPendingGateMessage);
   }
 
   const session = await createSessionCookie(inject);

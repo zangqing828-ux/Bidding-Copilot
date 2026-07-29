@@ -46,7 +46,7 @@ branch/commit range，再追加同口径证据，不用模糊总数替代可复�
 | 分类 | 新增 | 删除 | 净增 | 判断 |
 |---|---:|---:|---:|---|
 | J-Core | 13,526 | 0 | 13,526 | 大部分为 Electron 业务文件复制到 core |
-| Agent | 4,302 | 37 | 4,265 | 首发退出 |
+| Agent | 4,302 | 37 | 4,265 | 历史候选不整体迁入；当前 Web OpenCode Foundation 单独保留 |
 | 测试/脚本 | 7,152 | 3 | 7,149 | 仅少量可选择复用 |
 | Web server | 1,578 | 133 | 1,445 | 需要逐项筛选 |
 | 文档 | 1,795 | 4 | 1,791 | 历史过程材料 |
@@ -66,8 +66,21 @@ branch/commit range，再追加同口径证据，不用模糊总数替代可复�
 
 - 目录、全局事实、正文使用 `git mv`，再做少量 portable 修订。
 - 多标段退出首发，标段识别不迁入。
-- Agent 分支从搬迁后的核心中裁剪。
-- 归档新增的 Sidecar、Runner、run manifest 套件和大量重复测试不成套迁入。
+- Agent 质量分支已从搬迁后的技术方案 core 中裁剪；该动作没有删除服务端 OpenCode Foundation。
+- 归档新增的 Sidecar、重复 Runner、run manifest 套件和大量重复测试不成套迁入；当前 `client/server/agent/` 只保留已经验证的 Web Foundation。
+
+## 2.1 2026-07-29 OpenCode 实际代码快照
+
+当前 `main@5b9dfa3` 的 OpenCode Foundation 已进入 Web 生产装配：
+
+- `client/server/agent/` 有 9 个模块、约 2,008 行，覆盖 Proxy、Runner、Coordinator、任务目录、Task Spec、结果提交和服务生命周期。
+- `workspaceRuntimeFactory.cjs` 创建租户级 `agentService`，`server/index.cjs` 负责进程级 Coordinator 的拒绝新任务与有序关闭。
+- Docker production image 固定 checksum 下载 OpenCode，安装 `prlimit`、`rg`、`fd`、`jq`；readiness 缺失任一关键依赖即返回 503。
+- Agent 专项测试约 1,154 行，另有真实 OpenCode `agent-e2e` target 验证两轮 tool-call、安全结果读取和任务目录清理。
+- Web Contract 已删除通用 `agent.*` 和 `events.agent.*`，浏览器不能直接运行 Agent。
+- `businessAgentTaskRegistry.cjs` 当前强制生产 Task Spec 注册表为空；目录、全局事实、正文和图片任务直接调用 Web AI Runtime，尚未接入 OpenCode。
+
+结论：OpenCode 当前是已经可运行但尚未挂载正式业务 Task Spec 的服务端执行底座。WR-06 必须保留并持续验证该底座，同时保持浏览器入口关闭。
 
 ## 3. 能力盘点
 
@@ -78,58 +91,41 @@ branch/commit range，再追加同口径证据，不用模糊总数替代可复�
 | 单租户 TenantContext | 已实现 | 单例 registry、固定 tenant ID | 需纳入最终全链回归 |
 | 用户 session | 已实现 | 独立 session SQLite | Cookie 仍为旧命名；未做真实会话过期 E2E |
 | 共享业务空间 | 已实现 | 账号统一写入 deployment tenant ID | 需两个真实授权用户验收 |
-| 上传 file ID | 已实现 | upload registry、随机文件名、签名探测 | 当前仍接受 DOC/XLSX |
+| 上传 file ID | 已实现 | upload registry、随机文件名、签名探测 | 已收缩为 PDF/DOCX/TXT/MD；需最终安全回归 |
 | 文档解析 | 已实现 | Worker + PDF/DOCX/TXT/MD parser | 需真实大文件、错误和超时测试 |
 | 加密模型配置 | 已实现 | server encrypted config store | 需日志和浏览器泄漏审计 |
 | Web 文本 AI Runtime | 已实现 | 文本队列、endpoint policy、JSON 修复 | 真实模型全链尚无通过证据 |
 | 招标分析 | 已接入真实 runtime | Web task + CAS + persistence | 浏览器 E2E 使用测试 AI |
-| 目录生成 | Renderer 已调用 | `tasks.startOutlineGeneration` | Web contract pending |
-| 全局事实 | Renderer 已调用 | `tasks.startGlobalFactsGeneration` | Web contract pending |
-| 正文生成 | Renderer 已调用 | start/pause/resume/retry | Web contract pending |
-| 图片计划与生成 | Electron 代码存在 | 约 778 行 planning/generation | 依赖 Agent 与 Electron renderer |
-| AI 生图 | Electron 代码存在 | 多 provider 实现 | Web `generateImage/testImageModel` pending |
-| 高保真 DOCX | Electron 代码存在 | 2,216 行 builder | Web 当前只用简单 DOCX fallback |
-| 浏览器下载 | 已实现 | 一次性 token，认证后下载 | 需接高保真 builder |
+| 目录生成 | Web 已实现 | `tasks.startOutlineGeneration` + portable core | 需真实模型 RC |
+| 全局事实 | Web 已实现 | `tasks.startGlobalFactsGeneration` + portable core | 需真实模型 RC |
+| 正文生成 | Web 已实现 | start/pause/resume/retry + persistence | 需真实模型与重启 RC |
+| 图片计划与生成 | Web portable core 已接通 | WR-04 task + Chromium adapter | 不依赖 OpenCode；需真实 RC 复核质量 |
+| AI 生图 | Web illustration port 已实现 | provider + asset persistence | 需真实图片模型 RC |
+| 高保真 DOCX | Web 已实现 | portable builder + Web asset resolver | 需 LibreOffice 与视觉 RC |
+| 浏览器下载 | 已实现 | 高保真 builder + 一次性 token | 需完整业务 RC |
 | SSE | 已实现 | tenant 级 task event + heartbeat | 需完整任务与 Nginx 现场测试 |
-| Docker | 可构建骨架 | Node 22 多阶段镜像 | 仍装 Agent 工具，未装 Chromium |
-| readiness | 已实现基础检查 | data/system DB/dist | 当前错误依赖 Agent Runtime |
-| CI | 有 Web build/test/Docker smoke | `.github/workflows/ci.yml` | 仍包含 Electron/Agent Gate，业务 smoke 不完整 |
+| Docker | 已包含 Web、Chromium、中文字体和 OpenCode Foundation | Node 22 多阶段镜像 | WR-06 删除 Electron/Pi 并收紧依赖；LibreOffice 仅作为 DOCX QA 工具另行装配 |
+| readiness | 已检查 data/system DB/dist/OpenCode 工具链 | OpenCode 缺失返回 503 | 需补 Tenant DB、Chromium、字体并缓存结果 |
+| CI | 有 Web build/test/Docker smoke 和真实 OpenCode E2E | `.github/workflows/ci.yml` | 删除 Electron/Pi Gate，保留 Agent Foundation Gate |
 | ECS | 未执行 | 无发布证据 | 等本地 RC |
 
-## 4. 产品表面泄漏
+## 4. 产品表面状态
 
-当前菜单和路由仍包含：
+WR-01 已删除商务标、文档知识库、查重、废标检查、AI 评标、开发者页面、旧 GitHub Star 引导，以及 GPU、桌面更新、license、开发者模式等桌面提示。当前用户入口收缩为生成技术方案、已有方案扩写、模板管理和设置。
 
-- 商务标
-- 文档知识库
-- 查重
-- 废标检查
-- AI 评标
-- 开发者页面
-- 旧 GitHub Star 引导
+Web Contract 当前 `113 total / 2 pending`，剩余 `app.getVersion` 和 `ai.chat` 归 WR-06A；浏览器 `agent.*` 已明确 removed。
 
-应用根组件仍挂载：
-
-- GPU/桌面提示
-- 必须联网服务提示
-- 桌面更新通知
-- 本地 license 提示
-- 开发者模式
-
-这些入口会让用户进入 pending、桌面逻辑或退出范围，必须在业务迁移前先关闭。
-
-## 5. Web Runtime 多余装配
+## 5. Web Runtime 装配裁决
 
 `workspaceRuntimeFactory.cjs` 当前还创建：
 
 - knowledge base store/service
 - duplicate check store/stub
 - rejection check store
-- Agent coordinator/lease/service
 
-`server/index.cjs` 优雅关闭仍依赖全局 Agent coordinator。
+Agent coordinator、lease、service、readiness 和 shutdown 接线属于保留范围。它们共同保证 OpenCode 任务的租户生命周期、拒绝新任务、取消和资源释放；WR-06 只删除浏览器入口、Pi、Sidecar、Electron Agent 和重复实现。
 
-`readiness.cjs` 会检查 OpenCode、rg、fd、jq、prlimit；这些能力已经退出首发，继续保留会造成生产容器误报不就绪。
+`readiness.cjs` 对 OpenCode、`rg`、`fd`、`jq`、`prlimit` 的检查继续作为发布 Gate。生产镜像缺少 Agent Foundation 时应明确判定为不可发布。
 
 ## 6. Docker 与依赖风险
 
@@ -140,7 +136,7 @@ branch/commit range，再追加同口径证据，不用模糊总数替代可复�
 - 安装 jq、ripgrep、fd
 - 保留 agent-e2e target
 - 使用旧 Docker 用户和旧数据目录变量
-- 未实际安装 Chromium
+- 已安装 Chromium 和中文字体
 
 当前生产依赖审计结果：
 
@@ -151,14 +147,14 @@ branch/commit range，再追加同口径证据，不用模糊总数替代可复�
 high 来源包含：
 
 - `adm-zip`
-- Agent 依赖链中的 `brace-expansion`
+- Pi 依赖链中的 `brace-expansion`
 - `electron-updater`
 - `js-yaml`
-- `linkify-it`
+- Pi 依赖链中的 `linkify-it`
 - `undici`
 - `xlsx`，且当前版本无修复
 
-范围收缩可以直接移除 Agent、Electron updater 和 XLSX；其余直接依赖升级后重新审计。
+删除 Pi、Electron updater 和 XLSX 可以清除对应风险，不需要删除 OpenCode Foundation。OpenCode 服务端模块只依赖 Node 内置模块和现有 Web AI Runtime；其余直接依赖升级后重新审计。
 
 ## 7. MainQuest Auth 事实
 

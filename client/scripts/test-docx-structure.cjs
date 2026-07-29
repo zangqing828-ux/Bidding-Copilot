@@ -241,7 +241,7 @@ async function main() {
 
   await run('release guard：发布路径不得引用 simpleDocxBuilder', async () => {
     const clientDir = path.join(__dirname, '..');
-    const scanDirs = ['server', 'core', 'electron'];
+    const scanDirs = ['server', 'core'];
     const offenders = [];
     const walk = (dir) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

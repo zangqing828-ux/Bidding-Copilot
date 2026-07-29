@@ -127,7 +127,7 @@ const config = {
   distDir: resolveDistDir(),
   dataDir: resolveDataDir(),
   version: pkg.version,
-  appName: pkg.build?.productName || pkg.name,
+  appName: pkg.build?.productName || '易标投标工具箱',
   bodyLimit: '2mb',
   oauth,
   sessionSecret,

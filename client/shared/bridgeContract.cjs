@@ -274,7 +274,13 @@ const rawMethods = {
     },
   },
   app: {
-    getVersion: pendingContract('app.getVersion', 'web-shell', 'WR-06A'),
+    getVersion: implementedBridgeContract({
+      owner: 'web-shell',
+      workPackage: 'WR-06A',
+      contractRef: 'app.getVersion',
+      input: [],
+      output: 'string',
+    }),
     getGpuHardwareAccelerationStatus: createContractEntry({
       status: 'removed',
       owner: 'desktop',
@@ -412,7 +418,24 @@ const rawMethods = {
     activateOfflineCode: removedBridgeContract('license.activateOfflineCode', 'settings', 'WR-01'),
   },
   ai: {
-    chat: pendingContract('ai.chat', 'runtime', 'WR-06A'),
+    chat: implementedBridgeContract({
+      owner: 'runtime',
+      workPackage: 'WR-06A',
+      contractRef: 'ai.chat',
+      input: [contractArg('request', 'ChatCompletionRequest')],
+      output: 'string',
+      errors: [
+        'AI_CONFIG_INVALID',
+        'AI_CONFIG_LOAD_FAILED',
+        'AI_ENDPOINT_NOT_ALLOWED',
+        'AI_QUEUE_OVERLOADED',
+        'AI_REQUEST_ABORTED',
+        'AI_REQUEST_TIMEOUT',
+        'AI_NETWORK_ERROR',
+        'AI_RESPONSE_PARSE_ERROR',
+        'AI_REQUEST_FAILED',
+      ],
+    }),
     requestJson: removedBridgeContract('ai.requestJson', 'runtime', 'WR-01'),
     testImageModel: implementedBridgeContract({
       owner: 'runtime',

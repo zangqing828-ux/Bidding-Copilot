@@ -69,80 +69,10 @@ function createWebFileService({ uploadRegistry, configStore }) {
     return { ...result, message: `${label || '文件'}已导入` };
   }
 
-  async function importRejectionCheckDocument(role, { fileIds } = {}, options = {}) {
-    const result = await importDocument({ fileIds, multiple: role === 'bid' }, options);
-    return result;
-  }
-
-  function resolveDuplicateCheckFiles(fileIds) {
-    const uploads = uploadRegistry.resolveMany(fileIds, { min: 1, max: 10 });
-    uploadRegistry.markClaimed(uploads.map((item) => item.fileId));
-    return uploads.map((item) => ({
-      id: item.fileId,
-      file_id: item.fileId,
-      file_name: item.fileName,
-      // Core Store 仍保留桌面兼容字段；Web 只写入不可解析的 file ID 引用。
-      file_path: `upload:${item.fileId}`,
-      extension: item.extension,
-      size: item.size,
-      modified_at: item.uploadedAt,
-    }));
-  }
-
-  async function uploadKnowledgeBaseDocuments({ folderId, fileIds, knowledgeBaseStore, signal }) {
-    const folder = knowledgeBaseStore.list().folders.find((item) => item.id === folderId);
-    if (!folder) throw new Error('请先选择知识库文件夹');
-    const { documents, errors } = await parseFiles(fileIds, { min: 1, max: 10, signal });
-    const created = [];
-    for (const documentInput of documents) {
-      const documentId = createId('doc');
-      const documentDir = path.join('folders', folderId, 'documents', documentId).replace(/\\/g, '/');
-      const sourcePath = path.join(documentDir, `source${documentInput.extension || ''}`).replace(/\\/g, '/');
-      const markdownPath = path.join(documentDir, 'content.md').replace(/\\/g, '/');
-      const sourceFilePath = knowledgeBaseStore.resolvePath(sourcePath);
-      const markdownFilePath = knowledgeBaseStore.resolvePath(markdownPath);
-      try {
-        copyFile(documentInput.file_path, sourceFilePath);
-        fs.mkdirSync(path.dirname(markdownFilePath), { recursive: true });
-        fs.writeFileSync(markdownFilePath, `${documentInput.file_content}\n`, 'utf-8');
-        const timestamp = new Date().toISOString();
-        created.push(knowledgeBaseStore.createDocument({
-          id: documentId,
-          folder_id: folderId,
-          file_name: documentInput.file_name,
-          document_dir: documentDir,
-          source_path: sourcePath,
-          markdown_path: markdownPath,
-          source_extension: documentInput.extension,
-          status: 'ready_for_matching',
-          progress: 100,
-          message: '文档已导入，等待智能处理',
-          parser_label: documentInput.parser_label,
-          created_at: timestamp,
-          updated_at: timestamp,
-        }));
-      } catch (error) {
-        errors.push({ file_id: documentInput.file_id, file_name: documentInput.file_name, message: error?.message || '知识库文档保存失败' });
-        fs.rmSync(knowledgeBaseStore.resolvePath(documentDir), { recursive: true, force: true });
-      }
-    }
-    return {
-      success: Boolean(created.length),
-      message: created.length
-        ? (errors.length ? `已导入 ${created.length} 个文档，${errors.length} 个文件失败` : `已导入 ${created.length} 个文档`)
-        : (errors[0]?.message || '知识库文档导入失败'),
-      documents: created,
-      errors,
-    };
-  }
-
   return {
     importDocument,
     importTechnicalPlanDocument,
-    importRejectionCheckDocument,
     parseFiles,
-    resolveDuplicateCheckFiles,
-    uploadKnowledgeBaseDocuments,
   };
 }
 
